@@ -1,0 +1,6 @@
+# Nmap 7.98 scan initiated Mon Apr  6 06:35:57 2026 as: /usr/lib/nmap/nmap --privileged -iL ./tumer_one/dns/resolved_ips.txt --top-ports 1000 --open -T4 -n --min-parallelism 100 -oX ./tumer_one/enrichment/ports/nmap_raw.xml -oG ./tumer_one/enrichment/ports/nmap_raw.gnmap
+Host: 49.13.50.196 ()	Status: Up
+Host: 49.13.50.196 ()	Ports: 22/open/tcp//ssh///, 80/open/tcp//http///, 443/open/tcp//https///	Ignored State: filtered (997)
+Host: 91.215.139.37 ()	Status: Up
+Host: 91.215.139.37 ()	Ports: 80/open/tcp//http///, 443/open/tcp//https///	Ignored State: filtered (998)
+# Nmap done at Mon Apr  6 06:36:19 2026 -- 3 IP addresses (3 hosts up) scanned in 22.84 seconds

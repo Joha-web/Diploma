@@ -1,0 +1,36 @@
+Whois Server for the KZ top level domain name.
+This server is maintained by KazNIC Organization, a ccTLD manager for Kazakhstan Republic.
+
+Domain Name............: astanait.edu.kz
+
+Organization Using Domain Name
+Name...................: Nurpeisov Askar Erkeshovich
+Organization Name......: LTD Asatana IT University
+Street Address.........: Akhmet Baytursunuly 9, 109
+City...................: Astana
+State..................: 010000
+Postal Code............: Astana
+Country................: KZ
+
+Administrative Contact/Agent
+NIC Handle.............: ADMASTANAIT
+Name...................: Semenyuk Andrey Alexandrovich
+Phone Number...........: 87273308560 1234
+Fax Number.............: 7272445121 
+Email Address..........: asemenyuk@iitu.kz
+
+Nameserver in listed order
+
+Primary server.........: ns2.ps.kz
+Primary ip address.....: 195.210.46.172, 2a00:5da0:1:1::172
+
+Secondary server.......: ns1.ps.kz
+Secondary ip address...: 195.210.46.194, 2a00:5da0:0:1::194
+
+
+Domain created: 2019-05-03 07:08:46 (GMT+0:00)
+Last modified : 
+Domain status : serverRenewProhibited - made by KazNIC
+                
+Registar created: NIT.KZ
+Current Registar: IAC.KZ

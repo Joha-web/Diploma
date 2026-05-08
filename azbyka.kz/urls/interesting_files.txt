@@ -1,0 +1,13 @@
+http://azbyka.kz:80/rss.xml
+http://azbyka.kz/sites/all/themes/zeropoint/_custom/headerimg/rotate.php
+https://azbyka.kz/.well-known/ai-plugin.json
+https://azbyka.kz/.well-known/gpc.json
+https://www.azbyka.kz/atom.xml
+https://www.azbyka.kz/feeds/all.atom.xml
+https://www.azbyka.kz/feed.xml
+https://www.azbyka.kz/index.xml
+https://www.azbyka.kz/install.php
+https://www.azbyka.kz/sitemap.xml
+https://www.azbyka.kz/.well-known/assetlinks.json
+https://www.azbyka.kz/xmlrpc.php
+http://www.azbyka.kz:80/sxd/load.php?favicon.v208.ico

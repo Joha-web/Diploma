@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+
+# =============================================================
+# recon_v2.sh — advanced reconnaissance pipeline
+# usage: ./recon_v2.sh <domain>
+# =============================================================
+
+set -e
+
+DOMAIN=$1
+
+if [[ -z "$DOMAIN" ]]; then
+    echo "Usage: ./recon_v2.sh <domain>"
+    exit 1
+fi
+
+OUT="recon_$DOMAIN"
+
+mkdir -p $OUT/{passive,permutation,dns,http,urls}
+
+MASTER=$OUT/passive/all_subs.txt
+
+echo "[+] Passive enumeration"
+
+if command -v subfinder &>/dev/null; then
+    subfinder -d $DOMAIN -silent >> $MASTER
+fi
+
+if command -v assetfinder &>/dev/null; then
+    assetfinder --subs-only $DOMAIN >> $MASTER
+fi
+
+if command -v amass &>/dev/null; then
+    amass enum -passive -d $DOMAIN >> $MASTER
+fi
+
+curl -s https://crt.sh/?q=%25.$DOMAIN\&output=json \
+| jq -r '.[].name_value' \
+| tr ',' '\n' \
+| sed 's/\*\.//' >> $MASTER
+
+sort -u $MASTER -o $MASTER
+
+echo "[+] Total passive subdomains:"
+wc -l $MASTER
+
+# --------------------------------------------------
+# permutations
+# --------------------------------------------------
+
+echo "[+] Generating permutations"
+
+if command -v dnsgen &>/dev/null; then
+cat $MASTER \
+| dnsgen - \
+> $OUT/permutation/permutations.txt
+else
+echo "dnsgen not installed"
+touch $OUT/permutation/permutations.txt
+fi
+
+cat $MASTER $OUT/permutation/permutations.txt \
+| sort -u \
+> $OUT/permutation/all_candidates.txt
+
+echo "[+] Candidate hosts:"
+wc -l $OUT/permutation/all_candidates.txt
+
+# --------------------------------------------------
+# MASSDNS
+# --------------------------------------------------
+
+echo "[+] Mass resolving"
+
+if [[ ! -f resolvers.txt ]]; then
+echo "Resolvers file missing (resolvers.txt)"
+exit 1
+fi
+
+massdns \
+-r resolvers.txt \
+-t A \
+-o S \
+-w $OUT/dns/massdns.txt \
+$OUT/permutation/all_candidates.txt
+
+cat $OUT/dns/massdns.txt \
+| awk '{print $1}' \
+| sed 's/\.$//' \
+| sort -u \
+> $OUT/dns/resolved.txt
+
+echo "[+] Resolved hosts:"
+wc -l $OUT/dns/resolved.txt
+
+# --------------------------------------------------
+# HTTP
+# --------------------------------------------------
+
+echo "[+] HTTP probing"
+
+if command -v httpx &>/dev/null; then
+
+httpx \
+-l $OUT/dns/resolved.txt \
+-title -status-code \
+-silent \
+-o $OUT/http/live.txt
+
+echo "[+] Live web services:"
+wc -l $OUT/http/live.txt
+
+else
+echo "httpx not installed"
+fi
+
+# --------------------------------------------------
+# URL collection
+# --------------------------------------------------
+
+echo "[+] URL collection"
+
+if command -v gau &>/dev/null; then
+gau --subs $DOMAIN >> $OUT/urls/gau.txt
+fi
+
+echo "[+] Done"
+echo "Results stored in: $OUT"

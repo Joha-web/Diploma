@@ -1,0 +1,22 @@
+=== A ===
+91.215.139.37
+
+=== AAAA ===
+
+=== MX ===
+10 mx.yandex.net.
+
+=== NS ===
+ziggy.ns.cloudflare.com.
+armando.ns.cloudflare.com.
+
+=== TXT ===
+"google-site-verification=3RxBIBAk-FQ1VUcOHEh0ncMkv2pczbokd7GwEq9w5Zs"
+"yandex-verification: d58d6c9a177a91ba"
+"v=spf1 redirect=_spf.yandex.net"
+
+=== CNAME ===
+
+=== SOA ===
+armando.ns.cloudflare.com. dns.cloudflare.com. 2396798360 10000 2400 604800 1800
+

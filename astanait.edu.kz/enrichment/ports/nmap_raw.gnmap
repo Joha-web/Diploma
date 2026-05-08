@@ -1,0 +1,1 @@
+# Nmap 7.98 scan initiated Mon Apr  6 05:46:21 2026 as: /usr/lib/nmap/nmap --privileged -iL ./astanait.edu.kz/dns/resolved_ips.txt --top-ports 1000 --open -T4 -n --min-parallelism 100 -oX ./astanait.edu.kz/enrichment/ports/nmap_raw.xml -oG ./astanait.edu.kz/enrichment/ports/nmap_raw.gnmap

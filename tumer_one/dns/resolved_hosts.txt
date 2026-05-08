@@ -1,0 +1,7 @@
+os.tumar.one [A] [49.13.50.196] 
+id.tumar.one [A] [91.215.139.37] 
+o1.ptr7538.tumar.one [A] [208.117.51.184] 
+www.tumar.one [A] [91.215.139.37] 
+www.tumar.one [CNAME] [tumar.one] 
+khs.tumar.one [A] [91.215.139.37] 
+tumar.one [A] [91.215.139.37] 

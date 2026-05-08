@@ -1,0 +1,416 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  enrich.sh — Обогащение данных после recon.sh
+#  Модули: Shodan (уязвимости/порты по IP) + Wappalyzer-CLI (технологии)
+#
+#  Запуск:
+#    bash enrich.sh <recon_output_dir>
+#
+#  Настройка API ключей — создай файл .env рядом со скриптом:
+#    echo "SHODAN_API_KEY=your_key_here" > .env
+#
+#  Зависимости:
+#    - curl, jq
+#    - wappy: git clone https://github.com/gokulapap/wappalyzer-cli
+#             cd wappalyzer-cli && pip3 install .
+# =============================================================================
+
+if [ -z "$BASH_VERSION" ]; then exec bash "$0" "$@"; fi
+set -uo pipefail
+
+# ─── Цвета ───────────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; MAGENTA='\033[0;35m'; NC='\033[0m'
+
+info()    { echo -e "${CYAN}[*]${NC} $*"; }
+success() { echo -e "${GREEN}[+]${NC} $*"; }
+warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
+err()     { echo -e "${RED}[-]${NC} $*"; }
+banner()  {
+    local msg="$*"
+    local pad=$(( 48 - ${#msg} ))
+    local spaces; spaces=$(printf '%*s' "$pad" '')
+    echo -e "\n${BOLD}${MAGENTA}╔══════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${MAGENTA}║  ${msg}${spaces}║${NC}"
+    echo -e "${BOLD}${MAGENTA}╚══════════════════════════════════════════════════╝${NC}\n"
+}
+
+has() { command -v "$1" &>/dev/null; }
+lc()  { if [[ -f "$1" ]] && [[ -s "$1" ]]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
+
+# ─── Загрузка .env ───────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/.env"
+
+if [[ -f "$ENV_FILE" ]]; then
+    # Читаем только строки вида KEY=VALUE, игнорируем комментарии
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^#.*$ ]] && continue
+        [[ -z "$key" ]] && continue
+        # Убираем кавычки если есть
+        value="${value%\"}"
+        value="${value#\"}"
+        value="${value%\'}"
+        value="${value#\'}"
+        export "$key=$value"
+    done < <(grep -E '^[A-Z_]+=.+' "$ENV_FILE" || true)
+    success ".env загружен из $ENV_FILE"
+else
+    warn ".env не найден. Создай файл: $ENV_FILE"
+    warn "Содержимое .env:"
+    warn "  SHODAN_API_KEY=your_shodan_key_here"
+fi
+
+SHODAN_KEY="${SHODAN_API_KEY:-}"
+
+# ─── Аргументы ───────────────────────────────────────────────────────────────
+RECON_DIR="${1:-}"
+if [[ -z "$RECON_DIR" ]] || [[ ! -d "$RECON_DIR" ]]; then
+    echo "Использование: bash $0 <recon_output_dir>"
+    echo "Пример: bash $0 ./recon_astanait_edu_kz_20260315"
+    exit 1
+fi
+
+# ─── Пути к файлам из recon.sh ───────────────────────────────────────────────
+HTTPX_LIVE="$RECON_DIR/subdomains/httpx_live.txt"
+RESOLVED_IPS="$RECON_DIR/dns/resolved_ips.txt"
+ALL_SUBS="$RECON_DIR/subdomains/all_subdomains.txt"
+
+# ─── Директории для результатов ──────────────────────────────────────────────
+ENRICH_DIR="$RECON_DIR/enrichment"
+mkdir -p "$ENRICH_DIR"/{shodan,wappalyzer}
+
+SHODAN_SUMMARY="$ENRICH_DIR/shodan/shodan_summary.txt"
+SHODAN_JSON="$ENRICH_DIR/shodan/shodan_results.json"
+WAPPY_MD="$ENRICH_DIR/wappalyzer/technologies.md"
+WAPPY_JSON="$ENRICH_DIR/wappalyzer/technologies.json"
+FINAL_REPORT="$ENRICH_DIR/ENRICH_REPORT.md"
+
+info "Recon директория : $RECON_DIR"
+info "IP адресов        : $(lc "$RESOLVED_IPS")"
+info "HTTP хостов       : $(lc "$HTTPX_LIVE")"
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# МОДУЛЬ 1: SHODAN
+# ══════════════════════════════════════════════════════════════════════════════
+banner "1. Shodan — IP Intelligence"
+
+if [[ -z "$SHODAN_KEY" ]]; then
+    warn "SHODAN_API_KEY не задан в .env — модуль пропущен"
+elif ! has jq; then
+    err "jq не установлен: apt install jq"
+elif [[ ! -s "$RESOLVED_IPS" ]]; then
+    warn "Файл IP пустой: $RESOLVED_IPS — запусти сначала recon.sh"
+else
+    IP_COUNT=$(lc "$RESOLVED_IPS")
+    info "Обрабатываем $IP_COUNT IP..."
+
+    > "$SHODAN_SUMMARY"
+    echo "[" > "$SHODAN_JSON"
+    FIRST_JSON=true
+    PROCESSED=0
+    VULN_HOSTS=0
+
+    while IFS= read -r ip; do
+        [[ -z "$ip" ]] && continue
+        PROCESSED=$(( PROCESSED + 1 ))
+        info "  [$PROCESSED/$IP_COUNT] $ip"
+
+        response=$(curl -s --max-time 15 \
+            "https://api.shodan.io/shodan/host/${ip}?key=${SHODAN_KEY}" \
+            2>/dev/null || true)
+
+        # Проверка на ошибку API
+        if echo "$response" | jq -e '.error' &>/dev/null 2>&1; then
+            api_err=$(echo "$response" | jq -r '.error' 2>/dev/null)
+            warn "    API error: $api_err"
+            sleep 1
+            continue
+        fi
+
+        # Извлечение полей
+        org=$(        echo "$response" | jq -r '.org          // "N/A"' 2>/dev/null)
+        country=$(    echo "$response" | jq -r '.country_name // "N/A"' 2>/dev/null)
+        os=$(         echo "$response" | jq -r '.os           // "N/A"' 2>/dev/null)
+        isp=$(        echo "$response" | jq -r '.isp          // "N/A"' 2>/dev/null)
+        last_update=$(echo "$response" | jq -r '.last_update  // "N/A"' 2>/dev/null)
+        hostnames=$(  echo "$response" | jq -r '.hostnames[]?'          2>/dev/null | paste -sd ',' -)
+        ports=$(      echo "$response" | jq -r '[.ports[]?] | join(", ")' 2>/dev/null)
+        vuln_list=$(  echo "$response" | jq -r '[.vulns? | keys[]?] | join(", ")' 2>/dev/null)
+        vuln_count=$( echo "$response" | jq -r '[.vulns? | keys[]?] | length' 2>/dev/null || echo 0)
+
+        [[ "$vuln_count" -gt 0 ]] 2>/dev/null && VULN_HOSTS=$(( VULN_HOSTS + 1 ))
+
+        # ── Запись в текстовый summary ───────────────────────────────────────
+        {
+            echo "════════════════════════════════════════════════════"
+            echo "  IP          : $ip"
+            echo "  Org         : $org"
+            echo "  ISP         : $isp"
+            echo "  Country     : $country"
+            echo "  OS          : $os"
+            echo "  Hostnames   : ${hostnames:-N/A}"
+            echo "  Open Ports  : ${ports:-N/A}"
+            echo "  Last Update : $last_update"
+            if [[ -n "$vuln_list" ]] && [[ "$vuln_list" != "null" ]]; then
+                echo "  ⚠  CVEs ($vuln_count) : $vuln_list"
+                echo ""
+                echo "  CVE детали:"
+                echo "$response" | jq -r '
+                    .vulns? | to_entries[]? |
+                    "    [\(.key)]  CVSS: \(.value.cvss // "N/A")  — \(.value.summary // "-")"
+                ' 2>/dev/null | head -30 || true
+            else
+                echo "  CVEs        : нет"
+            fi
+            echo ""
+        } >> "$SHODAN_SUMMARY"
+
+        # ── Запись в JSON массив ──────────────────────────────────────────────
+        $FIRST_JSON || echo "," >> "$SHODAN_JSON"
+        FIRST_JSON=false
+        echo "$response" | jq '{
+            ip:          .ip_str,
+            org:         .org,
+            isp:         .isp,
+            country:     .country_name,
+            os:          .os,
+            hostnames:   .hostnames,
+            ports:       .ports,
+            last_update: .last_update,
+            vulns:       .vulns,
+            data:        [.data[]? | {port:.port, transport:.transport, product:.product, version:.version}]
+        }' 2>/dev/null >> "$SHODAN_JSON" || true
+
+        sleep 1  # free tier: 1 req/sec
+
+    done < "$RESOLVED_IPS"
+
+    echo "]" >> "$SHODAN_JSON"
+
+    success "Обработано: $PROCESSED IP | С уязвимостями: $VULN_HOSTS"
+    success "Summary → $SHODAN_SUMMARY"
+    success "JSON    → $SHODAN_JSON"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# МОДУЛЬ 2: WAPPALYZER-CLI
+# ══════════════════════════════════════════════════════════════════════════════
+banner "2. Wappalyzer — определение технологий"
+
+if ! has wappy; then
+    err "wappy не найден!"
+    err "Установка:"
+    err "  git clone https://github.com/gokulapap/wappalyzer-cli"
+    err "  cd wappalyzer-cli && pip3 install ."
+else
+    # Собираем URL из httpx_live или из субдоменов
+    URLS_FILE="$ENRICH_DIR/wappalyzer/urls_to_scan.txt"
+
+    if [[ -s "$HTTPX_LIVE" ]]; then
+        grep -oE 'https?://[^ ]+' "$HTTPX_LIVE" | sort -u > "$URLS_FILE" || true
+    elif [[ -s "$ALL_SUBS" ]]; then
+        warn "httpx_live.txt не найден — строю URL из субдоменов"
+        while IFS= read -r sub; do
+            echo "https://$sub"
+        done < "$ALL_SUBS" | sort -u > "$URLS_FILE"
+    fi
+
+    URL_COUNT=$(lc "$URLS_FILE")
+    if [[ "$URL_COUNT" -eq 0 ]]; then
+        warn "Нет URL для сканирования"
+    else
+        info "Сканирую $URL_COUNT URL..."
+
+        # Временный файл для сырого вывода wappy
+        RAW_WAPPY="$ENRICH_DIR/wappalyzer/raw_wappy.txt"
+        > "$RAW_WAPPY"
+
+        while IFS= read -r url; do
+            [[ -z "$url" ]] && continue
+            info "  wappy → $url"
+            wappy -u "$url" 2>/dev/null >> "$RAW_WAPPY" || true
+            sleep 0.5
+        done < "$URLS_FILE"
+
+        success "Сканирование завершено"
+
+        # ── Генерация technologies.md ─────────────────────────────────────────
+        info "Генерация technologies.md..."
+        {
+            echo "# 🧰 Technologies Report"
+            echo ""
+            echo "> **Дата:** $(date '+%Y-%m-%d %H:%M:%S')"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## По хостам"
+            echo ""
+            echo '```'
+            cat "$RAW_WAPPY"
+            echo '```'
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 📊 Топ используемых технологий"
+            echo ""
+            echo "| # | Технология | Кол-во хостов |"
+            echo "|---|-----------|--------------|"
+            # Парсим строки вида "Category : TechName [version: X]"
+            grep -oP '(?<=: )[^\[]+' "$RAW_WAPPY" 2>/dev/null \
+                | sed 's/[[:space:]]*$//' \
+                | grep -v "^$" \
+                | sort | uniq -c | sort -rn \
+                | awk '{printf "| %s | %s | %s |\n", NR, $2, $1}' \
+                || true
+        } > "$WAPPY_MD"
+
+        success "Markdown → $WAPPY_MD"
+
+        # ── Генерация technologies.json ───────────────────────────────────────
+        info "Генерация technologies.json..."
+        python3 - "$RAW_WAPPY" "$WAPPY_JSON" << 'PYEOF'
+import sys, json, re
+
+raw_file  = sys.argv[1]
+json_file = sys.argv[2]
+
+results = []
+current = None
+
+with open(raw_file, 'r', errors='replace') as f:
+    for line in f:
+        line = line.strip()
+        # Заголовок хоста: [+] TECHNOLOGIES [HOST]:
+        m = re.match(r'\[\+\]\s+TECHNOLOGIES\s+\[(.+)\]', line, re.IGNORECASE)
+        if m:
+            if current:
+                results.append(current)
+            current = {"url": m.group(1).lower(), "technologies": []}
+            continue
+        # Строка технологии: Category : Tech [version: X]
+        m2 = re.match(r'^(.+?)\s*:\s*(.+?)\s*\[version:\s*(.*?)\]', line)
+        if m2 and current is not None:
+            current["technologies"].append({
+                "category": m2.group(1).strip(),
+                "name":     m2.group(2).strip(),
+                "version":  m2.group(3).strip() or None
+            })
+
+if current:
+    results.append(current)
+
+with open(json_file, 'w') as f:
+    json.dump(results, f, indent=2, ensure_ascii=False)
+
+print(f"JSON: {len(results)} хостов записано")
+PYEOF
+
+        success "JSON → $WAPPY_JSON"
+
+        # Краткая сводка в терминал
+        echo ""
+        info "Топ-15 технологий:"
+        grep -oP '(?<=: )[^\[]+' "$RAW_WAPPY" 2>/dev/null \
+            | sed 's/[[:space:]]*$//' \
+            | grep -v "^$" \
+            | sort | uniq -c | sort -rn \
+            | head -15 \
+            | awk '{printf "  %3s  %s\n", $1, $2}' || true
+    fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ФИНАЛЬНЫЙ ENRICH_REPORT.md
+# ══════════════════════════════════════════════════════════════════════════════
+banner "3. Финальный отчёт"
+
+{
+echo "# 🔬 Enrich Report"
+echo ""
+echo "> **Дата:** $(date '+%Y-%m-%d %H:%M:%S')"
+echo "> **Recon dir:** \`$RECON_DIR\`"
+echo ""
+echo "---"
+echo ""
+
+# ── Shodan ────────────────────────────────────────────────────────────────────
+echo "## 🔍 Shodan"
+echo ""
+if [[ -s "$SHODAN_SUMMARY" ]]; then
+    # Считаем статистику из summary
+    total_ips=$(grep -c "^  IP" "$SHODAN_SUMMARY" 2>/dev/null || echo 0)
+    vuln_ips=$(grep -c "^  ⚠  CVEs" "$SHODAN_SUMMARY" 2>/dev/null || echo 0)
+    echo "| Метрика | Значение |"
+    echo "|---------|----------|"
+    echo "| Всего IP обработано | $total_ips |"
+    echo "| IP с уязвимостями   | $vuln_ips |"
+    echo "| JSON файл           | \`enrichment/shodan/shodan_results.json\` |"
+    echo ""
+    echo "### Детали хостов"
+    echo ""
+    echo '```'
+    cat "$SHODAN_SUMMARY"
+    echo '```'
+else
+    echo "> Нет данных (SHODAN_API_KEY не задан в .env)"
+fi
+echo ""
+echo "---"
+echo ""
+
+# ── Wappalyzer ────────────────────────────────────────────────────────────────
+echo "## 🧰 Wappalyzer"
+echo ""
+if [[ -s "$WAPPY_JSON" ]]; then
+    host_count=$(python3 -c "import json,sys; d=json.load(open('$WAPPY_JSON')); print(len(d))" 2>/dev/null || echo 0)
+    tech_count=$(python3 -c "
+import json
+d = json.load(open('$WAPPY_JSON'))
+techs = set(t['name'] for h in d for t in h.get('technologies',[]))
+print(len(techs))
+" 2>/dev/null || echo 0)
+    echo "| Метрика | Значение |"
+    echo "|---------|----------|"
+    echo "| Хостов просканировано | $host_count |"
+    echo "| Уникальных технологий | $tech_count |"
+    echo "| MD файл | \`enrichment/wappalyzer/technologies.md\` |"
+    echo "| JSON файл | \`enrichment/wappalyzer/technologies.json\` |"
+    echo ""
+    # Вставить топ таблицу из technologies.md
+    if [[ -s "$WAPPY_MD" ]]; then
+        grep -A1000 "## 📊 Топ" "$WAPPY_MD" 2>/dev/null || true
+    fi
+else
+    echo "> Нет данных (wappy не установлен или нет живых хостов)"
+fi
+echo ""
+echo "---"
+echo ""
+
+# ── Файлы ─────────────────────────────────────────────────────────────────────
+echo "## 📁 Все файлы обогащения"
+echo ""
+echo '```'
+find "$ENRICH_DIR" -type f | sort | while read -r f; do
+    size=$(wc -l < "$f" 2>/dev/null || echo 0)
+    printf "%-6s строк  %s\n" "$size" "${f#$RECON_DIR/}"
+done
+echo '```'
+
+} > "$FINAL_REPORT"
+
+success "Отчёт → $FINAL_REPORT"
+
+# ── Итог ──────────────────────────────────────────────────────────────────────
+banner "Готово"
+echo -e "${BOLD}Файлы:${NC}"
+echo -e "  ${GREEN}Shodan summary  :${NC} $SHODAN_SUMMARY"
+echo -e "  ${GREEN}Shodan JSON     :${NC} $SHODAN_JSON"
+echo -e "  ${GREEN}Technologies MD :${NC} $WAPPY_MD"
+echo -e "  ${GREEN}Technologies JSON:${NC} $WAPPY_JSON"
+echo -e "  ${GREEN}Общий отчёт     :${NC} $FINAL_REPORT"
+echo ""
+echo -e "${BOLD}Просмотр:${NC}"
+echo "  cat $FINAL_REPORT"

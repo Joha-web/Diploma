@@ -1,0 +1,2 @@
+https://tumar.one [200] [Bug Bounty Platform] [HSTS,Next.js,Nginx,Node.js,React,Webpack]
+https://os.tumar.one [200] [Tumar.One OS] [Cloudflare,HTTP/3,Next.js,Node.js,React,Webpack]

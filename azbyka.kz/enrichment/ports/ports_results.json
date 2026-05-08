@@ -1,0 +1,69 @@
+[
+  {
+    "ip": "185.98.5.117",
+    "hostnames": [
+      "webmail.azbyka.kz",
+      "mail.azbyka.kz",
+      "azbyka.kz",
+      "www.azbyka.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 21,
+        "service": "FTP",
+        "state": "open"
+      },
+      {
+        "port": 25,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 110,
+        "service": "POP3",
+        "state": "open"
+      },
+      {
+        "port": 143,
+        "service": "IMAP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      },
+      {
+        "port": 465,
+        "service": "SMTPS",
+        "state": "open"
+      },
+      {
+        "port": 587,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 993,
+        "service": "IMAPS",
+        "state": "open"
+      },
+      {
+        "port": 995,
+        "service": "POP3S",
+        "state": "open"
+      },
+      {
+        "port": 8443,
+        "service": "HTTPS-Alt",
+        "state": "open"
+      }
+    ],
+    "total_open": 11
+  }
+]

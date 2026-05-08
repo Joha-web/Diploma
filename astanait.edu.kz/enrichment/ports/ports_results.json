@@ -1,0 +1,915 @@
+[
+  {
+    "ip": "165.245.134.79",
+    "hostnames": [
+      "ojs.astanait.edu.kz",
+      "mail.ojs.astanait.edu.kz",
+      "www.ojs.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 21,
+        "service": "FTP",
+        "state": "open"
+      },
+      {
+        "port": 22,
+        "service": "SSH",
+        "state": "open"
+      },
+      {
+        "port": 25,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 53,
+        "service": "DNS",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 110,
+        "service": "POP3",
+        "state": "open"
+      },
+      {
+        "port": 143,
+        "service": "IMAP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      },
+      {
+        "port": 465,
+        "service": "SMTPS",
+        "state": "open"
+      },
+      {
+        "port": 587,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 993,
+        "service": "IMAPS",
+        "state": "open"
+      },
+      {
+        "port": 995,
+        "service": "POP3S",
+        "state": "open"
+      },
+      {
+        "port": 8090,
+        "service": "HTTP-Alt",
+        "state": "open"
+      },
+      {
+        "port": 8888,
+        "service": "Jupyter",
+        "state": "open"
+      }
+    ],
+    "total_open": 14
+  },
+  {
+    "ip": "178.170.221.33",
+    "hostnames": [
+      "shop.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 22,
+        "service": "SSH",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "185.146.1.107",
+    "hostnames": [
+      "chat.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 22,
+        "service": "SSH",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 139,
+        "service": "NetBIOS",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      },
+      {
+        "port": 445,
+        "service": "SMB",
+        "state": "open"
+      },
+      {
+        "port": 3306,
+        "service": "MySQL",
+        "state": "open"
+      },
+      {
+        "port": 5432,
+        "service": "PostgreSQL",
+        "state": "open"
+      },
+      {
+        "port": 5500,
+        "service": "hotline",
+        "state": "open"
+      },
+      {
+        "port": 8080,
+        "service": "HTTP-Proxy",
+        "state": "open"
+      },
+      {
+        "port": 8088,
+        "service": "HTTP-Alt",
+        "state": "open"
+      },
+      {
+        "port": 9090,
+        "service": "Prometheus",
+        "state": "open"
+      }
+    ],
+    "total_open": 11
+  },
+  {
+    "ip": "195.210.46.20",
+    "hostnames": [
+      "iotmobilesystems.astanait.edu.kz",
+      "iotsmarttech.astanait.edu.kz",
+      "journal.astanait.edu.kz",
+      "sc.astanait.edu.kz",
+      "ieeesb.astanait.edu.kz",
+      "digital.astanait.edu.kz",
+      "mail.sj.astanait.edu.kz",
+      "sj.astanait.edu.kz",
+      "summit.astanait.edu.kz",
+      "sist.astanait.edu.kz",
+      "new.astanait.edu.kz",
+      "mail.summit.astanait.edu.kz",
+      "mail.new.astanait.edu.kz",
+      "www.journal.astanait.edu.kz",
+      "www.sist.astanait.edu.kz",
+      "www.ieeesb.astanait.edu.kz",
+      "www.summit.astanait.edu.kz",
+      "www.new.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 21,
+        "service": "FTP",
+        "state": "open"
+      },
+      {
+        "port": 25,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 110,
+        "service": "POP3",
+        "state": "open"
+      },
+      {
+        "port": 143,
+        "service": "IMAP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      },
+      {
+        "port": 465,
+        "service": "SMTPS",
+        "state": "open"
+      },
+      {
+        "port": 587,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 993,
+        "service": "IMAPS",
+        "state": "open"
+      },
+      {
+        "port": 995,
+        "service": "POP3S",
+        "state": "open"
+      },
+      {
+        "port": 5060,
+        "service": "sip",
+        "state": "open"
+      },
+      {
+        "port": 8443,
+        "service": "HTTPS-Alt",
+        "state": "open"
+      }
+    ],
+    "total_open": 12
+  },
+  {
+    "ip": "195.210.46.61",
+    "hostnames": [
+      "rtc.astanait.edu.kz",
+      "mail.rtc.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 21,
+        "service": "FTP",
+        "state": "open"
+      },
+      {
+        "port": 25,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 110,
+        "service": "POP3",
+        "state": "open"
+      },
+      {
+        "port": 143,
+        "service": "IMAP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      },
+      {
+        "port": 465,
+        "service": "SMTPS",
+        "state": "open"
+      },
+      {
+        "port": 587,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 993,
+        "service": "IMAPS",
+        "state": "open"
+      },
+      {
+        "port": 995,
+        "service": "POP3S",
+        "state": "open"
+      },
+      {
+        "port": 2000,
+        "service": "cisco-sccp",
+        "state": "open"
+      },
+      {
+        "port": 5060,
+        "service": "sip",
+        "state": "open"
+      },
+      {
+        "port": 8443,
+        "service": "HTTPS-Alt",
+        "state": "open"
+      }
+    ],
+    "total_open": 13
+  },
+  {
+    "ip": "198.252.106.93",
+    "hostnames": [
+      "gitlab-dev.astanait.edu.kz",
+      "dit.astanait.edu.kz",
+      "jira.astanait.edu.kz",
+      "abitur.moodle.astanait.edu.kz",
+      "grants.astanait.edu.kz",
+      "english.astanait.edu.kz",
+      "mail.grants.astanait.edu.kz",
+      "release5.astanait.edu.kz",
+      "integro.astanait.edu.kz",
+      "alumni.astanait.edu.kz",
+      "vivo.astanait.edu.kz",
+      "student-conference.astanait.edu.kz",
+      "www.grants.astanait.edu.kz",
+      "www.cce.astanait.edu.kz",
+      "www.platonus.astanait.edu.kz",
+      "www.student-conference.astanait.edu.kz",
+      "www.aet.astanait.edu.kz",
+      "mail.student-conference.astanait.edu.kz",
+      "www.event.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 22,
+        "service": "SSH",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "198.252.106.96",
+    "hostnames": [
+      "oj.astanait.edu.kz",
+      "mail.oj.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 22,
+        "service": "SSH",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "213.130.74.158",
+    "hostnames": [
+      "store.astanait.edu.kz",
+      "www.store.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 25,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "213.130.74.178",
+    "hostnames": [
+      "wlic2025.astanait.edu.kz",
+      "www.wlic2025.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 25,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "213.130.74.27",
+    "hostnames": [
+      "itech.astanait.edu.kz",
+      "www.itech.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 25,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "52.98.179.104",
+    "hostnames": [
+      "mail.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      }
+    ],
+    "total_open": 1
+  },
+  {
+    "ip": "52.98.253.168",
+    "hostnames": [
+      "mail.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      }
+    ],
+    "total_open": 1
+  },
+  {
+    "ip": "52.98.253.24",
+    "hostnames": [
+      "mail.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      }
+    ],
+    "total_open": 1
+  },
+  {
+    "ip": "64.20.51.118",
+    "hostnames": [
+      "www.submission.astanait.edu.kz",
+      "mail.submission.astanait.edu.kz",
+      "submission.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 21,
+        "service": "FTP",
+        "state": "open"
+      },
+      {
+        "port": 22,
+        "service": "SSH",
+        "state": "open"
+      },
+      {
+        "port": 25,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 53,
+        "service": "DNS",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 110,
+        "service": "POP3",
+        "state": "open"
+      },
+      {
+        "port": 143,
+        "service": "IMAP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      },
+      {
+        "port": 465,
+        "service": "SMTPS",
+        "state": "open"
+      },
+      {
+        "port": 587,
+        "service": "SMTP",
+        "state": "open"
+      },
+      {
+        "port": 993,
+        "service": "IMAPS",
+        "state": "open"
+      },
+      {
+        "port": 995,
+        "service": "POP3S",
+        "state": "open"
+      },
+      {
+        "port": 3306,
+        "service": "MySQL",
+        "state": "open"
+      }
+    ],
+    "total_open": 13
+  },
+  {
+    "ip": "77.220.207.191",
+    "hostnames": [
+      "hackaton.astanait.edu.kz",
+      "icode.astanait.edu.kz",
+      "mail.apc.astanait.edu.kz",
+      "admission.astanait.edu.kz",
+      "mail.admission.astanait.edu.kz",
+      "apc.astanait.edu.kz",
+      "hackeru.astanait.edu.kz",
+      "emba.astanait.edu.kz",
+      "event.astanait.edu.kz",
+      "mail.icode.astanait.edu.kz",
+      "aituopen.astanait.edu.kz",
+      "www.emba.astanait.edu.kz",
+      "www.apc.astanait.edu.kz",
+      "www.aituopen.astanait.edu.kz",
+      "www.icode.astanait.edu.kz",
+      "www.admission.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 2
+  },
+  {
+    "ip": "85.159.27.100",
+    "hostnames": [
+      "tomcat.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 1723,
+        "service": "pptp",
+        "state": "open"
+      },
+      {
+        "port": 2000,
+        "service": "cisco-sccp",
+        "state": "open"
+      },
+      {
+        "port": 8291,
+        "service": "winbox",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "85.159.27.108",
+    "hostnames": [
+      "du.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 2
+  },
+  {
+    "ip": "85.159.27.160",
+    "hostnames": [
+      "learn.astanait.edu.kz",
+      "apps.learn.astanait.edu.kz",
+      "meilisearch.learn.astanait.edu.kz",
+      "studio.learn.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 2
+  },
+  {
+    "ip": "85.159.27.166",
+    "hostnames": [
+      "competencies.astanait.edu.kz",
+      "kiosk.astanait.edu.kz",
+      "lms.astanait.edu.kz",
+      "diploma-project.astanait.edu.kz",
+      "edoc-office.astanait.edu.kz",
+      "flood-api.astanait.edu.kz",
+      "emotionalai.astanait.edu.kz",
+      "contests.astanait.edu.kz",
+      "contracts.astanait.edu.kz",
+      "astanait.edu.kz",
+      "aitu-sign.astanait.edu.kz",
+      "college.astanait.edu.kz",
+      "dudbsrv.astanait.edu.kz",
+      "connect.astanait.edu.kz",
+      "edoc.astanait.edu.kz",
+      "college-grade.astanait.edu.kz",
+      "eve-ng.astanait.edu.kz",
+      "panel-api.flood.astanait.edu.kz",
+      "ct.astanait.edu.kz",
+      "flood.astanait.edu.kz",
+      "gitlab.astanait.edu.kz",
+      "my-du.astanait.edu.kz",
+      "panel.flood.astanait.edu.kz",
+      "qala.astanait.edu.kz",
+      "tileserver.flood.astanait.edu.kz",
+      "md.astanait.edu.kz",
+      "queue.astanait.edu.kz",
+      "portal.astanait.edu.kz",
+      "risk.astanait.edu.kz",
+      "aitu-keeper.astanait.edu.kz",
+      "petfood.astanait.edu.kz",
+      "test-du.astanait.edu.kz",
+      "www.astanait.edu.kz",
+      "zhalyn.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 21,
+        "service": "FTP",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "85.159.27.198",
+    "hostnames": [
+      "platonus.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 1723,
+        "service": "pptp",
+        "state": "open"
+      },
+      {
+        "port": 2000,
+        "service": "cisco-sccp",
+        "state": "open"
+      },
+      {
+        "port": 8291,
+        "service": "winbox",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "85.159.27.200",
+    "hostnames": [
+      "zammad.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 2
+  },
+  {
+    "ip": "85.159.27.226",
+    "hostnames": [
+      "abitur.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 1
+  },
+  {
+    "ip": "85.159.27.227",
+    "hostnames": [
+      "tezis.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      },
+      {
+        "port": 1723,
+        "service": "pptp",
+        "state": "open"
+      },
+      {
+        "port": 2000,
+        "service": "cisco-sccp",
+        "state": "open"
+      },
+      {
+        "port": 8291,
+        "service": "winbox",
+        "state": "open"
+      }
+    ],
+    "total_open": 4
+  },
+  {
+    "ip": "85.159.27.239",
+    "hostnames": [
+      "guest-sign.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 1
+  },
+  {
+    "ip": "85.159.27.242",
+    "hostnames": [
+      "ctf.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 2
+  },
+  {
+    "ip": "85.159.27.87",
+    "hostnames": [
+      "cce.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      },
+      {
+        "port": 9000,
+        "service": "SonarQube/PHP-FPM",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "89.219.33.110",
+    "hostnames": [
+      "aet.astanait.edu.kz"
+    ],
+    "open_ports": [
+      {
+        "port": 22,
+        "service": "SSH",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  }
+]

@@ -1,0 +1,9 @@
+=== Registrar / Organization ===
+
+=== Dates ===
+
+=== Name Servers ===
+Nameserver in listed order
+
+=== Emails ===
+asemenyuk@iitu.kz

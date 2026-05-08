@@ -1,0 +1,24 @@
+=== A ===
+85.159.27.166
+
+=== AAAA ===
+
+=== MX ===
+0 astanait-edu-kz.mail.protection.outlook.com.
+
+=== NS ===
+ns2.ps.kz.
+ns1.ps.kz.
+
+=== TXT ===
+"google-site-verification=myOf1ylKWqBEKIS329h_9zAYD6O1SLy49DkzcKdNn2w"
+"google-site-verification=f3GUdmoGqklwx4k2IoTZpn5ez9PKQpB8ie0ByZF3kFo"
+"MS=ms12318777"
+"v=spf1 include:spf.protection.outlook.com -all"
+"google-gws-recovery-domain-verification=56196958"
+
+=== CNAME ===
+
+=== SOA ===
+ns1.ps.kz. boris.foundation.kz. 2026033001 10800 3600 604800 10800
+

@@ -1,0 +1,48 @@
+[
+  {
+    "ip": "49.13.50.196",
+    "hostnames": [
+      "os.tumar.one"
+    ],
+    "open_ports": [
+      {
+        "port": 22,
+        "service": "SSH",
+        "state": "open"
+      },
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 3
+  },
+  {
+    "ip": "91.215.139.37",
+    "hostnames": [
+      "id.tumar.one",
+      "www.tumar.one",
+      "khs.tumar.one",
+      "tumar.one"
+    ],
+    "open_ports": [
+      {
+        "port": 80,
+        "service": "HTTP",
+        "state": "open"
+      },
+      {
+        "port": 443,
+        "service": "HTTPS",
+        "state": "open"
+      }
+    ],
+    "total_open": 2
+  }
+]

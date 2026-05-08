@@ -1,0 +1,5 @@
+https://id.tumar.one [404] [Not Found - TumarOne] [nginx] [HSTS,Nginx,React,Unpkg]
+https://www.tumar.one [301] [301 Moved Permanently] [nginx] [HSTS,Nginx]
+https://khs.tumar.one [301] [301 Moved Permanently] [nginx] [HSTS,Nginx]
+https://os.tumar.one [200] [Tumar.One OS] [nginx] [Next.js,Nginx,Node.js,React,Webpack]
+https://tumar.one [200] [Bug Bounty Platform] [nginx] [HSTS,Next.js,Nginx,Node.js,React,Webpack]

@@ -1,0 +1,5 @@
+webmail.azbyka.kz [A] [185.98.5.117] 
+webmail.azbyka.kz [CNAME] [azbyka.kz] 
+mail.azbyka.kz [A] [185.98.5.117] 
+azbyka.kz [A] [185.98.5.117] 
+www.azbyka.kz [A] [185.98.5.117] 

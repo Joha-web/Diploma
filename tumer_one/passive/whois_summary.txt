@@ -1,0 +1,14 @@
+=== Registrar / Organization ===
+Registrar: Key-Systems LLC
+
+=== Dates ===
+Updated Date: 2025-11-22T00:47:40Z
+Creation Date: 2021-12-18T13:54:20Z
+Registry Expiry Date: 2026-12-18T13:54:20Z
+
+=== Name Servers ===
+Name Server: armando.ns.cloudflare.com
+Name Server: ziggy.ns.cloudflare.com
+
+=== Emails ===
+abuse@key-systems.net

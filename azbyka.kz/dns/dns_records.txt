@@ -1,0 +1,23 @@
+=== A ===
+185.98.5.117
+
+=== AAAA ===
+
+=== MX ===
+10 mail.azbyka.kz.
+
+=== NS ===
+ns1.hoster.kz.
+ns3.hoster.kz.
+ns2.hoster.kz.
+
+=== TXT ===
+"v=spf1 include:send-box.ru +a +mx ~all"
+"update_dns_zone"
+" v=spf1 ip4:185.98.7.116 ip4:185.98.7.117 ip4:185.98.7.58 ip4:185.111.104.117 ip4:185.111.104.116 ip4:185.113.132.117 ip4:185.113.132.116 a mx ~all"
+
+=== CNAME ===
+
+=== SOA ===
+ns2.hoster.kz. support.hoster.kz. 1737412598 10800 3600 604800 10800
+

@@ -1,0 +1,229 @@
+[
+  {
+    "url": "https://khs.tumar.one",
+    "status": "301",
+    "technologies": [
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Technology",
+        "name": "301 Moved Permanently",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Web Technology",
+        "name": "HSTS",
+        "version": null,
+        "source": "httpx"
+      }
+    ],
+    "waf": []
+  },
+  {
+    "url": "https://www.tumar.one",
+    "status": "301",
+    "technologies": [
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Technology",
+        "name": "301 Moved Permanently",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Web Technology",
+        "name": "HSTS",
+        "version": null,
+        "source": "httpx"
+      }
+    ],
+    "waf": []
+  },
+  {
+    "url": "https://id.tumar.one",
+    "status": "404",
+    "technologies": [
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Technology",
+        "name": "Not Found - TumarOne",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Web Technology",
+        "name": "HSTS",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "JavaScript Framework",
+        "name": "React",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Web Technology",
+        "name": "Unpkg",
+        "version": null,
+        "source": "httpx"
+      }
+    ],
+    "waf": []
+  },
+  {
+    "url": "https://os.tumar.one",
+    "status": "200",
+    "technologies": [
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "JavaScript Framework",
+        "name": "Next.js",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Technology",
+        "name": "Tumar.One OS",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Programming Language",
+        "name": "Node.js",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "JavaScript Framework",
+        "name": "React",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Web Technology",
+        "name": "Webpack",
+        "version": null,
+        "source": "httpx"
+      }
+    ],
+    "waf": []
+  },
+  {
+    "url": "https://tumar.one",
+    "status": "200",
+    "technologies": [
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "JavaScript Framework",
+        "name": "Next.js",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "JavaScript Framework",
+        "name": "Next.js",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Server",
+        "name": "nginx",
+        "version": null,
+        "source": "whatweb"
+      },
+      {
+        "category": "Web Technology",
+        "name": "Bug Bounty Platform",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Web Technology",
+        "name": "HSTS",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Programming Language",
+        "name": "Node.js",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "JavaScript Framework",
+        "name": "React",
+        "version": null,
+        "source": "httpx"
+      },
+      {
+        "category": "Web Technology",
+        "name": "Webpack",
+        "version": null,
+        "source": "httpx"
+      }
+    ],
+    "waf": []
+  }
+]

@@ -1,0 +1,41 @@
+Whois Server for the KZ top level domain name.
+This server is maintained by KazNIC Organization, a ccTLD manager for Kazakhstan Republic.
+
+Domain Name............: azbyka.kz
+
+Organization Using Domain Name
+Name...................: IP "Shmatkov I.V."
+Organization Name......: IP "Shmatkov I.V."
+Street Address.........: 156 Mira Str., 129
+City...................: Petropavlovsk
+State..................: -
+Postal Code............: -
+Country................: KZ
+
+Administrative Contact/Agent
+NIC Handle.............: HOSTERKZ-276404
+Name...................: IP "Shmatkov I.V."
+Phone Number...........: +7 (7152) 42-79-56 
+Fax Number.............: +7 (7152) 42-79-56 
+Email Address..........: info@ivs.kz
+
+Nameserver in listed order
+
+Primary server.........: ns1.hoster.kz
+Primary ip address.....: 185.116.195.38
+
+Secondary server.......: ns2.hoster.kz
+Secondary ip address...: 185.121.81.104
+
+Secondary server.......: ns3.hoster.kz
+Secondary ip address...: 89.35.125.31
+
+
+Domain created: 2010-09-27 05:08:53 (GMT+0:00)
+Last modified : 2017-04-11 09:16:38 (GMT+0:00)
+Domain status : clientTransferProhibited - status prohibits domain transfer without documents (статус запрещает трансфер домена без предоставления документов)
+                clientDeleteProhibited - status prevent domain deletion from the Register (статус предотвращает удаление домена из реестра)
+                clientRenewProhibited - status prevent domain auto renewal without payment (статус предотвращает авто продление без оплаты)
+                
+Registar created: NEOLABS
+Current Registar: HOSTER.KZ

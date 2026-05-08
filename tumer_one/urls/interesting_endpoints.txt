@@ -1,0 +1,4 @@
+https://tumar.one/blog/wp-content/plugins/powerkit/modules/author-box/public/css/public-powerkit-author-box.css
+https://tumar.one/blog/wp-content/plugins/powerkit/modules/author-box/public/css/public-powerkit-author-box.css?ver=2.9.5
+https://tumar.one/blog/wp-content/plugins/powerkit/modules/author-box/public/css/public-powerkit-author-box.css?ver=3.0.2
+https://tumar.one/blog/wp-content/uploads/2024/10/tumar-favicon.png
