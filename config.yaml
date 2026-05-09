@@ -1,0 +1,110 @@
+# ═══════════════════════════════════════════════════════════════
+#  ReconX — Configuration
+#  Edit this file before running. Keep API keys out of git.
+# ═══════════════════════════════════════════════════════════════
+
+# ── API Keys (optional — improves results) ───────────────────
+api_keys:
+  shodan:     ""
+  virustotal: ""
+  wpscan:     ""          # wpscan.io — free at https://wpscan.com/register
+
+# ── Telegram Notifications ───────────────────────────────────
+telegram:
+  enabled:   false
+  bot_token: ""           # Get from @BotFather
+  chat_id:   ""           # Your chat or group ID
+  notify_on:
+    - start
+    - module_complete
+    - critical_finding
+    - complete
+
+# ── AI Analysis (Ollama — local, free) ───────────────────────
+ai:
+  enabled:       true
+  provider:      "ollama"          # ollama | openai
+  model:         "deepseek-r1:7b"  # deepseek-r1:14b needs ~10GB RAM
+  ollama_url:    "http://localhost:11434"
+  # OpenAI-compatible fallback (groq.com, openrouter.ai are free)
+  openai_api_key:  ""
+  openai_base_url: "https://api.openai.com/v1"
+  temperature:   0.3
+  max_tokens:    4096
+  language:      "ru"              # ru | en
+
+# ── Scan Settings ────────────────────────────────────────────
+scan:
+  threads:    50
+  timeout:    30
+  rate_limit: 50              # global requests/sec for JS mining etc.
+
+  # Subdomain sources
+  subdomains:
+    use_subfinder:    true
+    use_amass:        true
+    use_assetfinder:  true
+    use_crtsh:        true
+    use_hackertarget: true
+    use_alienvault:   true
+    use_rapiddns:     true
+    use_wayback_cdx:  true
+    use_threatminer:  true
+    amass_timeout:    180       # seconds (amass can be slow)
+
+  # Port scanning
+  ports:
+    mode:         "top-1000"    # top-100 | top-1000 | full (65535)
+    scanner:      "nmap"        # nmap | masscan (masscan = faster)
+    masscan_rate: 3000          # packets/sec — lower for stealth
+
+  # HTTP probing
+  http:
+    follow_redirects: true
+    tech_detect:      true
+    screenshots:      false     # requires gowitness
+
+  # Directory fuzzing
+  fuzzing:
+    depth:        3
+    rate:         100           # requests/sec per host
+    extensions:   [".php", ".asp", ".aspx", ".jsp", ".html", ".js", ".json"]
+
+  # Nuclei vulnerability scanner
+  nuclei:
+    enabled: true
+    severity:
+      - critical
+      - high
+      - medium
+    templates:
+      - cves
+      - exposures
+      - misconfiguration
+      - default-logins
+      - takeovers
+    rate_limit:     150
+    nuclei_timeout: 3600        # 1 hour max
+
+  # CMS scanning
+  cms:
+    wpscan_api_token: ""        # from config.api_keys.wpscan
+    enumerate: "vp,vt,u,tt"    # vp=plugins, vt=themes, u=users, tt=timthumbs
+
+# ── Wordlists ────────────────────────────────────────────────
+wordlists:
+  search_paths:
+    - /opt/SecLists
+    - /usr/share/seclists
+    - /usr/share/wordlists
+    - /usr/share/dirb/wordlists
+  dirs:   "directory-list-2.3-medium.txt"
+  files:  "raft-medium-files.txt"
+  params: "burp-parameter-names.txt"
+
+# ── Reporting ────────────────────────────────────────────────
+reporting:
+  formats:
+    - html
+    - md
+  language: "ru"

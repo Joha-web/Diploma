@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReconX — {{ target }}</title>
+<style>
+:root {
+  --bg:      #07090f;
+  --surface: #0e1420;
+  --card:    #131c2e;
+  --border:  #1e2d45;
+  --border2: #243550;
+  --text:    #cdd5e0;
+  --muted:   #5a7090;
+  --accent:  #4f8ef7;
+  --accent2: #7c5cfc;
+  --green:   #22c55e;
+  --red:     #f43f5e;
+  --amber:   #f59e0b;
+  --cyan:    #22d3ee;
+  --purple:  #a78bfa;
+  --font:    'Segoe UI', system-ui, -apple-system, sans-serif;
+  --mono:    'Fira Code', 'Cascadia Code', monospace;
+}
+* { margin:0; padding:0; box-sizing:border-box }
+html { scroll-behavior: smooth }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.6;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sidebar ─────────────────────────────────────── */
+.sidebar {
+  width: 220px;
+  min-height: 100vh;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  position: fixed;
+  top: 0; left: 0;
+  overflow-y: auto;
+  z-index: 100;
+  padding-bottom: 24px;
+}
+.sidebar-logo {
+  padding: 20px 16px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: .75em;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.sidebar-logo strong {
+  display: block;
+  font-size: 1.15em;
+  color: var(--accent);
+  letter-spacing: .05em;
+}
+.sidebar-section { padding: 12px 8px 4px; font-size: .7em; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.sidebar a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .85em;
+  border-radius: 6px;
+  margin: 1px 8px;
+  transition: all .15s;
+}
+.sidebar a:hover, .sidebar a.active { background: rgba(79,142,247,.1); color: var(--text); }
+.sidebar a .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--muted); flex-shrink: 0;
+}
+.sidebar a.critical .dot { background: var(--red); }
+.sidebar a.high    .dot { background: var(--amber); }
+.sidebar a.medium  .dot { background: var(--cyan); }
+
+/* ── Main ────────────────────────────────────────── */
+.main {
+  margin-left: 220px;
+  flex: 1;
+  max-width: calc(100vw - 220px);
+  padding: 24px 32px 48px;
+}
+
+/* ── Header ──────────────────────────────────────── */
+.header {
+  background: linear-gradient(135deg, #0e1836, #12233f, #0e1836);
+  border: 1px solid var(--border2);
+  border-radius: 14px;
+  padding: 36px 40px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 60% at 80% 50%, rgba(79,142,247,.06) 0%, transparent 70%);
+}
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  position: relative;
+}
+.header h1 {
+  font-size: 1.7em;
+  font-weight: 600;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 6px;
+}
+.header .meta { color: var(--muted); font-size: .85em; line-height: 1.8; }
+.header .meta code { color: var(--cyan); font-family: var(--mono); font-size: .95em; }
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 40px;
+  font-size: .85em;
+  font-weight: 600;
+  letter-spacing: .04em;
+  border: 1px solid;
+  position: relative;
+}
+.risk-CRITICAL { background: rgba(244,63,94,.12); color: #f43f5e; border-color: rgba(244,63,94,.3); }
+.risk-HIGH     { background: rgba(245,158,11,.12); color: #f59e0b; border-color: rgba(245,158,11,.3); }
+.risk-MEDIUM   { background: rgba(34,211,238,.12); color: #22d3ee; border-color: rgba(34,211,238,.3); }
+.risk-LOW      { background: rgba(34,197,94,.12);  color: #22c55e; border-color: rgba(34,197,94,.3); }
+
+/* ── Stats dashboard ─────────────────────────────── */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 14px;
+  text-align: center;
+  transition: border-color .2s, transform .2s;
+}
+.stat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.stat-card .val {
+  font-size: 2em;
+  font-weight: 700;
+  font-family: var(--mono);
+  line-height: 1.1;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.stat-card .val.danger { background: var(--red); -webkit-background-clip: text; }
+.stat-card .val.warn   { background: var(--amber); -webkit-background-clip: text; }
+.stat-card .lbl { color: var(--muted); font-size: .78em; margin-top: 4px; }
+
+/* ── Section ─────────────────────────────────────── */
+.section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.section-title {
+  font-size: 1.05em;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.count-badge {
+  font-size: .75em;
+  padding: 2px 10px;
+  border-radius: 20px;
+  background: rgba(79,142,247,.12);
+  color: var(--accent);
+  border: 1px solid rgba(79,142,247,.2);
+  font-family: var(--mono);
+}
+
+/* ── Tables ──────────────────────────────────────── */
+.table-wrap { overflow-x: auto; border-radius: 8px; max-height: 520px; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .85em; }
+thead th {
+  background: var(--surface);
+  color: var(--accent);
+  text-align: left;
+  padding: 10px 14px;
+  font-weight: 600;
+  font-size: .8em;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+tbody td { padding: 9px 14px; border-bottom: 1px solid var(--border); }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: rgba(79,142,247,.04); }
+td code { font-family: var(--mono); font-size: .9em; color: var(--cyan); word-break: break-all; }
+
+/* Filter input */
+.filter-input {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 6px 12px;
+  color: var(--text);
+  font-size: .82em;
+  width: 240px;
+  outline: none;
+  transition: border-color .2s;
+}
+.filter-input:focus { border-color: var(--accent); }
+.filter-input::placeholder { color: var(--muted); }
+
+/* ── Severity badges ─────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: .75em;
+  font-weight: 700;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+.badge-CRITICAL { background: rgba(244,63,94,.15); color: var(--red);    border: 1px solid rgba(244,63,94,.3); }
+.badge-HIGH     { background: rgba(245,158,11,.15);color: var(--amber);  border: 1px solid rgba(245,158,11,.3);}
+.badge-MEDIUM   { background: rgba(34,211,238,.12); color: var(--cyan);  border: 1px solid rgba(34,211,238,.2);}
+.badge-LOW      { background: rgba(34,197,94,.12);  color: var(--green); border: 1px solid rgba(34,197,94,.2); }
+.badge-INFO     { background: rgba(79,142,247,.12); color: var(--accent);border: 1px solid rgba(79,142,247,.2);}
+.badge-open     { background: rgba(34,197,94,.12);  color: var(--green); border: 1px solid rgba(34,197,94,.2); }
+.badge-tech     { background: rgba(167,139,250,.1); color: var(--purple);border: 1px solid rgba(167,139,250,.2);}
+
+/* ── AI section ──────────────────────────────────── */
+.ai-section { border-color: rgba(124,92,252,.3); }
+.ai-section .section-title { color: var(--accent2); }
+.ai-body {
+  line-height: 1.8;
+  font-size: .9em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-body h2, .ai-body h3 {
+  color: var(--accent);
+  margin: 16px 0 8px;
+  font-size: 1em;
+}
+
+/* ── Code blocks ─────────────────────────────────── */
+.code-block {
+  background: #04070e;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-family: var(--mono);
+  font-size: .8em;
+  color: #8bb4d0;
+  max-height: 400px;
+  overflow-y: auto;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+}
+
+/* ── Collapsible ─────────────────────────────────── */
+details { margin: 8px 0; }
+details summary {
+  cursor: pointer;
+  padding: 9px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: .85em;
+  font-weight: 600;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+details summary::after { content: '+'; color: var(--muted); }
+details[open] summary { border-radius: 8px 8px 0 0; border-bottom: none; }
+details[open] summary::after { content: '−'; }
+details .detail-body {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+}
+
+/* ── Port tags ───────────────────────────────────── */
+.port-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: .75em;
+  font-family: var(--mono);
+  margin: 2px;
+  background: rgba(34,197,94,.08);
+  color: var(--green);
+  border: 1px solid rgba(34,197,94,.2);
+}
+.port-tag.risky {
+  background: rgba(244,63,94,.1);
+  color: var(--red);
+  border-color: rgba(244,63,94,.25);
+}
+
+/* ── Search highlight ────────────────────────────── */
+mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px; }
+
+/* ── Footer ──────────────────────────────────────── */
+.footer {
+  text-align: center;
+  padding: 24px 0;
+  color: var(--muted);
+  font-size: .8em;
+  border-top: 1px solid var(--border);
+  margin-top: 32px;
+}
+.footer strong { color: var(--accent); }
+
+/* ── Scrollbar ───────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <strong>ReconX</strong>
+    v1.0.0 · {{ date[:10] }}
+  </div>
+
+  <div class="sidebar-section">Target</div>
+  <a href="#overview">⚡ Overview</a>
+
+  {% if ai_analysis %}
+  <div class="sidebar-section">Analysis</div>
+  <a href="#ai">🤖 AI Report</a>
+  {% endif %}
+
+  {% if vuln.findings %}
+  <div class="sidebar-section">Findings</div>
+  {% set crit = vuln.by_severity.get('CRITICAL', 0) %}
+  {% set high = vuln.by_severity.get('HIGH', 0) %}
+  {% if crit %}<a href="#vulns" class="critical">🔴 Critical ({{ crit }})</a>{% endif %}
+  {% if high  %}<a href="#vulns" class="high">🟠 High ({{ high }})</a>{% endif %}
+  <a href="#vulns" class="medium">🚨 All vulns ({{ vuln.total }})</a>
+  {% endif %}
+
+  <div class="sidebar-section">Infrastructure</div>
+  <a href="#subdomains"><span class="dot"></span> Subdomains</a>
+  <a href="#ports"><span class="dot"></span> Port Scan</a>
+  <a href="#tech"><span class="dot"></span> Tech Stack</a>
+
+  <div class="sidebar-section">Web</div>
+  <a href="#endpoints"><span class="dot"></span> Endpoints</a>
+  <a href="#secrets"><span class="dot"></span> JS Secrets</a>
+  {% if cms.scans %}<a href="#cms"><span class="dot"></span> CMS Scan</a>{% endif %}
+  <a href="#ssl"><span class="dot"></span> SSL / Headers</a>
+
+  <div class="sidebar-section">Info</div>
+  <a href="#whois"><span class="dot"></span> WHOIS</a>
+</nav>
+
+<!-- Main -->
+<main class="main">
+
+<!-- Header -->
+<div class="header" id="overview">
+  <div class="header-top">
+    <div>
+      <h1>🔬 ReconX Security Report</h1>
+      <div class="meta">
+        🎯 Target: <code>{{ target }}</code><br>
+        📅 {{ date }} &nbsp;|&nbsp; ⏱ {{ duration }}
+      </div>
+    </div>
+    <div>
+      {% set total_vulns = vuln.total | default(0) %}
+      {% set risk = 'CRITICAL' if vuln.by_severity.get('CRITICAL',0) > 0
+                    else 'HIGH'   if vuln.by_severity.get('HIGH',0) > 0
+                    else 'MEDIUM' if total_vulns > 0
+                    else 'LOW' %}
+      <span class="risk-badge risk-{{ risk }}">⚠ {{ risk }} RISK</span>
+    </div>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="stats">
+  <div class="stat-card">
+    <div class="val">{{ summary.subdomains }}</div>
+    <div class="lbl">Subdomains</div>
+  </div>
+  <div class="stat-card">
+    <div class="val">{{ summary.live_hosts }}</div>
+    <div class="lbl">Live HTTP</div>
+  </div>
+  <div class="stat-card">
+    <div class="val">{{ summary.resolved_ips }}</div>
+    <div class="lbl">Unique IPs</div>
+  </div>
+  <div class="stat-card">
+    <div class="val">{{ summary.open_ports }}</div>
+    <div class="lbl">Open Ports</div>
+  </div>
+  <div class="stat-card">
+    <div class="val">{{ summary.technologies }}</div>
+    <div class="lbl">Technologies</div>
+  </div>
+  <div class="stat-card">
+    <div class="val">{{ summary.endpoints }}</div>
+    <div class="lbl">Endpoints</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.vulnerabilities > 0 %}danger{% endif %}">
+      {{ summary.vulnerabilities }}
+    </div>
+    <div class="lbl">Vulnerabilities</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.js_secrets > 0 %}warn{% endif %}">
+      {{ summary.js_secrets }}
+    </div>
+    <div class="lbl">JS Secrets</div>
+  </div>
+</div>
+
+<!-- AI Analysis -->
+{% if ai_analysis %}
+<div class="section ai-section" id="ai">
+  <div class="section-header">
+    <div class="section-title">🤖 AI Security Analysis</div>
+  </div>
+  <div class="ai-body">{{ ai_analysis }}</div>
+</div>
+{% endif %}
+
+<!-- Vulnerabilities -->
+{% if vuln.findings %}
+<div class="section" id="vulns">
+  <div class="section-header">
+    <div class="section-title">🚨 Vulnerabilities (Nuclei)
+      <span class="count-badge">{{ vuln.findings | length }}</span>
+    </div>
+    <input class="filter-input" type="text" placeholder="Filter…" oninput="filterTable('vuln-table', this.value)">
+  </div>
+  <div class="table-wrap">
+    <table id="vuln-table">
+      <thead><tr>
+        <th>Severity</th><th>Name</th><th>URL</th><th>Template</th>
+      </tr></thead>
+      <tbody>
+        {% for f in vuln.findings %}
+        <tr>
+          <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+          <td>{{ f.name }}</td>
+          <td><code>{{ f.matched_url }}</code></td>
+          <td><code style="color:var(--muted)">{{ f.template_id }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- CMS Scan -->
+{% if cms.scans %}
+<div class="section" id="cms">
+  <div class="section-header">
+    <div class="section-title">🔧 CMS Vulnerabilities
+      <span class="count-badge">{{ cms.total_findings }}</span>
+    </div>
+  </div>
+  {% for s in cms.scans %}
+  <details {% if s.findings_count > 0 %}open{% endif %}>
+    <summary>
+      {{ s.cms }} — <code>{{ s.url }}</code>
+      <span class="count-badge">{{ s.findings_count }}</span>
+    </summary>
+    <div class="detail-body">
+      {% if s.findings %}
+      <table>
+        <thead><tr><th>Type</th><th>Severity</th><th>Detail</th></tr></thead>
+        <tbody>
+          {% for f in s.findings %}
+          <tr>
+            <td>{{ f.type }}</td>
+            <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+            <td>{{ f.get('title', f.get('detail', f.get('name', ''))) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="color:var(--muted)">No findings</p>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Subdomains -->
+<div class="section" id="subdomains">
+  <div class="section-header">
+    <div class="section-title">🌐 Subdomains
+      <span class="count-badge">{{ recon.subdomains_total | default(0) }}</span>
+    </div>
+    <input class="filter-input" type="text" placeholder="Filter…" oninput="filterCode('subdomain-block', this.value)">
+  </div>
+  {% if recon.subdomains %}
+  <div class="code-block" id="subdomain-block">{{ recon.subdomains | join('\n') }}</div>
+  {% else %}
+  <p style="color:var(--muted)">No subdomains found</p>
+  {% endif %}
+</div>
+
+<!-- Port Scan -->
+{% if ports.hosts %}
+<div class="section" id="ports">
+  <div class="section-header">
+    <div class="section-title">🔌 Port Scan
+      <span class="count-badge">{{ ports.summary.get('total_open_ports', 0) }} ports</span>
+    </div>
+    <input class="filter-input" type="text" placeholder="Filter by IP…" oninput="filterTable('port-table', this.value)">
+  </div>
+  {% set risky_ports = [21,22,23,25,445,1433,1521,3306,3389,5432,5900,6379,7001,9200,11211,27017,50000] %}
+  <div class="table-wrap">
+    <table id="port-table">
+      <thead><tr><th>IP</th><th>Ports</th><th>Count</th></tr></thead>
+      <tbody>
+        {% for h in ports.hosts %}
+        <tr>
+          <td><code>{{ h.ip }}</code></td>
+          <td>
+            {% for p in h.open_ports %}
+            <span class="port-tag {% if p.port in risky_ports %}risky{% endif %}">
+              {{ p.port }}/{{ p.service }}
+            </span>
+            {% endfor %}
+          </td>
+          <td style="color:var(--muted)">{{ h.total_open }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Tech Stack -->
+{% if tech.hosts %}
+<div class="section" id="tech">
+  <div class="section-header">
+    <div class="section-title">🧰 Technology Stack
+      <span class="count-badge">{{ tech.technologies_summary | length }} unique</span>
+    </div>
+    <input class="filter-input" type="text" placeholder="Filter…" oninput="filterTable('tech-table', this.value)">
+  </div>
+  <div class="table-wrap">
+    <table id="tech-table">
+      <thead><tr><th>URL</th><th>Technologies</th><th>WAF</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for h in tech.hosts %}
+        <tr>
+          <td><code>{{ h.url }}</code></td>
+          <td>
+            {% for t in h.technologies %}
+            <span class="badge badge-tech">{{ t.name }}{% if t.version %} {{ t.version }}{% endif %}</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% if h.waf %}
+              {% for w in h.waf %}<span class="badge badge-HIGH">🛡 {{ w }}</span>{% endfor %}
+            {% else %}<span style="color:var(--muted)">—</span>{% endif %}
+          </td>
+          <td><span class="badge {% if h.status == '200' %}badge-LOW{% else %}badge-INFO{% endif %}">{{ h.status }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Endpoints -->
+{% if fuzz.classified %}
+<div class="section" id="endpoints">
+  <div class="section-header">
+    <div class="section-title">🔎 Discovered Endpoints
+      <span class="count-badge">{{ fuzz.total_endpoints }}</span>
+    </div>
+  </div>
+  {% set cats = [
+    ('api',            '🔌 API Endpoints'),
+    ('auth',           '🔐 Auth Endpoints'),
+    ('sensitive_files','⚠ Sensitive Files'),
+    ('admin_panels',   '🎯 Admin Panels'),
+    ('with_params',    '🔗 URLs with Params'),
+  ] %}
+  {% for key, label in cats %}
+  {% set items = fuzz.classified.get(key, []) %}
+  {% if items %}
+  <details {% if key in ('sensitive_files', 'admin_panels') %}open{% endif %}>
+    <summary>{{ label }} <span class="count-badge">{{ items | length }}</span></summary>
+    <div class="detail-body">
+      <div class="code-block">{% for url in items[:200] %}{{ url }}
+{% endfor %}</div>
+    </div>
+  </details>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- JS Secrets -->
+{% if fuzz.classified and fuzz.classified.js_secrets %}
+<div class="section" id="secrets">
+  <div class="section-header">
+    <div class="section-title">🔑 Potential Secrets in JS
+      <span class="count-badge">{{ fuzz.classified.js_secrets | length }}</span>
+    </div>
+  </div>
+  <div class="code-block">
+    {% for s in fuzz.classified.js_secrets %}
+[{{ s.file }}]
+  Type:  {{ s.type }}
+  Match: {{ s.match }}
+
+{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- SSL / TLS -->
+<div class="section" id="ssl">
+  <div class="section-header">
+    <div class="section-title">🔒 SSL / TLS & Security Headers</div>
+  </div>
+
+  {% if ssl.ssl_issues %}
+  <h3 style="font-size:.9em;color:var(--muted);margin-bottom:8px">SSL Issues</h3>
+  <div class="table-wrap" style="margin-bottom:16px">
+    <table>
+      <thead><tr><th>Host</th><th>Issues</th><th>Expires In</th><th>Protocol</th></tr></thead>
+      <tbody>
+        {% for s in ssl.ssl %}
+        {% if s.issues %}
+        <tr>
+          <td><code>{{ s.host }}</code></td>
+          <td>{% for i in s.issues %}<span class="badge badge-HIGH">{{ i }}</span> {% endfor %}</td>
+          <td>{{ s.days_until_expiry | default('?') }} days</td>
+          <td><code>{{ s.protocol | default('?') }}</code></td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if ssl.headers %}
+  <h3 style="font-size:.9em;color:var(--muted);margin-bottom:8px">Missing Security Headers</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>URL</th><th>Missing</th><th>Info Leak</th></tr></thead>
+      <tbody>
+        {% for h in ssl.headers %}
+        {% if h.missing %}
+        <tr>
+          <td><code>{{ h.url }}</code></td>
+          <td>
+            {% for m in h.missing %}
+            <span class="badge badge-{{ m.severity }}">{{ m.header }}</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% if h.info_leak %}
+            <span style="color:var(--amber);font-size:.8em">{{ h.info_leak | join(', ') }}</span>
+            {% else %}<span style="color:var(--muted)">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<!-- WHOIS -->
+{% if recon.whois %}
+<div class="section" id="whois">
+  <div class="section-header">
+    <div class="section-title">📋 WHOIS</div>
+  </div>
+  <table>
+    {% for k, v in recon.whois.items() %}
+    {% if k != 'raw_length' %}
+    <tr>
+      <td style="color:var(--muted);width:140px;font-size:.85em">{{ k }}</td>
+      <td>{% if v is iterable and v is not string %}{{ v | join(', ') }}{% else %}{{ v }}{% endif %}</td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<!-- Footer -->
+<div class="footer">
+  Generated by <strong>ReconX</strong> v1.0.0 &nbsp;·&nbsp; {{ date }}
+  &nbsp;·&nbsp; For authorized security testing only
+</div>
+
+</main>
+
+<script>
+// Table row filter
+function filterTable(tableId, query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('#' + tableId + ' tbody tr').forEach(row => {
+    row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+// Code block line filter
+function filterCode(blockId, query) {
+  const block = document.getElementById(blockId);
+  if (!block) return;
+  const q = query.toLowerCase();
+  const lines = block.textContent.split('\n');
+  if (!q) {
+    block.textContent = lines.join('\n');
+    return;
+  }
+  const matched = lines.filter(l => l.toLowerCase().includes(q));
+  block.textContent = matched.join('\n');
+}
+
+// Active sidebar link tracking
+const sections = document.querySelectorAll('[id]');
+const sidebarLinks = document.querySelectorAll('.sidebar a');
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      sidebarLinks.forEach(l => l.classList.remove('active'));
+      const link = document.querySelector(`.sidebar a[href="#${e.target.id}"]`);
+      if (link) link.classList.add('active');
+    }
+  });
+}, { rootMargin: '-30% 0px -60% 0px' });
+sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>
