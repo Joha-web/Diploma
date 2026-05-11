@@ -91,7 +91,7 @@ class WebdetectModule(BaseModule):
             except Exception:
                 pass
 
-        return sorted(cands)
+        return self.filter_in_scope_urls(cands)
 
     # ── httpx ─────────────────────────────────────────────────────────────────
 
@@ -124,14 +124,18 @@ class WebdetectModule(BaseModule):
                 continue
             try:
                 e = json.loads(line)
+                url = e.get("url", "")
+                final_url = e.get("final-url", url)
+                if not self.is_in_scope(url) or (final_url and not self.is_in_scope(final_url)):
+                    continue
                 live.append({
-                    "url":            e.get("url", ""),
+                    "url":            url,
                     "status":         e.get("status-code", 0),
                     "title":          e.get("title", ""),
                     "server":         e.get("webserver", ""),
                     "content_length": e.get("content-length", 0),
                     "technologies":   e.get("technologies", []),
-                    "final_url":      e.get("final-url", e.get("url", "")),
+                    "final_url":      final_url,
                     "ip":             e.get("host", ""),
                     "screenshot":     "",
                 })
@@ -139,6 +143,8 @@ class WebdetectModule(BaseModule):
                 # plain text fallback: "https://example.com [200] [Title Here]"
                 m = re.match(r"(https?://\S+)\s+\[(\d+)\]", line)
                 if m:
+                    if not self.is_in_scope(m.group(1)):
+                        continue
                     live.append({"url": m.group(1), "status": int(m.group(2)),
                                  "title": "", "server": "", "content_length": 0,
                                  "technologies": [], "final_url": m.group(1),
@@ -150,6 +156,8 @@ class WebdetectModule(BaseModule):
         import subprocess
         live: list[dict] = []
         for url in urls[:200]:  # cap to 200 for curl
+            if not self.is_in_scope(url):
+                continue
             try:
                 r = subprocess.run(
                     ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",

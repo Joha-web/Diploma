@@ -59,6 +59,8 @@ class CMSScanModule(BaseModule):
             return {"scans": [], "total_findings": 0}
 
         cms_cfg = self.config.get("scan", {}).get("cms", {})
+        if not cms_cfg.get("wpscan_api_token"):
+            cms_cfg["wpscan_api_token"] = self.config.get("api_keys", {}).get("wpscan", "")
         scans: list[dict] = []
 
         for cms_name, urls in cms_targets.items():
@@ -105,6 +107,8 @@ class CMSScanModule(BaseModule):
         found: dict[str, list[str]] = {}
         for h in self.tech_results.get("hosts", []):
             url = h.get("url", "")
+            if url and not self.is_in_scope(url):
+                continue
             for t in h.get("technologies", []):
                 name = t.get("name", "")
                 # Normalize name
@@ -118,6 +122,8 @@ class CMSScanModule(BaseModule):
         for entry in self.tech_results.get("cms_detected", []):
             name = entry.get("name", "")
             url  = entry.get("url", "")
+            if url and not self.is_in_scope(url):
+                continue
             for known in CMS_SCANNERS:
                 if known.lower() in name.lower():
                     found.setdefault(known, [])

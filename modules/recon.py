@@ -6,6 +6,7 @@ Fixes: wildcard DNS detection, API rate limiting, better filtering.
 import re
 import time
 import random
+import json
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .base import BaseModule
@@ -188,21 +189,19 @@ class ReconModule(BaseModule):
     # ── API sources ───────────────────────────────────────────────────────────
 
     def _get_text(self, source: str, url: str, timeout: int = 20) -> str | None:
-        try:
-            r = requests.get(url, timeout=timeout, headers={"User-Agent": "ReconX/2.0"})
-            if r.status_code != 200:
-                self.warn(f"  {source}: HTTP {r.status_code}")
-                return None
-            return r.text or ""
-        except requests.exceptions.ReadTimeout:
-            self.warn(f"  {source}: timed out after {timeout}s")
+        r = self.http_get(
+            url,
+            enforce_scope=False,
+            timeout=timeout,
+            headers={"User-Agent": "ReconX/2.0"},
+        )
+        if r is None:
+            self.warn(f"  {source}: request failed")
             return None
-        except requests.exceptions.ConnectTimeout:
-            self.warn(f"  {source}: connection timed out after {timeout}s")
+        if r.status_code != 200:
+            self.warn(f"  {source}: HTTP {r.status_code}")
             return None
-        except requests.RequestException as e:
-            self.warn(f"  {source}: request failed ({e})")
-            return None
+        return r.text or ""
 
     def _get_json(self, source: str, url: str, timeout: int = 20):
         text = self._get_text(source, url, timeout)
@@ -212,7 +211,7 @@ class ReconModule(BaseModule):
             self.warn(f"  {source}: empty response")
             return None
         try:
-            return requests.models.complexjson.loads(text)
+            return json.loads(text)
         except ValueError:
             preview = text.strip().replace("\n", " ")[:120]
             self.warn(f"  {source}: non-JSON response ({preview})")
@@ -332,7 +331,7 @@ class ReconModule(BaseModule):
              "-title", "-status-code", "-tech-detect",
              "-follow-redirects", "-threads", "50", "-silent",
              "-o", str(out_file)], timeout=600)
-        self.live_http = self.load_lines(out_file)
+        self.live_http = self.filter_in_scope_urls(self.load_lines(out_file))
         self.success(f"Live HTTP hosts: {len(self.live_http)}")
 
     # ── URL collection ────────────────────────────────────────────────────────
@@ -347,7 +346,7 @@ class ReconModule(BaseModule):
                 urls = [u.strip() for u in r.stdout.splitlines() if u.strip()]
                 all_urls.update(urls)
                 self.success(f"{tool} → {len(urls)} URLs")
-        lst = sorted(all_urls)
+        lst = self.filter_in_scope_urls(all_urls)
         self.save_text(lst, "urls/all_urls.txt")
         return {"all_urls": lst, "total": len(lst)}
 

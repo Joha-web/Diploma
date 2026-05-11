@@ -300,4 +300,4 @@ class TechStackModule(BaseModule):
             m = re.search(r"https?://[^\s]+", line)
             if m:
                 urls.add(m.group(0))
-        return sorted(urls)
+        return self.filter_in_scope_urls(urls)

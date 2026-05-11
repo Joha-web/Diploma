@@ -235,6 +235,7 @@ class TelegramNotifier:
             f"  • Открытых портов: {summary.get('open_ports', 0)}\n"
             f"  • Технологий: {summary.get('technologies', 0)}\n"
             f"  • Уязвимостей: {summary.get('vulnerabilities', 0)}\n"
+            f"  • CVE: {summary.get('cves', 0)}\n"
             f"  • Endpoints: {summary.get('endpoints', 0)}\n"
             f"  • JS Secrets: {summary.get('js_secrets', 0)}\n"
             f"  • Время: {summary.get('elapsed', '?')}\n"
@@ -253,6 +254,7 @@ class TelegramNotifier:
             paths = list(report_paths)
 
         labels = {
+            ".json": "JSON",
             ".md": "Markdown",
             ".html": "HTML",
             ".pdf": "PDF",

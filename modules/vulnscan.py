@@ -23,6 +23,10 @@ class VulnScanModule(BaseModule):
     # ── Public API ────────────────────────────────────────────────────────────
 
     def run(self) -> dict:
+        if not self.config.get("scan", {}).get("nuclei", {}).get("enabled", True):
+            self.info("Nuclei disabled in config")
+            return {"findings": [], "by_severity": {}, "total": 0, "status": "disabled"}
+
         urls = self._extract_urls()
         if not urls:
             self.warn("No URLs for vulnerability scanning")
@@ -76,7 +80,12 @@ class VulnScanModule(BaseModule):
         severity  = ",".join(ncfg.get("severity", ["critical", "high", "medium"]))
         rate      = str(ncfg.get("rate_limit", 150))
         templates = ncfg.get("templates", ["cves", "exposures", "misconfiguration",
-                                           "default-logins", "takeovers"])
+                                           "takeovers"])
+        enable_risky = ncfg.get("enable_risky", False)
+        if not enable_risky:
+            risky_templates = {"default-logins", "fuzzing", "workflows"}
+            templates = [t for t in templates if t not in risky_templates]
+        exclude_tags = ncfg.get("exclude_tags", ["dos", "intrusive", "bruteforce", "destructive"])
 
         cmd = [
             "nuclei",
@@ -92,6 +101,8 @@ class VulnScanModule(BaseModule):
         ]
         for t in templates:
             cmd.extend(["-t", t])
+        if exclude_tags and not enable_risky:
+            cmd.extend(["-exclude-tags", ",".join(exclude_tags)])
 
         timeout = ncfg.get("nuclei_timeout", 3600)
         self.info(f"nuclei → {self._line_count(url_file)} URLs | severity: {severity}")
@@ -112,17 +123,26 @@ class VulnScanModule(BaseModule):
             try:
                 obj = json.loads(line)
                 info = obj.get("info", {})
+                matched_url = obj.get("matched-at", "")
+                if matched_url and not self.is_in_scope(matched_url):
+                    continue
+                cves = sorted({
+                    cve.upper()
+                    for cve in re.findall(r"CVE-\d{4}-\d{4,7}", json.dumps(obj, default=str), re.I)
+                })
                 findings.append({
                     "template_id":   obj.get("template-id", ""),
                     "name":          info.get("name", ""),
                     "severity":      info.get("severity", "info").upper(),
                     "description":   info.get("description", "")[:400],
-                    "matched_url":   obj.get("matched-at", ""),
+                    "matched_url":   matched_url,
                     "type":          obj.get("type", ""),
                     "tags":          info.get("tags", []),
+                    "cves":          cves,
                     "reference":     info.get("reference", [])[:3],
                     "curl_command":  obj.get("curl-command", "")[:500],
                     "extracted":     obj.get("extracted-results", [])[:5],
+                    "confidence":    0.95 if obj.get("matcher-status") else 0.85,
                 })
             except json.JSONDecodeError:
                 continue
@@ -148,7 +168,7 @@ class VulnScanModule(BaseModule):
             m = re.search(r"https?://[^\s]+", line)
             if m:
                 urls.add(m.group(0))
-        return sorted(urls)
+        return self.filter_in_scope_urls(urls)
 
     def _line_count(self, path: Path) -> int:
         if not path.exists():

@@ -1,0 +1,107 @@
+# ReconX configuration template.
+# Copy to config.yaml for local use. Do not commit real secrets.
+
+api_keys:
+  shodan: ""
+  virustotal: ""
+  wpscan: ""
+
+telegram:
+  enabled: true
+  bot_token: ""     # or env TELEGRAM_BOT_TOKEN
+  chat_id: ""       # or env TELEGRAM_CHAT_ID
+  notify_on:
+    - start
+    - module_complete
+    - critical_finding
+    - complete
+
+ai:
+  enabled: true
+  provider: "ollama"
+  model: "deepseek-r1:7b"
+  ollama_url: "http://localhost:11434"
+  openai_api_key: ""
+  openai_base_url: "https://api.openai.com/v1"
+  temperature: 0.3
+  max_tokens: 4096
+  language: "ru"
+
+scan:
+  threads: 50
+  timeout: 30
+  rate_limit: 50
+  global_rate_limit: 50
+  allow_write: false
+
+  subdomains:
+    use_subfinder: true
+    use_amass: true
+    use_assetfinder: true
+    use_crtsh: true
+    use_hackertarget: true
+    use_alienvault: true
+    use_rapiddns: true
+    use_wayback_cdx: true
+    use_threatminer: true
+    wayback_timeout: 15
+    wayback_limit: 1000
+    amass_timeout: 180
+
+  ports:
+    mode: "top-1000"
+    scanner: "nmap"
+    masscan_rate: 3000
+
+  http:
+    follow_redirects: true
+    tech_detect: true
+    screenshots: false
+
+  fuzzing:
+    depth: 3
+    rate: 100
+    graphql_probe: true
+    extensions: [".php", ".asp", ".aspx", ".jsp", ".html", ".js", ".json"]
+
+  nuclei:
+    enabled: true
+    severity: [critical, high, medium]
+    templates: [cves, exposures, misconfiguration, takeovers]
+    enable_risky: false
+    exclude_tags: [dos, intrusive, bruteforce, destructive]
+    rate_limit: 150
+    nuclei_timeout: 3600
+
+  cms:
+    wpscan_api_token: ""
+    enumerate: "vp,vt,u,tt"
+
+  cve_check:
+    enabled: true
+    searchsploit: true
+    max_queries: 40
+    attack_simulation: dry_run
+
+wordlists:
+  search_paths:
+    - /opt/SecLists
+    - /usr/share/seclists
+    - /usr/share/wordlists
+    - /usr/share/dirb/wordlists
+  dirs: "directory-list-2.3-medium.txt"
+  files: "raft-medium-files.txt"
+  params: "burp-parameter-names.txt"
+
+reporting:
+  formats: [html, md, json]
+  language: "ru"
+
+scope:
+  enforce: true
+  allowed_domains: []
+  allowed_ips: []
+  excluded: []
+
+legal:
+  require_acknowledgment: false

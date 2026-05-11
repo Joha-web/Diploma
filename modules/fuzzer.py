@@ -9,6 +9,7 @@ import glob
 import time
 import urllib3
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests
 
@@ -25,6 +26,11 @@ CLASSIFY_PATTERNS: dict[str, str] = {
     "admin_panels":   r"/(admin|administrator|dashboard|console|panel|manage|management|debug|test|dev|staging|internal|actuator|monitor|metrics)",
     "with_params":    r"\?.*=",
 }
+
+GRAPHQL_PATHS = [
+    "/graphql", "/api/graphql", "/v1/graphql", "/query",
+    "/graphiql", "/playground", "/api",
+]
 
 # JS secret patterns
 SECRET_PATTERNS: list[re.Pattern] = [
@@ -51,7 +57,7 @@ class FuzzerModule(BaseModule):
                  live_hosts: list | None = None):
         super().__init__(target, output_dir, config)
         self.live_hosts = live_hosts or []
-        for sub in ("crawl", "ferox", "ffuf", "js_mining", "merged"):
+        for sub in ("crawl", "ferox", "ffuf", "js_mining", "graphql", "merged"):
             (self.module_dir / sub).mkdir(exist_ok=True)
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -81,17 +87,25 @@ class FuzzerModule(BaseModule):
         js_eps, js_secrets = self._js_mining(crawled)
         all_endpoints.update(js_eps)
 
-        # 5. Classify & save
+        # 5. Lightweight GraphQL endpoint detection
+        graphql = []
+        if self.config.get("scan", {}).get("fuzzing", {}).get("graphql_probe", True):
+            graphql = self._detect_graphql(urls)
+            all_endpoints.update(graphql)
+
+        # 6. Classify & save
         merged = sorted(all_endpoints)
         self.save_text(merged, "merged/all_endpoints.txt")
         classified = self._classify(merged)
         classified["js_secrets"] = js_secrets
+        classified["graphql"] = graphql
 
         self.success(f"Total unique endpoints: {len(merged)}")
         return {
             "total_endpoints":  len(merged),
             "classified":       classified,
             "js_secrets_count": len(js_secrets),
+            "graphql_endpoints": graphql,
         }
 
     def summary(self) -> str:
@@ -117,7 +131,7 @@ class FuzzerModule(BaseModule):
                  "-c", "10", "-p", "10", "-silent", "-o", str(out)],
                 timeout=300,
             )
-            found.update(self.load_lines(out))
+            found.update(self.filter_in_scope_urls(self.load_lines(out)))
 
         self.success(f"katana → {len(found)} URLs")
         return found
@@ -134,6 +148,7 @@ class FuzzerModule(BaseModule):
 
         self.info("Directory bruteforce (feroxbuster)")
         found: set[str] = set()
+        rate = str(self.config.get("scan", {}).get("fuzzing", {}).get("rate", 100))
 
         for host in urls:
             safe = re.sub(r"https?://|[/:]", "_", host)
@@ -141,13 +156,13 @@ class FuzzerModule(BaseModule):
             self.exec(
                 ["feroxbuster", "--url", host, "--wordlist", wl,
                  "--depth", "2", "--threads", "30", "--timeout", "10",
-                 "--rate-limit", "150", "--auto-tune", "--redirects",
+                 "--rate-limit", rate, "--auto-tune", "--redirects",
                  "--filter-status", "404,400,503",
                  "--output", str(out), "--no-state", "--quiet"],
                 timeout=600,
             )
             for line in self.load_lines(out):
-                found.update(self.extract_urls(line))
+                found.update(self.filter_in_scope_urls(self.extract_urls(line)))
 
         self.success(f"feroxbuster → {len(found)} URLs")
         return found
@@ -163,6 +178,7 @@ class FuzzerModule(BaseModule):
 
         self.info("Fuzzing (ffuf)")
         found: set[str] = set()
+        rate = str(self.config.get("scan", {}).get("fuzzing", {}).get("rate", 100))
 
         for host in urls:
             safe = re.sub(r"https?://|[/:]", "_", host)
@@ -172,14 +188,14 @@ class FuzzerModule(BaseModule):
             self.exec(
                 ["ffuf", "-u", f"{host}/FUZZ", "-w", wl,
                  "-mc", "200,201,204,301,302,307,401,403,405",
-                 "-t", "40", "-timeout", "10", "-rate", "100",
+                 "-t", "40", "-timeout", "10", "-rate", rate,
                  "-recursion", "-recursion-depth", "2",
                  "-of", "json", "-o", str(out), "-s"],
                 timeout=600,
             )
             data = self.load_json(out)
             for r in data.get("results", []):
-                if r.get("url"):
+                if r.get("url") and self.is_in_scope(r["url"]):
                     found.add(r["url"])
 
             # Backup / sensitive file fuzzing
@@ -187,13 +203,13 @@ class FuzzerModule(BaseModule):
             self.exec(
                 ["ffuf", "-u", f"{host}/FUZZ", "-w", self._backup_wordlist(),
                  "-mc", "200,201,301,302",
-                 "-t", "20", "-timeout", "10", "-rate", "50",
+                 "-t", "20", "-timeout", "10", "-rate", str(max(1, int(rate) // 2)),
                  "-of", "json", "-o", str(out_bak), "-s"],
                 timeout=300,
             )
             bak_data = self.load_json(out_bak)
             for r in bak_data.get("results", []):
-                if r.get("url"):
+                if r.get("url") and self.is_in_scope(r["url"]):
                     found.add(r["url"])
                     self.warn(f"  ⚠ Sensitive file found: {r['url']}")
 
@@ -220,7 +236,9 @@ class FuzzerModule(BaseModule):
 
         for jsurl in js_urls[:150]:   # cap at 150 JS files
             try:
-                resp = sess.get(jsurl, timeout=15)
+                resp = self.http_get(jsurl, session=sess, timeout=15)
+                if resp is None:
+                    continue
                 if resp.status_code != 200:
                     continue
                 content = resp.text
@@ -246,6 +264,46 @@ class FuzzerModule(BaseModule):
         self.save_json(secrets, "js_mining/js_secrets.json")
         self.success(f"JS Mining → {len(endpoints)} endpoints, {len(secrets)} secrets")
         return endpoints, secrets
+
+    # ── GraphQL detection ───────────────────────────────────────────────────
+
+    def _detect_graphql(self, urls: list[str]) -> list[str]:
+        found: set[str] = set()
+        sess = requests.Session()
+        sess.verify = False
+        sess.headers["User-Agent"] = "Mozilla/5.0 ReconX/2.0"
+
+        for base in urls[:80]:
+            for path in GRAPHQL_PATHS:
+                endpoint = urljoin(base.rstrip("/") + "/", path.lstrip("/"))
+                if not self.is_in_scope(endpoint):
+                    continue
+                try:
+                    resp = self.http_get(
+                        endpoint,
+                        session=sess,
+                        params={"query": "{ __typename }"},
+                        timeout=8,
+                    )
+                    if resp is None:
+                        continue
+                    text = (resp.text or "")[:2000].lower()
+                    content_type = resp.headers.get("content-type", "").lower()
+                    if resp.status_code == 200 and (
+                        "application/json" in content_type
+                        or '"data"' in text
+                        or '"errors"' in text
+                        or "graphql" in text
+                    ):
+                        found.add(endpoint)
+                        self.warn(f"  GraphQL endpoint candidate: {endpoint}")
+                except Exception:
+                    continue
+
+        result = sorted(found)
+        if result:
+            self.save_text(result, "graphql/endpoints.txt")
+        return result
 
     # ── Classification ────────────────────────────────────────────────────────
 
@@ -306,4 +364,4 @@ class FuzzerModule(BaseModule):
             m = re.search(r"https?://[^\s]+", line)
             if m:
                 urls.add(m.group(0))
-        return sorted(urls)
+        return self.filter_in_scope_urls(urls)

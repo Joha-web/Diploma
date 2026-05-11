@@ -8,7 +8,9 @@ Usage:
 """
 
 import argparse
+import copy
 import json
+import os
 import sys
 import time
 import importlib
@@ -47,7 +49,8 @@ PIPELINE: list[dict] = [
     {"name": "ssl_checker", "group": 4},   # parallel with fuzzer
     {"name": "cmscan",      "group": 5},
     {"name": "vulnscan",    "group": 6},
-    {"name": "ai_report",   "group": 7},
+    {"name": "cve_check",   "group": 7},
+    {"name": "ai_report",   "group": 8},
 ]
 
 CLASS_MAP = {
@@ -59,6 +62,7 @@ CLASS_MAP = {
     "ssl_checker": ("modules.ssl_checker",  "SSLCheckerModule"),
     "cmscan":      ("modules.cmscan",       "CMSScanModule"),
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
+    "cve_check":   ("modules.cve_check",    "CVECheckModule"),
     "ai_report":   ("modules.ai_report",    "AIReportModule"),
 }
 
@@ -72,6 +76,7 @@ MODULE_LABELS = {
     "ssl_checker": "SSL/TLS & Headers Analysis",
     "cmscan":      "CMS Vulnerability Scanning",
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
+    "cve_check":   "CVE & ExploitDB Correlation",
     "ai_report":   "AI Security Analysis",
 }
 
@@ -112,6 +117,11 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["live_hosts"] = live
     elif name == "cmscan":
         kwargs["tech_results"] = all_results.get("techstack", {})
+    elif name == "cve_check":
+        kwargs["live_hosts"] = live
+        kwargs["tech_results"] = all_results.get("techstack", {})
+        kwargs["vuln_results"] = all_results.get("vulnscan", {})
+        kwargs["all_results"] = all_results
     elif name == "ai_report":
         kwargs["all_results"] = all_results
     return kwargs
@@ -140,6 +150,10 @@ def _module_summary(name: str, result: dict) -> str:
                 f"{result.get('js_secrets_count', 0)} JS secrets")
     elif name == "vulnscan":
         return f"{result.get('total', 0)} vulnerabilities"
+    elif name == "cve_check":
+        summary = result.get("summary", {})
+        return (f"{summary.get('total_cves', 0)} CVEs, "
+                f"{summary.get('with_exploitdb', 0)} ExploitDB match(es)")
     elif name == "cmscan":
         return f"{result.get('total_findings', 0)} findings"
     elif name == "ssl_checker":
@@ -240,7 +254,7 @@ def run_pipeline(
         else:
             # Parallel — snapshot all_results so threads don't race
             console.print(f"\n[bold cyan]⚡ Running in parallel: {', '.join(names)}[/bold cyan]")
-            snapshot = dict(all_results)
+            snapshot = copy.deepcopy(all_results)
             with ThreadPoolExecutor(max_workers=len(names)) as pool:
                 futures = {
                     pool.submit(run_one, n, target, session_dir, config, snapshot, resume): n
@@ -282,6 +296,15 @@ def run_pipeline(
     report_path = ""
     pdf_path = ""
     md_path = ""
+    json_path = ""
+    if "json" in formats:
+        try:
+            from reporting.json_report import generate_json_report
+            json_path = generate_json_report(session_dir, target, all_results, elapsed)
+            console.print(f"  [green]✓[/green]  JSON → {json_path}")
+        except Exception as e:
+            console.print(f"  [red]✗[/red]  JSON report: {e}")
+
     if "html" in formats:
         try:
             from reporting.html_report import HTMLReportGenerator
@@ -314,6 +337,7 @@ def run_pipeline(
         tech  = all_results.get("techstack", {})
         fuzz  = all_results.get("fuzzer", {})
         vuln  = all_results.get("vulnscan", {})
+        cve   = all_results.get("cve_check", {})
 
         tg_summary = {
             "subdomains":      recon.get("subdomains_total", 0),
@@ -321,12 +345,13 @@ def run_pipeline(
             "open_ports":      ports.get("total_open_ports", 0),
             "technologies":    len(tech.get("technologies_summary", {})),
             "vulnerabilities": vuln.get("total", 0),
+            "cves":            cve.get("summary", {}).get("total_cves", 0),
             "endpoints":       fuzz.get("total_endpoints", 0),
             "js_secrets":      fuzz.get("js_secrets_count", 0),
             "elapsed":         elapsed,
         }
 
-        report_files = [p for p in (md_path, report_path, pdf_path) if p]
+        report_files = [p for p in (json_path, md_path, report_path, pdf_path) if p]
         tg.notify_complete(target, tg_summary, report_files)
 
     return all_results
@@ -342,6 +367,7 @@ def _md_report(
     tech  = results.get("techstack", {})
     fuzz  = results.get("fuzzer", {})
     vuln  = results.get("vulnscan", {})
+    cve   = results.get("cve_check", {})
 
     lines = [
         f"# 🔬 ReconX: `{target}`",
@@ -355,6 +381,8 @@ def _md_report(
         f"| Technologies | {len(tech.get('technologies_summary', {}))} |",
         f"| Endpoints | {fuzz.get('total_endpoints', 0)} |",
         f"| Vulnerabilities | {vuln.get('total', 0)} |",
+        f"| CVEs | {cve.get('summary', {}).get('total_cves', 0)} |",
+        f"| ExploitDB matches | {cve.get('summary', {}).get('with_exploitdb', 0)} |",
         f"| JS Secrets | {fuzz.get('js_secrets_count', 0)} |",
         "",
     ]
@@ -364,6 +392,20 @@ def _md_report(
     for f in vuln.get("findings", [])[:50]:
         sev = f.get("severity", "").upper()
         lines.append(f"| {sev} | {f.get('name','')} | {f.get('matched_url','')} |")
+
+    cves = cve.get("cves", [])
+    if cves:
+        lines += ["", "---\n## CVE / ExploitDB Correlation\n",
+                  "| CVE | Severity | Target | ExploitDB | Mode |",
+                  "|-----|----------|--------|-----------|------|"]
+        for item in cves[:50]:
+            edb = "yes" if item.get("exploit_available") else "no"
+            sim = item.get("attack_simulation", {}).get("mode", "dry_run")
+            target_ref = item.get("matched_url") or item.get("component", "")
+            lines.append(
+                f"| {item.get('cve', '')} | {item.get('severity', '')} | "
+                f"{target_ref} | {edb} | {sim} |"
+            )
 
     path = session_dir / "report.md"
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -378,6 +420,7 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     tech  = results.get("techstack", {})
     fuzz  = results.get("fuzzer", {})
     vuln  = results.get("vulnscan", {})
+    cve   = results.get("cve_check", {})
     n_vuln = vuln.get("total", 0)
 
     t = Table(show_header=False, border_style="dim", box=None, padding=(0, 1))
@@ -392,6 +435,7 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     t.add_row("🧰 Technologies",     str(len(tech.get("technologies_summary", {}))))
     t.add_row("🔎 Endpoints",        str(fuzz.get("total_endpoints", 0)))
     t.add_row("🚨 Vulnerabilities",  f"[{'red' if n_vuln else 'green'}]{n_vuln}[/{'red' if n_vuln else 'green'}]")
+    t.add_row("🧨 CVEs",             str(cve.get("summary", {}).get("total_cves", 0)))
     t.add_row("🔑 JS Secrets",       str(fuzz.get("js_secrets_count", 0)))
 
     console.print(Panel(t, title="[bold magenta]ReconX — Complete[/bold magenta]",
@@ -411,6 +455,23 @@ def load_config(path: str) -> dict:
 
     with cfg_path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def load_env_file(path: str | Path = ".env") -> None:
+    """Load simple KEY=VALUE pairs from .env without overriding real environment."""
+    env_path = Path(path)
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key:
+            os.environ.setdefault(key, value)
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -433,6 +494,8 @@ Examples:
     p.add_argument("-s", "--skip",    help="Comma-separated modules to skip")
     p.add_argument("-r", "--resume",  action="store_true",
                    help="Reuse cached module results from a previous run")
+    p.add_argument("--legal-acknowledgment", action="store_true",
+                   help="Confirm you are authorized to scan the target")
     p.add_argument("--list-modules",  action="store_true")
 
     args = p.parse_args()
@@ -457,11 +520,21 @@ Examples:
         skip = {m.strip() for m in args.skip.split(",")}
         active = [m for m in active if m not in skip]
 
+    load_env_file(Path(args.config).with_name(".env"))
+    cfg = load_config(args.config)
+    legal_cfg = cfg.get("legal", {})
+    if legal_cfg.get("require_acknowledgment", False) and not args.legal_acknowledgment:
+        console.print("[red]Error: pass --legal-acknowledgment to confirm authorization[/red]")
+        sys.exit(2)
+
     console.print(f"[bold]Target:[/bold]  [cyan]{args.target}[/cyan]")
     console.print(f"[bold]Modules:[/bold] {', '.join(active)}")
-    console.print(f"[bold]Resume:[/bold]  {'yes' if args.resume else 'no'}\n")
+    console.print(f"[bold]Resume:[/bold]  {'yes' if args.resume else 'no'}")
+    if args.legal_acknowledgment:
+        console.print("[green]Legal acknowledgment:[/green] authorization confirmed\n")
+    else:
+        console.print("[yellow]Legal notice:[/yellow] run only with written authorization and defined scope\n")
 
-    cfg = load_config(args.config)
     session_dir = create_session_dir(args.target, args.output)
     console.print(f"[bold]Output:[/bold]  {session_dir}\n")
 

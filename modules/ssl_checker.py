@@ -7,10 +7,10 @@ import re
 import ssl
 import socket
 import urllib3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 import requests
-from requests.exceptions import RequestException
 
 from modules.base import BaseModule
 
@@ -52,11 +52,17 @@ class SSLCheckerModule(BaseModule):
 
         # SSL/TLS checks
         ssl_results: list[dict] = []
-        for url in https_urls[:60]:
-            host = self._host_from_url(url)
-            result = self._check_ssl(host)
-            ssl_results.append(result)
-            self._log_ssl(result)
+        if https_urls:
+            workers = min(20, max(1, len(https_urls[:60])))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(self._check_ssl, self._host_from_url(url)): url
+                    for url in https_urls[:60]
+                }
+                for future in as_completed(futures):
+                    result = future.result()
+                    ssl_results.append(result)
+                    self._log_ssl(result)
 
         # Security headers checks
         sess = requests.Session()
@@ -170,9 +176,8 @@ class SSLCheckerModule(BaseModule):
     # ── Security headers ──────────────────────────────────────────────────────
 
     def _check_headers(self, url: str, sess: requests.Session) -> dict | None:
-        try:
-            resp = sess.get(url, timeout=10, allow_redirects=True)
-        except RequestException:
+        resp = self.http_get(url, session=sess, timeout=10, allow_redirects=True)
+        if resp is None:
             return None
 
         h = {k.lower(): v for k, v in resp.headers.items()}
@@ -230,7 +235,7 @@ class SSLCheckerModule(BaseModule):
             m = re.search(r"https?://[^\s]+", line)
             if m:
                 urls.add(m.group(0))
-        return sorted(urls)
+        return self.filter_in_scope_urls(urls)
 
     @staticmethod
     def _host_from_url(url: str) -> str:

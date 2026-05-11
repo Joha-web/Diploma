@@ -70,6 +70,7 @@ class AIReportModule(BaseModule):
         fuzz   = r.get("fuzzer", {})
         cms    = r.get("cmscan", {})
         vuln   = r.get("vulnscan", {})
+        cve    = r.get("cve_check", {})
         ssl    = r.get("ssl_checker", {})
 
         blocks: list[str] = []
@@ -111,6 +112,16 @@ class AIReportModule(BaseModule):
             for f in vf[:30]:
                 blocks.append(
                     f"  [{f['severity']}] {f['name']} → {f['matched_url']}"
+                )
+
+        cves = cve.get("cves", [])
+        if cves:
+            blocks.append(f"\nCVE / EXPLOITDB CORRELATION ({len(cves)} CVEs):")
+            for item in cves[:20]:
+                edb = "ExploitDB match" if item.get("exploit_available") else "no ExploitDB match"
+                blocks.append(
+                    f"  [{item.get('severity','?')}] {item.get('cve','')} "
+                    f"→ {item.get('matched_url','')} ({edb}, dry-run only)"
                 )
 
         # ── Fuzzing

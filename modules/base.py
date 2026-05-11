@@ -12,9 +12,16 @@ import json
 import os
 import re
 import time
+import ipaddress
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
+
+import requests
 from rich.console import Console
+
+from modules.audit import AuditLogger
+from modules.rate_limiter import TokenBucket
 
 console = Console()
 
@@ -30,6 +37,14 @@ class BaseModule:
         self.target = target
         self.output_dir = Path(output_dir)
         self.config = config
+        self.domain = self._clean_domain(target)
+        rate = (
+            self.config.get("scan", {}).get("global_rate_limit")
+            or self.config.get("scan", {}).get("rate_limit")
+            or 100
+        )
+        self.rate_limiter = TokenBucket(rate=rate)
+        self.audit = AuditLogger(self.output_dir)
         self.results = {}
         self.start_time = None
         self.end_time = None
@@ -87,6 +102,137 @@ class BaseModule:
             except json.JSONDecodeError:
                 pass
         return {}
+
+    # ── HTTP helpers: scope, rate limiting, audit ─────────────────────────
+    def http_request(
+        self,
+        method: str,
+        url: str,
+        session: requests.Session | None = None,
+        enforce_scope: bool = True,
+        safe_readonly: bool = False,
+        **kwargs,
+    ) -> requests.Response | None:
+        """Run one HTTP request with scope enforcement, global rate limit, and audit."""
+        method = method.upper()
+        in_scope = self.is_in_scope(url) if enforce_scope else True
+
+        if enforce_scope and not in_scope:
+            self.warn(f"Blocked out-of-scope request: {url}")
+            self.audit.log_request(self.name, url, method, None, 0.0, in_scope=False,
+                                   error="out_of_scope")
+            return None
+
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            allow_write = self.config.get("scan", {}).get("allow_write", False)
+            if not allow_write and not safe_readonly:
+                self.warn(f"Blocked write-like HTTP method without allow_write: {method} {url}")
+                self.audit.log_request(self.name, url, method, None, 0.0, in_scope=in_scope,
+                                       error="write_method_blocked")
+                return None
+
+        self.rate_limiter.acquire()
+        start = time.monotonic()
+        requester = session if session is not None else requests
+        try:
+            response = requester.request(method, url, **kwargs)
+            elapsed = time.monotonic() - start
+            self.audit.log_request(
+                self.name, url, method, response.status_code, elapsed, in_scope=in_scope
+            )
+            return response
+        except requests.RequestException as exc:
+            elapsed = time.monotonic() - start
+            self.audit.log_request(
+                self.name, url, method, None, elapsed, in_scope=in_scope, error=str(exc)
+            )
+            return None
+
+    def http_get(self, url: str, **kwargs) -> requests.Response | None:
+        return self.http_request("GET", url, **kwargs)
+
+    def http_post(self, url: str, safe_readonly: bool = False, **kwargs) -> requests.Response | None:
+        return self.http_request("POST", url, safe_readonly=safe_readonly, **kwargs)
+
+    def is_in_scope(self, value: str) -> bool:
+        """Return True when a URL/host belongs to configured scan scope."""
+        scope_cfg = self.config.get("scope", {})
+        if scope_cfg.get("enforce", True) is False:
+            return True
+
+        host = self._hostname(value)
+        if not host:
+            return False
+
+        excluded = scope_cfg.get("excluded", []) or []
+        if any(self._host_matches(host, self._hostname_or_domain(item)) for item in excluded):
+            return False
+
+        if self._is_ip(host):
+            allowed_ips = set(scope_cfg.get("allowed_ips", []) or [])
+            if self._is_ip(self.domain) and scope_cfg.get("allow_target_ip", True):
+                allowed_ips.add(self.domain)
+            return host in allowed_ips
+
+        allowed_domains = scope_cfg.get("allowed_domains", []) or []
+        if not allowed_domains and self.domain and not self._is_ip(self.domain):
+            allowed_domains = [self.domain]
+
+        return any(
+            self._host_matches(host, self._hostname_or_domain(domain))
+            for domain in allowed_domains
+        )
+
+    def filter_in_scope_urls(self, items: list[str] | set[str]) -> list[str]:
+        filtered: list[str] = []
+        blocked = 0
+        for item in items:
+            if self.is_in_scope(str(item)):
+                filtered.append(str(item))
+            else:
+                blocked += 1
+        if blocked:
+            self.warn(f"Scope filter removed {blocked} out-of-scope URL(s)")
+        return sorted(self.unique(filtered))
+
+    @classmethod
+    def _hostname(cls, value: str) -> str:
+        value = str(value or "").strip()
+        match = re.search(r"https?://[^\s'\"<>]+", value)
+        if match:
+            value = match.group(0)
+
+        try:
+            parsed = urlparse(value if "://" in value else f"//{value}")
+            host = parsed.hostname or ""
+        except Exception:
+            host = value.split("/", 1)[0].split(":", 1)[0]
+        return host.strip(".").lower()
+
+    @classmethod
+    def _hostname_or_domain(cls, value: str) -> str:
+        host = cls._hostname(value)
+        return host.lstrip("*.").strip(".").lower()
+
+    @staticmethod
+    def _host_matches(host: str, allowed: str) -> bool:
+        if not allowed:
+            return False
+        allowed = allowed.lstrip("*.").strip(".").lower()
+        return host == allowed or host.endswith(f".{allowed}")
+
+    @staticmethod
+    def _is_ip(value: str) -> bool:
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _clean_domain(target: str) -> str:
+        host = BaseModule._hostname(target)
+        return host or str(target).strip().lower()
 
     # ── Cross-module file access ─────────────────────────────────
     def session_path(self, module: str, *path_parts: str) -> Path:

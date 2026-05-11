@@ -5,6 +5,7 @@ AI analysis is rendered from Markdown to HTML for proper formatting.
 """
 
 import json
+import html
 from pathlib import Path
 from datetime import datetime
 
@@ -15,6 +16,19 @@ try:
     HAS_MARKDOWN = True
 except ImportError:
     HAS_MARKDOWN = False
+
+try:
+    import bleach
+    HAS_BLEACH = True
+except ImportError:
+    HAS_BLEACH = False
+
+ALLOWED_TAGS = [
+    "h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "li",
+    "code", "pre", "strong", "em", "table", "thead", "tbody", "tr",
+    "td", "th", "br", "blockquote", "a",
+]
+ALLOWED_ATTRS = {"a": ["href", "title", "rel", "target"]}
 
 
 class HTMLReportGenerator:
@@ -54,6 +68,7 @@ class HTMLReportGenerator:
         fuzz  = r.get("fuzzer", {})
         cms   = r.get("cmscan", {})
         vuln  = r.get("vulnscan", {})
+        cve   = r.get("cve_check", {})
         ssl   = r.get("ssl_checker", {})
 
         # Ensure by_severity exists
@@ -68,6 +83,10 @@ class HTMLReportGenerator:
         if "total" not in vuln:
             vuln["total"] = len(vuln.get("findings", []))
 
+        cve.setdefault("summary", {})
+        cve.setdefault("cves", [])
+        cve.setdefault("technology_matches", [])
+
         summary = {
             "subdomains":      recon.get("subdomains_total", 0),
             "live_hosts":      len(recon.get("live_http", [])),
@@ -76,6 +95,8 @@ class HTMLReportGenerator:
             "technologies":    len(tech.get("technologies_summary", {})),
             "endpoints":       fuzz.get("total_endpoints", 0),
             "vulnerabilities": vuln.get("total", 0),
+            "cves":            cve.get("summary", {}).get("total_cves", 0),
+            "exploitdb":        cve.get("summary", {}).get("with_exploitdb", 0),
             "js_secrets":      fuzz.get("js_secrets_count", 0),
         }
 
@@ -94,6 +115,7 @@ class HTMLReportGenerator:
             "fuzz":        fuzz,
             "cms":         cms,
             "vuln":        vuln,
+            "cve":         cve,
             "ssl":         ssl,
             "ai_analysis": ai_html,
             "summary":     summary,
@@ -103,9 +125,19 @@ class HTMLReportGenerator:
     def _render_markdown(text: str) -> str:
         """Convert markdown text to HTML. Falls back to <pre> if markdown lib is missing."""
         if HAS_MARKDOWN:
-            return markdown.markdown(
+            rendered = markdown.markdown(
                 text,
                 extensions=["tables", "fenced_code", "nl2br", "sane_lists"],
             )
-        # Fallback: wrap in <pre> for basic readability
-        return f"<pre>{text}</pre>"
+        else:
+            rendered = f"<pre>{html.escape(text)}</pre>"
+
+        if HAS_BLEACH:
+            return bleach.clean(
+                rendered,
+                tags=ALLOWED_TAGS,
+                attributes=ALLOWED_ATTRS,
+                protocols=["http", "https", "mailto"],
+                strip=True,
+            )
+        return html.escape(rendered)

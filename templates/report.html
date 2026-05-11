@@ -415,6 +415,9 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   {% if high  %}<a href="#vulns" class="high">🟠 High ({{ high }})</a>{% endif %}
   <a href="#vulns" class="medium">🚨 All vulns ({{ vuln.total }})</a>
   {% endif %}
+  {% if cve.cves or cve.technology_matches %}
+  <a href="#cve" class="high">CVE / ExploitDB ({{ cve.summary.get('total_cves', 0) }})</a>
+  {% endif %}
 
   <div class="sidebar-section">Infrastructure</div>
   <a href="#subdomains"><span class="dot"></span> Subdomains</a>
@@ -489,6 +492,18 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
     <div class="lbl">Vulnerabilities</div>
   </div>
   <div class="stat-card">
+    <div class="val {% if summary.exploitdb > 0 %}warn{% endif %}">
+      {{ summary.cves }}
+    </div>
+    <div class="lbl">CVEs</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.exploitdb > 0 %}warn{% endif %}">
+      {{ summary.exploitdb }}
+    </div>
+    <div class="lbl">ExploitDB</div>
+  </div>
+  <div class="stat-card">
     <div class="val {% if summary.js_secrets > 0 %}warn{% endif %}">
       {{ summary.js_secrets }}
     </div>
@@ -532,6 +547,81 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
       </tbody>
     </table>
   </div>
+</div>
+{% endif %}
+
+<!-- CVE / ExploitDB -->
+{% if cve.cves or cve.technology_matches %}
+<div class="section" id="cve">
+  <div class="section-header">
+    <div class="section-title">CVE / ExploitDB Correlation
+      <span class="count-badge">{{ cve.summary.get('with_exploitdb', 0) }} matched</span>
+    </div>
+    <input class="filter-input" type="text" placeholder="Filter…" oninput="filterTable('cve-table', this.value)">
+  </div>
+  {% if cve.cves %}
+  <div class="table-wrap" style="margin-bottom:16px">
+    <table id="cve-table">
+      <thead><tr>
+        <th>CVE</th><th>Severity</th><th>Target</th><th>ExploitDB</th><th>Mode</th>
+      </tr></thead>
+      <tbody>
+        {% for item in cve.cves %}
+        <tr>
+          <td><code>{{ item.cve }}</code></td>
+          <td><span class="badge badge-{{ item.severity }}">{{ item.severity }}</span></td>
+          <td><code>{{ item.matched_url or item.name }}</code></td>
+          <td>
+            {% if item.exploitdb %}
+              {% for e in item.exploitdb[:3] %}
+              <a href="{{ e.url }}" style="color:var(--cyan)" target="_blank" rel="noopener">{{ e.edb_id }}</a>
+              {% endfor %}
+            {% else %}
+              <span style="color:var(--muted)">—</span>
+            {% endif %}
+          </td>
+          <td><span class="badge badge-INFO">{{ item.attack_simulation.mode }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if cve.technology_matches %}
+  <details open>
+    <summary>Technology version matches <span class="count-badge">{{ cve.technology_matches | length }}</span></summary>
+    <div class="detail-body">
+      <table>
+        <thead><tr><th>Component</th><th>Version</th><th>URLs</th><th>ExploitDB</th></tr></thead>
+        <tbody>
+          {% for item in cve.technology_matches %}
+          <tr>
+            <td>{{ item.component }}</td>
+            <td><code>{{ item.version }}</code></td>
+            <td><code>{{ item.urls[:3] | join(', ') }}</code></td>
+            <td>
+              {% for e in item.exploitdb[:3] %}
+              <a href="{{ e.url }}" style="color:var(--cyan)" target="_blank" rel="noopener">{{ e.edb_id }}</a>
+              {% endfor %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+
+  <details>
+    <summary>Attack simulation policy</summary>
+    <div class="detail-body">
+      <p style="color:var(--muted);font-size:.85em">
+        ReconX records exploit availability and dry-run validation context, but does not execute public exploit code automatically.
+        Intrusive validation should be performed manually only inside the written scope or a lab replica.
+      </p>
+    </div>
+  </details>
 </div>
 {% endif %}
 
@@ -684,6 +774,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   </div>
   {% set cats = [
     ('api',            '🔌 API Endpoints'),
+    ('graphql',        'GraphQL Endpoints'),
     ('auth',           '🔐 Auth Endpoints'),
     ('sensitive_files','⚠ Sensitive Files'),
     ('admin_panels',   '🎯 Admin Panels'),
