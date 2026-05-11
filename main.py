@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.rule import Rule
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 
 console = Console()
 
@@ -31,7 +32,7 @@ BANNER = r"""
   / /_/ / _ \/ ___/ __ \/ __ \ |   /
  / _, _/  __/ /__/ /_/ / / / //   |
 /_/ |_|\___/\___/\____/_/ /_//_/|_|
-                              v1.0.0
+                              v2.0.0
 [/bold magenta][dim]Red Team · AppSec · Reconnaissance Framework[/dim]
 """
 
@@ -61,6 +62,19 @@ CLASS_MAP = {
     "ai_report":   ("modules.ai_report",    "AIReportModule"),
 }
 
+# Module display names for Telegram and console
+MODULE_LABELS = {
+    "recon":       "DNS & Subdomain Enumeration",
+    "portscan":    "Port Scanning",
+    "webdetect":   "Web Application Detection",
+    "techstack":   "Technology Fingerprinting",
+    "fuzzer":      "Crawling & Fuzzing",
+    "ssl_checker": "SSL/TLS & Headers Analysis",
+    "cmscan":      "CMS Vulnerability Scanning",
+    "vulnscan":    "Vulnerability Scanning (Nuclei)",
+    "ai_report":   "AI Security Analysis",
+}
+
 
 def _load_cls(name: str):
     mod_path, cls_name = CLASS_MAP[name]
@@ -68,10 +82,29 @@ def _load_cls(name: str):
     return getattr(mod, cls_name)
 
 
+def _live_urls(all_results: dict) -> list[str]:
+    """Return the best live URL list discovered so far."""
+    web = all_results.get("webdetect", {})
+    urls = web.get("live_urls") or []
+    if urls:
+        return urls
+
+    web_hosts = web.get("live_hosts") or []
+    urls = [
+        item.get("url", "")
+        for item in web_hosts
+        if isinstance(item, dict) and item.get("url")
+    ]
+    if urls:
+        return urls
+
+    return all_results.get("recon", {}).get("live_http", [])
+
+
 def _build_kwargs(name: str, all_results: dict) -> dict:
     """Build extra constructor kwargs for each module based on prior results."""
     recon  = all_results.get("recon", {})
-    live   = recon.get("live_http", [])
+    live   = _live_urls(all_results)
     kwargs: dict = {}
     if name == "portscan":
         kwargs["resolved_ips"] = recon.get("resolved_ips", [])
@@ -82,6 +115,39 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
     elif name == "ai_report":
         kwargs["all_results"] = all_results
     return kwargs
+
+
+def _module_summary(name: str, result: dict) -> str:
+    """Build a one-line summary for a completed module."""
+    status = result.get("status", "?")
+    if status != "completed":
+        return status
+
+    if name == "recon":
+        return (f"{result.get('subdomains_total', 0)} subs, "
+                f"{len(result.get('live_http', []))} live, "
+                f"{len(result.get('resolved_ips', []))} IPs")
+    elif name == "portscan":
+        s = result.get("summary", {})
+        hr = len(s.get("high_risk", []))
+        return (f"{s.get('total_open_ports', 0)} ports, "
+                f"{s.get('hosts_with_ports', 0)} hosts"
+                + (f", ⚠{hr} high-risk" if hr else ""))
+    elif name == "techstack":
+        return f"{len(result.get('technologies_summary', {}))} technologies"
+    elif name == "fuzzer":
+        return (f"{result.get('total_endpoints', 0)} endpoints, "
+                f"{result.get('js_secrets_count', 0)} JS secrets")
+    elif name == "vulnscan":
+        return f"{result.get('total', 0)} vulnerabilities"
+    elif name == "cmscan":
+        return f"{result.get('total_findings', 0)} findings"
+    elif name == "ssl_checker":
+        return (f"{len(result.get('ssl_issues', []))} SSL issues, "
+                f"{result.get('total_missing_headers', 0)} missing headers")
+    elif name == "ai_report":
+        return "analysis ready" if result.get("analysis") else result.get("status", "?")
+    return status
 
 
 # ─── Module runner ────────────────────────────────────────────────────────────
@@ -116,9 +182,20 @@ def run_pipeline(
     active: list[str],
     resume: bool,
 ) -> dict:
+    from reporting.telegram import TelegramNotifier
+
     t0 = time.time()
     all_results: dict = {}
     master_json = session_dir / "all_results.json"
+
+    # Initialize Telegram notifier
+    tg = TelegramNotifier(config)
+    tg_ready = tg.is_ready()
+    if tg_ready:
+        console.print("[green]✓[/green] Telegram notifications enabled")
+        tg.notify_start(target, active)
+    else:
+        console.print("[dim]ℹ Telegram notifications disabled[/dim]")
 
     # On resume — pre-load all cached module results
     if resume and master_json.exists():
@@ -134,13 +211,32 @@ def run_pipeline(
         if step["name"] in active:
             groups.setdefault(step["group"], []).append(step["name"])
 
+    total_modules = len(active)
+    completed_count = 0
+
     for gid in sorted(groups):
         names = groups[gid]
+
+        # Send progress notification (not for every module to avoid spam)
+        if tg_ready and completed_count > 0:
+            current_name = names[0] if len(names) == 1 else f"{', '.join(names)}"
+            tg.notify_progress(completed_count, total_modules, current_name)
 
         if len(names) == 1:
             # Sequential
             name, result = run_one(names[0], target, session_dir, config, all_results, resume)
             all_results[name] = result
+            completed_count += 1
+
+            # Telegram: module completion notification
+            if tg_ready:
+                status = result.get("status", "unknown")
+                elapsed = result.get("elapsed_seconds", 0)
+                summary = _module_summary(name, result)
+                if status in ("error", "crashed"):
+                    tg.notify_error(name, result.get("error", "Unknown error"))
+                else:
+                    tg.notify_module_complete(name, status, elapsed, summary)
         else:
             # Parallel — snapshot all_results so threads don't race
             console.print(f"\n[bold cyan]⚡ Running in parallel: {', '.join(names)}[/bold cyan]")
@@ -153,12 +249,28 @@ def run_pipeline(
                 for future in as_completed(futures):
                     n, result = future.result()
                     all_results[n] = result
+                    completed_count += 1
+
+                    # Telegram: module completion notification
+                    if tg_ready:
+                        status = result.get("status", "unknown")
+                        elapsed = result.get("elapsed_seconds", 0)
+                        summary = _module_summary(n, result)
+                        if status in ("error", "crashed"):
+                            tg.notify_error(n, result.get("error", "Unknown error"))
+                        else:
+                            tg.notify_module_complete(n, status, elapsed, summary)
 
         # Persist after every group — enables resume on crash
         master_json.write_text(
             json.dumps(all_results, indent=2, ensure_ascii=False, default=str),
             encoding="utf-8",
         )
+
+    # ── Telegram: critical vulnerability alerts ───────────────────────────────
+    vuln_findings = all_results.get("vulnscan", {}).get("findings", [])
+    if tg_ready and vuln_findings:
+        tg.notify_critical_vulns(vuln_findings)
 
     # ── Reports ───────────────────────────────────────────────────────────────
     elapsed = _fmt_elapsed(time.time() - t0)
@@ -168,6 +280,8 @@ def run_pipeline(
     formats = config.get("reporting", {}).get("formats", ["html", "md"])
 
     report_path = ""
+    pdf_path = ""
+    md_path = ""
     if "html" in formats:
         try:
             from reporting.html_report import HTMLReportGenerator
@@ -181,17 +295,40 @@ def run_pipeline(
         if report_path:
             try:
                 from reporting.pdf_report import generate_pdf
-                pdf = generate_pdf(report_path)
-                if pdf:
-                    console.print(f"  [green]✓[/green]  PDF  → {pdf}")
+                pdf_path = generate_pdf(report_path)
+                if pdf_path:
+                    console.print(f"  [green]✓[/green]  PDF  → {pdf_path}")
             except Exception as e:
                 console.print(f"  [yellow]![/yellow]  PDF skipped: {e}")
 
     if "md" in formats:
-        md = _md_report(session_dir, target, all_results, ai_text, elapsed)
-        console.print(f"  [green]✓[/green]  MD   → {md}")
+        md_path = _md_report(session_dir, target, all_results, ai_text, elapsed)
+        console.print(f"  [green]✓[/green]  MD   → {md_path}")
 
     _print_summary(target, session_dir, all_results, elapsed)
+
+    # ── Telegram: final completion notification ───────────────────────────────
+    if tg_ready:
+        recon = all_results.get("recon", {})
+        ports = all_results.get("portscan", {}).get("summary", {})
+        tech  = all_results.get("techstack", {})
+        fuzz  = all_results.get("fuzzer", {})
+        vuln  = all_results.get("vulnscan", {})
+
+        tg_summary = {
+            "subdomains":      recon.get("subdomains_total", 0),
+            "live_hosts":      len(recon.get("live_http", [])),
+            "open_ports":      ports.get("total_open_ports", 0),
+            "technologies":    len(tech.get("technologies_summary", {})),
+            "vulnerabilities": vuln.get("total", 0),
+            "endpoints":       fuzz.get("total_endpoints", 0),
+            "js_secrets":      fuzz.get("js_secrets_count", 0),
+            "elapsed":         elapsed,
+        }
+
+        report_files = [p for p in (md_path, report_path, pdf_path) if p]
+        tg.notify_complete(target, tg_summary, report_files)
+
     return all_results
 
 
@@ -266,6 +403,15 @@ def _fmt_elapsed(seconds: float) -> str:
     return f"{m}m {s}s"
 
 
+def load_config(path: str) -> dict:
+    cfg_path = Path(path)
+    if not cfg_path.exists():
+        console.print(f"[yellow]Config not found: {cfg_path}, using defaults[/yellow]")
+        return {}
+
+    with cfg_path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -280,7 +426,7 @@ Examples:
   python3 main.py -t example.com --resume
         """,
     )
-    p.add_argument("-t", "--target",  required=True, help="Domain or IP")
+    p.add_argument("-t", "--target",  help="Domain or IP")
     p.add_argument("-c", "--config",  default="config.yaml")
     p.add_argument("-o", "--output",  default=".", help="Base output directory")
     p.add_argument("-m", "--modules", help="Comma-separated modules (default: all)")
@@ -295,8 +441,14 @@ Examples:
     if args.list_modules:
         console.print("[bold]Modules (execution order):[/bold]")
         for step in PIPELINE:
-            console.print(f"  • {step['name']:<15} [dim]group {step['group']}[/dim]")
+            label = MODULE_LABELS.get(step['name'], '')
+            console.print(f"  • {step['name']:<15} [dim]group {step['group']}[/dim]  {label}")
         sys.exit(0)
+
+    if not args.target:
+        console.print("[red]Error: -t/--target is required[/red]")
+        p.print_help()
+        sys.exit(1)
 
     all_names = [s["name"] for s in PIPELINE]
     active = [m.strip() for m in args.modules.split(",")] if args.modules else list(all_names)

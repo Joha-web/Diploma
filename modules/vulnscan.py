@@ -63,12 +63,13 @@ class VulnScanModule(BaseModule):
     # ── Nuclei runner ─────────────────────────────────────────────────────────
 
     def _update_templates(self):
+        """Update nuclei templates. Uses BaseModule.exec() for safety."""
         self.info("Updating Nuclei templates...")
-        rc, _, _ = self.run_command(
-            ["nuclei", "-update-templates", "-silent"], timeout=120
-        )
-        if rc == 0:
+        r = self.exec(["nuclei", "-update-templates", "-silent"], timeout=120)
+        if r.returncode == 0:
             self.success("Templates up to date")
+        else:
+            self.warn("Template update failed — continuing with existing templates")
 
     def _run_nuclei(self, url_file: Path, out_file: Path):
         ncfg = self.config.get("scan", {}).get("nuclei", {})
@@ -92,8 +93,9 @@ class VulnScanModule(BaseModule):
         for t in templates:
             cmd.extend(["-t", t])
 
+        timeout = ncfg.get("nuclei_timeout", 3600)
         self.info(f"nuclei → {self._line_count(url_file)} URLs | severity: {severity}")
-        self.run_command(cmd, timeout=self.config.get("scan", {}).get("nuclei_timeout", 3600))
+        self.exec(cmd, timeout=timeout)
         self.success(f"nuclei finished → {self._line_count(out_file)} raw findings")
 
     # ── Parsers ───────────────────────────────────────────────────────────────
@@ -141,7 +143,8 @@ class VulnScanModule(BaseModule):
 
     def _extract_urls(self) -> list[str]:
         urls: set[str] = set()
-        for line in self.live_hosts:
+        for item in self.live_hosts:
+            line = item.get("url", "") if isinstance(item, dict) else str(item)
             m = re.search(r"https?://[^\s]+", line)
             if m:
                 urls.add(m.group(0))
@@ -151,20 +154,3 @@ class VulnScanModule(BaseModule):
         if not path.exists():
             return 0
         return sum(1 for _ in path.read_text(errors="replace").splitlines() if _.strip())
-
-    # Override to call run_command from base
-    def run_command(self, cmd: list[str], timeout: int = 300) -> tuple[int, str, str]:
-        import subprocess, os
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout,
-                env={**os.environ},
-            )
-            return result.returncode, result.stdout, result.stderr
-        except subprocess.TimeoutExpired:
-            self.warn(f"Timeout ({timeout}s): nuclei")
-            return 124, "", "timeout"
-        except FileNotFoundError:
-            return 127, "", "nuclei not found"
-        except Exception as e:
-            return 1, "", str(e)

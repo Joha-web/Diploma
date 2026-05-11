@@ -187,38 +187,103 @@ class ReconModule(BaseModule):
 
     # ── API sources ───────────────────────────────────────────────────────────
 
+    def _get_text(self, source: str, url: str, timeout: int = 20) -> str | None:
+        try:
+            r = requests.get(url, timeout=timeout, headers={"User-Agent": "ReconX/2.0"})
+            if r.status_code != 200:
+                self.warn(f"  {source}: HTTP {r.status_code}")
+                return None
+            return r.text or ""
+        except requests.exceptions.ReadTimeout:
+            self.warn(f"  {source}: timed out after {timeout}s")
+            return None
+        except requests.exceptions.ConnectTimeout:
+            self.warn(f"  {source}: connection timed out after {timeout}s")
+            return None
+        except requests.RequestException as e:
+            self.warn(f"  {source}: request failed ({e})")
+            return None
+
+    def _get_json(self, source: str, url: str, timeout: int = 20):
+        text = self._get_text(source, url, timeout)
+        if text is None:
+            return None
+        if not text.strip():
+            self.warn(f"  {source}: empty response")
+            return None
+        try:
+            return requests.models.complexjson.loads(text)
+        except ValueError:
+            preview = text.strip().replace("\n", " ")[:120]
+            self.warn(f"  {source}: non-JSON response ({preview})")
+            return None
+
     def _api_crtsh(self) -> list:
-        r = requests.get(f"https://crt.sh/?q=%.{self.domain}&output=json",
-                         timeout=30, headers={"User-Agent": "ReconX/1.0"})
+        data = self._get_json(
+            "crt.sh",
+            f"https://crt.sh/?q=%.{self.domain}&output=json",
+            timeout=30,
+        )
+        if not isinstance(data, list):
+            return []
         return [n.strip().lstrip("*.")
-                for e in r.json()
+                for e in data
                 for n in e.get("name_value", "").split("\n")]
 
     def _api_hackertarget(self) -> list:
-        r = requests.get(f"https://api.hackertarget.com/hostsearch/?q={self.domain}", timeout=20)
-        return [l.split(",")[0] for l in r.text.splitlines() if "," in l]
+        text = self._get_text(
+            "hackertarget",
+            f"https://api.hackertarget.com/hostsearch/?q={self.domain}",
+            timeout=20,
+        )
+        if text is None:
+            return []
+        return [l.split(",")[0] for l in text.splitlines() if "," in l]
 
     def _api_alienvault(self) -> list:
-        r = requests.get(
+        data = self._get_json(
+            "alienvault",
             f"https://otx.alienvault.com/api/v1/indicators/domain/{self.domain}/passive_dns",
-            timeout=25)
-        return [e.get("hostname", "") for e in r.json().get("passive_dns", [])]
+            timeout=25,
+        )
+        if not isinstance(data, dict):
+            return []
+        return [e.get("hostname", "") for e in data.get("passive_dns", [])]
 
     def _api_threatminer(self) -> list:
-        r = requests.get(
-            f"https://api.threatminer.org/v2/domain.php?q={self.domain}&rt=5", timeout=20)
-        return r.json().get("results", [])
+        data = self._get_json(
+            "threatminer",
+            f"https://api.threatminer.org/v2/domain.php?q={self.domain}&rt=5",
+            timeout=20,
+        )
+        if not isinstance(data, dict):
+            return []
+        return data.get("results", []) or []
 
     def _api_rapiddns(self) -> list:
-        r = requests.get(f"https://rapiddns.io/subdomain/{self.domain}?full=1", timeout=20)
-        return re.findall(r"[a-zA-Z0-9._-]+\." + re.escape(self.domain), r.text)
+        text = self._get_text(
+            "rapiddns",
+            f"https://rapiddns.io/subdomain/{self.domain}?full=1",
+            timeout=20,
+        )
+        if text is None:
+            return []
+        return re.findall(r"[a-zA-Z0-9._-]+\." + re.escape(self.domain), text)
 
     def _api_wayback(self) -> list:
-        r = requests.get(
-            f"http://web.archive.org/cdx/search/cdx?url=*.{self.domain}"
-            f"&output=text&fl=original&collapse=urlkey&limit=5000", timeout=30)
+        cfg = self.config.get("scan", {}).get("subdomains", {})
+        timeout = int(cfg.get("wayback_timeout", 15))
+        limit = int(cfg.get("wayback_limit", 1000))
+        text = self._get_text(
+            "wayback_cdx",
+            f"https://web.archive.org/cdx/search/cdx?url=*.{self.domain}"
+            f"&output=text&fl=original&collapse=urlkey&limit={limit}",
+            timeout=timeout,
+        )
+        if text is None:
+            return []
         return re.findall(
-            r"https?://([a-zA-Z0-9._-]+\." + re.escape(self.domain) + r")", r.text)
+            r"https?://([a-zA-Z0-9._-]+\." + re.escape(self.domain) + r")", text)
 
     # ── Resolution ────────────────────────────────────────────────────────────
 

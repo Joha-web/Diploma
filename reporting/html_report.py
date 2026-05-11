@@ -1,6 +1,7 @@
 """
 ReconX — HTML Report Generator
 Renders templates/report.html via Jinja2 with full scan results.
+AI analysis is rendered from Markdown to HTML for proper formatting.
 """
 
 import json
@@ -8,6 +9,12 @@ from pathlib import Path
 from datetime import datetime
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+try:
+    import markdown
+    HAS_MARKDOWN = True
+except ImportError:
+    HAS_MARKDOWN = False
 
 
 class HTMLReportGenerator:
@@ -72,6 +79,11 @@ class HTMLReportGenerator:
             "js_secrets":      fuzz.get("js_secrets_count", 0),
         }
 
+        # Render AI analysis from Markdown to HTML
+        ai_html = ""
+        if ai_analysis:
+            ai_html = self._render_markdown(ai_analysis)
+
         return {
             "target":      self.target,
             "date":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -83,6 +95,17 @@ class HTMLReportGenerator:
             "cms":         cms,
             "vuln":        vuln,
             "ssl":         ssl,
-            "ai_analysis": ai_analysis,
+            "ai_analysis": ai_html,
             "summary":     summary,
         }
+
+    @staticmethod
+    def _render_markdown(text: str) -> str:
+        """Convert markdown text to HTML. Falls back to <pre> if markdown lib is missing."""
+        if HAS_MARKDOWN:
+            return markdown.markdown(
+                text,
+                extensions=["tables", "fenced_code", "nl2br", "sane_lists"],
+            )
+        # Fallback: wrap in <pre> for basic readability
+        return f"<pre>{text}</pre>"

@@ -95,7 +95,7 @@ class PortScanModule(BaseModule):
         out = self.module_dir / "masscan.json"
         rate = self.config.get("scan", {}).get("ports", {}).get("masscan_rate", 3000)
 
-        rc, _, _ = self._run(
+        self.exec(
             ["masscan", "-iL", str(ip_file), "-p", "0-65535",
              "--rate", str(rate), "--open", "-oJ", str(out)],
             timeout=900,
@@ -124,7 +124,7 @@ class PortScanModule(BaseModule):
 
         gnmap = self.module_dir / "nmap_sweep.gnmap"
         self.info(f"nmap --top-ports {top} on {len(self.resolved_ips)} IPs")
-        self._run(
+        self.exec(
             ["nmap", "-iL", str(ip_file), "--top-ports", top,
              "--open", "-T4", "-n", "--min-parallelism", "100",
              "-oG", str(gnmap)],
@@ -164,7 +164,7 @@ class PortScanModule(BaseModule):
             port_str = ",".join(str(p) for p in sorted(ports))
             xml_out  = self.module_dir / f"nmap_{ip.replace('.','_')}.xml"
 
-            self._run(
+            self.exec(
                 ["nmap", ip, "-p", port_str, "-sV", "--version-intensity", "5",
                  "-sC", "--open", "-T4", "-n", "-oX", str(xml_out)],
                 timeout=300,
@@ -209,19 +209,3 @@ class PortScanModule(BaseModule):
                      "service": PORT_NAMES.get(p, "unknown"), "product": "", "version": ""}
                     for p in sorted(fallback)]
         return sorted(port_list, key=lambda x: x["port"])
-
-    # ── helper ────────────────────────────────────────────────────────────────
-
-    def _run(self, cmd: list, timeout: int) -> tuple[int, str, str]:
-        import subprocess, os
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True,
-                               timeout=timeout, env=dict(os.environ))
-            return r.returncode, r.stdout, r.stderr
-        except subprocess.TimeoutExpired:
-            self.warn(f"Timeout ({timeout}s): {cmd[0]}")
-            return 124, "", "timeout"
-        except FileNotFoundError:
-            return 127, "", f"{cmd[0]} not found"
-        except Exception as e:
-            return 1, "", str(e)

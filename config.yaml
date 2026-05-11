@@ -11,9 +11,9 @@ api_keys:
 
 # ── Telegram Notifications ───────────────────────────────────
 telegram:
-  enabled:   false
-  bot_token: ""           # Get from @BotFather
-  chat_id:   ""           # Your chat or group ID
+  enabled:   true
+  bot_token: "8443697306:AAG5i6-TuSf1CEvaY5IcGqHslzsR1_2_OtQ"           # Get from @BotFather
+  chat_id:   "1603872364"           # Your chat or group ID
   notify_on:
     - start
     - module_complete
@@ -50,6 +50,8 @@ scan:
     use_rapiddns:     true
     use_wayback_cdx:  true
     use_threatminer:  true
+    wayback_timeout:  15        # seconds; CDX often stalls on large domains
+    wayback_limit:    1000      # lower is faster and less likely to time out
     amass_timeout:    180       # seconds (amass can be slow)
 
   # Port scanning

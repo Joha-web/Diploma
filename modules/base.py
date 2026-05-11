@@ -88,6 +88,16 @@ class BaseModule:
                 pass
         return {}
 
+    # ── Cross-module file access ─────────────────────────────────
+    def session_path(self, module: str, *path_parts: str) -> Path:
+        """Return path to a file in another module's output directory.
+
+        Usage:
+            self.session_path("recon", "subdomains", "all_subdomains.txt")
+            self.session_path("portscan", "ports_by_host.json")
+        """
+        return self.output_dir / module / Path(*path_parts)
+
     # ── Resume support ───────────────────────────────────────────
     def is_cached(self) -> bool:
         """Return True if this module already ran (results exist)."""

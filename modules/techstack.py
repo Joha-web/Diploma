@@ -295,7 +295,8 @@ class TechStackModule(BaseModule):
 
     def _urls(self) -> list[str]:
         urls: set[str] = set()
-        for line in self.live_hosts:
+        for item in self.live_hosts:
+            line = item.get("url", "") if isinstance(item, dict) else str(item)
             m = re.search(r"https?://[^\s]+", line)
             if m:
                 urls.add(m.group(0))

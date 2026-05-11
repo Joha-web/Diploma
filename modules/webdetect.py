@@ -15,7 +15,7 @@ from modules.base import BaseModule
 class WebdetectModule(BaseModule):
     name = "webdetect"
     description = "Web Application Detection (httpx)"
-    required_tools = ["httpx"]
+    required_tools = []
 
     def __init__(self, target: str, output_dir: str, config: dict,
                  live_hosts: list | None = None):
@@ -61,8 +61,14 @@ class WebdetectModule(BaseModule):
     def _collect_candidates(self) -> list[str]:
         cands: set[str] = set()
 
-        # From recon subdomains
-        sub_file = self.session_path("recon", "all_subdomains.txt")
+        for url in self._prior_live:
+            if isinstance(url, dict):
+                url = url.get("url", "")
+            if isinstance(url, str) and url.startswith(("http://", "https://")):
+                cands.add(url.split()[0])
+
+        # From recon subdomains (file is at recon/subdomains/all_subdomains.txt)
+        sub_file = self.session_path("recon", "subdomains", "all_subdomains.txt")
         for sub in self.load_lines(sub_file):
             cands.add(f"http://{sub}")
             cands.add(f"https://{sub}")
@@ -86,9 +92,6 @@ class WebdetectModule(BaseModule):
                 pass
 
         return sorted(cands)
-
-    def session_path(self, module: str, filename: str) -> Path:
-        return self.output_dir / module / filename
 
     # ── httpx ─────────────────────────────────────────────────────────────────
 
