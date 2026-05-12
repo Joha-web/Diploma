@@ -7,7 +7,13 @@
 api_keys:
   shodan:     ""
   virustotal: ""
-  wpscan:     ""          # wpscan.io — free at https://wpscan.com/register
+  wpscan:     ""          # or env WPSCAN_API_TOKEN; free at https://wpscan.com/register
+  censys_api_id: ""            # optional; only needed for Legacy Search API
+  censys_api_secret: ""        # Platform PAT, or Legacy secret when censys_api_id is set
+  securitytrails: ""
+  binaryedge:  ""
+  github:     ""
+  pdcp:       ""
 
 # ── Telegram Notifications ───────────────────────────────────
 telegram:
@@ -31,7 +37,7 @@ ai:
   openai_base_url: "https://api.openai.com/v1"
   temperature:   0.3
   max_tokens:    4096
-  language:      "ru"              # ru | en
+  language:      "en"              # en | ru
 
 # ── Scan Settings ────────────────────────────────────────────
 scan:
@@ -52,8 +58,12 @@ scan:
     use_rapiddns:     true
     use_wayback_cdx:  true
     use_threatminer:  true
+    use_shodan:       true
+    use_censys:       true
+    use_github:       true
     wayback_timeout:  15        # seconds; CDX often stalls on large domains
     wayback_limit:    1000      # lower is faster and less likely to time out
+    github_per_page:  30        # GitHub code search results to inspect
     amass_timeout:    180       # seconds (amass can be slow)
 
   # Port scanning
@@ -94,6 +104,7 @@ scan:
       - destructive
     rate_limit:     150
     nuclei_timeout: 3600        # 1 hour max
+    dashboard_upload: false     # true uploads nuclei results to PDCP when PDCP_API_KEY is set
 
   # CVE and ExploitDB correlation. This module never executes public exploit code.
   cve_check:
@@ -104,7 +115,7 @@ scan:
 
   # CMS scanning
   cms:
-    wpscan_api_token: ""        # from config.api_keys.wpscan
+    wpscan_api_token: ""        # optional override; falls back to config.api_keys.wpscan / WPSCAN_API_TOKEN
     enumerate: "vp,vt,u,tt"    # vp=plugins, vt=themes, u=users, tt=timthumbs
 
 # ── Wordlists ────────────────────────────────────────────────
@@ -124,7 +135,7 @@ reporting:
     - html
     - md
     - json
-  language: "ru"
+  language: "en"
 
 # Scope enforcement for target-bound HTTP requests.
 scope:

@@ -11,6 +11,9 @@ import shutil
 import json
 import os
 import re
+import signal
+import sys
+import threading
 import time
 import ipaddress
 from datetime import datetime
@@ -24,6 +27,93 @@ from modules.audit import AuditLogger
 from modules.rate_limiter import TokenBucket
 
 console = Console()
+
+_CTRL_C_SKIP_WINDOW = 2.0
+_COMMAND_POLL_INTERVAL = 0.2
+_INTERRUPT_LOCK = threading.RLock()
+_ACTIVE_PROCESSES: set[subprocess.Popen] = set()
+_INTERRUPT_GENERATION = 0
+_LAST_SIGINT_AT = 0.0
+_ABORT_REQUESTED = threading.Event()
+_SIGINT_HANDLER_INSTALLED = False
+
+
+def install_ctrl_c_skip_handler() -> None:
+    """Make Ctrl+C skip the current external tool; quick second Ctrl+C aborts."""
+    global _SIGINT_HANDLER_INSTALLED
+    if _SIGINT_HANDLER_INSTALLED:
+        return
+    if threading.current_thread() is not threading.main_thread():
+        return
+    signal.signal(signal.SIGINT, _handle_sigint)
+    _SIGINT_HANDLER_INSTALLED = True
+
+
+def scan_abort_requested() -> bool:
+    return _ABORT_REQUESTED.is_set()
+
+
+def _handle_sigint(signum, frame) -> None:
+    global _INTERRUPT_GENERATION, _LAST_SIGINT_AT
+
+    with _INTERRUPT_LOCK:
+        now = time.monotonic()
+        active = [proc for proc in _ACTIVE_PROCESSES if proc.poll() is None]
+        abort = not active or (now - _LAST_SIGINT_AT <= _CTRL_C_SKIP_WINDOW)
+        _LAST_SIGINT_AT = now
+
+        if abort:
+            _ABORT_REQUESTED.set()
+        else:
+            _INTERRUPT_GENERATION += 1
+
+    for proc in active:
+        _signal_process(proc, signal.SIGINT)
+
+    if abort:
+        raise KeyboardInterrupt
+
+    sys.stderr.write(
+        "\n[!] Ctrl+C: skipping current external command(s). "
+        "Press Ctrl+C again to abort.\n"
+    )
+    sys.stderr.flush()
+
+
+def _current_interrupt_generation() -> int:
+    with _INTERRUPT_LOCK:
+        return _INTERRUPT_GENERATION
+
+
+def _register_process(proc: subprocess.Popen) -> None:
+    with _INTERRUPT_LOCK:
+        _ACTIVE_PROCESSES.add(proc)
+
+
+def _unregister_process(proc: subprocess.Popen) -> None:
+    with _INTERRUPT_LOCK:
+        _ACTIVE_PROCESSES.discard(proc)
+
+
+def _signal_process(proc: subprocess.Popen, sig: int) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name != "nt":
+            os.killpg(proc.pid, sig)
+        else:
+            proc.send_signal(sig)
+    except ProcessLookupError:
+        return
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _is_interrupt_returncode(returncode: int | None) -> bool:
+    return returncode in (130, -int(signal.SIGINT))
 
 
 class BaseModule:
@@ -46,6 +136,7 @@ class BaseModule:
         self.rate_limiter = TokenBucket(rate=rate)
         self.audit = AuditLogger(self.output_dir)
         self.results = {}
+        self.interrupted_commands: list[str] = []
         self.start_time = None
         self.end_time = None
         self.module_dir = self.output_dir / self.name
@@ -74,22 +165,56 @@ class BaseModule:
 
     # ── Subprocess execution ─────────────────────────────────────
     def exec(self, cmd: list | str, timeout: int = 300,
-             capture: bool = True, shell: bool = False) -> subprocess.CompletedProcess:
+             capture: bool = True, shell: bool = False,
+             label: str | None = None) -> subprocess.CompletedProcess:
         """Run command, never raises on failure."""
+        command_label = label or self._command_label(cmd)
+        stdout_target = subprocess.PIPE if capture else None
+        stderr_target = subprocess.PIPE if capture else None
+        started_generation = _current_interrupt_generation()
+
         try:
             if isinstance(cmd, str):
                 shell = True
-            result = subprocess.run(
-                cmd,
-                capture_output=capture,
-                text=True,
-                timeout=timeout,
-                shell=shell,
-            )
-            return result
+
+            popen_kwargs = {
+                "stdout": stdout_target,
+                "stderr": stderr_target,
+                "text": True,
+                "shell": shell,
+                "env": self._subprocess_env(),
+            }
+            if os.name != "nt":
+                popen_kwargs["start_new_session"] = True
+
+            proc = subprocess.Popen(cmd, **popen_kwargs)
+            _register_process(proc)
+            interrupted_by_ctrl_c = False
+
+            try:
+                stdout, stderr, interrupted_by_ctrl_c = self._communicate(
+                    proc, timeout, started_generation
+                )
+            finally:
+                _unregister_process(proc)
+
+            stdout = stdout or ""
+            stderr = stderr or ""
+            if interrupted_by_ctrl_c or _is_interrupt_returncode(proc.returncode):
+                self.interrupted_commands.append(command_label)
+                self.warn(f"Interrupted — skipped: {command_label}")
+                return subprocess.CompletedProcess(
+                    cmd, returncode=130, stdout=stdout, stderr=stderr or "interrupted"
+                )
+
+            return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
         except subprocess.TimeoutExpired:
-            self.warn(f"Timeout ({timeout}s): {cmd if isinstance(cmd, str) else ' '.join(str(c) for c in cmd[:3])}")
+            self.warn(f"Timeout ({timeout}s): {command_label}")
             return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="timeout")
+        except KeyboardInterrupt:
+            if "proc" in locals():
+                _signal_process(proc, signal.SIGINT)
+            raise
         except Exception as e:
             self.warn(f"Command error: {e}")
             return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr=str(e))
@@ -102,6 +227,71 @@ class BaseModule:
             except json.JSONDecodeError:
                 pass
         return {}
+
+    def _communicate(
+        self,
+        proc: subprocess.Popen,
+        timeout: int | float | None,
+        started_generation: int,
+    ) -> tuple[str | None, str | None, bool]:
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        interrupted = False
+        interrupted_at = 0.0
+        kill_sent = False
+
+        while True:
+            wait_for = _COMMAND_POLL_INTERVAL
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _signal_process(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+                    proc.communicate()
+                    raise subprocess.TimeoutExpired(proc.args, timeout)
+                wait_for = min(wait_for, remaining)
+
+            try:
+                stdout, stderr = proc.communicate(timeout=wait_for)
+                return stdout, stderr, interrupted
+            except subprocess.TimeoutExpired:
+                if _current_interrupt_generation() != started_generation:
+                    if not interrupted:
+                        interrupted = True
+                        interrupted_at = time.monotonic()
+                        _signal_process(proc, signal.SIGINT)
+                    elif not kill_sent and time.monotonic() - interrupted_at > 2.0:
+                        kill_sent = True
+                        _signal_process(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+                    continue
+
+                if deadline is not None and time.monotonic() >= deadline:
+                    _signal_process(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+                    proc.communicate()
+                    raise
+
+    @staticmethod
+    def _command_label(cmd: list | str) -> str:
+        if isinstance(cmd, str):
+            return cmd
+        return " ".join(str(c) for c in cmd[:3])
+
+    def _subprocess_env(self) -> dict:
+        """Pass configured API tokens to external tools without printing them."""
+        env = os.environ.copy()
+        keys = self.config.get("api_keys", {})
+        mapping = {
+            "pdcp": "PDCP_API_KEY",
+            "github": "GITHUB_TOKEN",
+            "shodan": "SHODAN_API_KEY",
+            "virustotal": "VIRUSTOTAL_API_KEY",
+            "wpscan": "WPSCAN_API_TOKEN",
+            "censys_api_id": "CENSYS_API_ID",
+            "censys_api_secret": "CENSYS_API_SECRET",
+        }
+        for config_key, env_key in mapping.items():
+            value = str(keys.get(config_key, "")).strip()
+            if value and not env.get(env_key):
+                env[env_key] = value
+        return env
 
     # ── HTTP helpers: scope, rate limiting, audit ─────────────────────────
     def http_request(
@@ -333,7 +523,14 @@ class BaseModule:
 
         try:
             self.results = self.run()
+            if self.interrupted_commands:
+                self.results["interrupted_commands"] = self.interrupted_commands
             self.results["status"] = "completed"
+        except KeyboardInterrupt:
+            if scan_abort_requested():
+                raise
+            self.warn("Interrupted — module skipped")
+            self.results = {"status": "skipped", "reason": "interrupted"}
         except Exception as e:
             self.error(f"Module failed: {e}")
             import traceback

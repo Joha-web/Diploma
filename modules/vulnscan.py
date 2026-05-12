@@ -103,6 +103,8 @@ class VulnScanModule(BaseModule):
             cmd.extend(["-t", t])
         if exclude_tags and not enable_risky:
             cmd.extend(["-exclude-tags", ",".join(exclude_tags)])
+        if ncfg.get("dashboard_upload") and self.config.get("api_keys", {}).get("pdcp"):
+            cmd.append("-dashboard")
 
         timeout = ncfg.get("nuclei_timeout", 3600)
         self.info(f"nuclei → {self._line_count(url_file)} URLs | severity: {severity}")

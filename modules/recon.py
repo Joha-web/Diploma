@@ -8,6 +8,7 @@ import time
 import random
 import json
 import requests
+from requests.auth import HTTPBasicAuth
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .base import BaseModule
 
@@ -144,16 +145,21 @@ class ReconModule(BaseModule):
 
         # Parallel API calls with staggered starts to avoid rate limits
         api_fns = [
-            ("crt.sh",       self._api_crtsh),
-            ("hackertarget", self._api_hackertarget),
-            ("alienvault",   self._api_alienvault),
-            ("threatminer",  self._api_threatminer),
-            ("rapiddns",     self._api_rapiddns),
-            ("wayback_cdx",  self._api_wayback),
+            ("crt.sh",       "use_crtsh",        self._api_crtsh),
+            ("hackertarget", "use_hackertarget", self._api_hackertarget),
+            ("alienvault",   "use_alienvault",   self._api_alienvault),
+            ("threatminer",  "use_threatminer",  self._api_threatminer),
+            ("rapiddns",     "use_rapiddns",     self._api_rapiddns),
+            ("wayback_cdx",  "use_wayback_cdx",  self._api_wayback),
+            ("shodan",       "use_shodan",       self._api_shodan),
+            ("censys",       "use_censys",       self._api_censys),
+            ("github",       "use_github",       self._api_github),
         ]
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {}
-            for i, (src, fn) in enumerate(api_fns):
+            for i, (src, cfg_key, fn) in enumerate(api_fns):
+                if not cfg.get(cfg_key, True):
+                    continue
                 time.sleep(i * 0.2)
                 futures[pool.submit(fn)] = src
             for fut in as_completed(futures):
@@ -215,6 +221,71 @@ class ReconModule(BaseModule):
         except ValueError:
             preview = text.strip().replace("\n", " ")[:120]
             self.warn(f"  {source}: non-JSON response ({preview})")
+            return None
+
+    def _request_json(
+        self,
+        source: str,
+        url: str,
+        timeout: int = 20,
+        headers: dict | None = None,
+        params: dict | None = None,
+        auth=None,
+    ):
+        r = self.http_get(
+            url,
+            enforce_scope=False,
+            timeout=timeout,
+            headers=headers or {"User-Agent": "ReconX/2.0"},
+            params=params,
+            auth=auth,
+        )
+        if r is None:
+            self.warn(f"  {source}: request failed")
+            return None
+        if r.status_code in (401, 403):
+            self.warn(f"  {source}: authentication failed or rate limited (HTTP {r.status_code})")
+            return None
+        if r.status_code != 200:
+            self.warn(f"  {source}: HTTP {r.status_code}")
+            return None
+        try:
+            return r.json()
+        except ValueError:
+            self.warn(f"  {source}: non-JSON response")
+            return None
+
+    def _post_json(
+        self,
+        source: str,
+        url: str,
+        payload: dict,
+        timeout: int = 20,
+        headers: dict | None = None,
+        params: dict | None = None,
+    ):
+        r = self.http_post(
+            url,
+            safe_readonly=True,
+            enforce_scope=False,
+            timeout=timeout,
+            headers=headers or {"User-Agent": "ReconX/2.0"},
+            params=params,
+            json=payload,
+        )
+        if r is None:
+            self.warn(f"  {source}: request failed")
+            return None
+        if r.status_code in (401, 403):
+            self.warn(f"  {source}: authentication failed or rate limited (HTTP {r.status_code})")
+            return None
+        if r.status_code != 200:
+            self.warn(f"  {source}: HTTP {r.status_code}")
+            return None
+        try:
+            return r.json()
+        except ValueError:
+            self.warn(f"  {source}: non-JSON response")
             return None
 
     def _api_crtsh(self) -> list:
@@ -284,6 +355,99 @@ class ReconModule(BaseModule):
         return re.findall(
             r"https?://([a-zA-Z0-9._-]+\." + re.escape(self.domain) + r")", text)
 
+    def _api_shodan(self) -> list:
+        key = self.config.get("api_keys", {}).get("shodan", "")
+        if not key:
+            return []
+        data = self._request_json(
+            "shodan",
+            f"https://api.shodan.io/dns/domain/{self.domain}",
+            params={"key": key},
+            timeout=30,
+        )
+        if not isinstance(data, dict):
+            return []
+        subs = data.get("subdomains", []) or []
+        hosts = []
+        for sub in subs:
+            sub = str(sub).strip().lstrip("*.")
+            hosts.append(self.domain if not sub else f"{sub}.{self.domain}")
+        for row in data.get("data", []) or []:
+            sub = str(row.get("subdomain", "")).strip().lstrip("*.")
+            if sub:
+                hosts.append(f"{sub}.{self.domain}")
+        return hosts
+
+    def _api_censys(self) -> list:
+        keys = self.config.get("api_keys", {})
+        api_id = keys.get("censys_api_id", "")
+        api_secret = keys.get("censys_api_secret", "")
+        if not api_secret:
+            return []
+        if api_id:
+            data = self._request_json(
+                "censys",
+                "https://search.censys.io/api/v2/hosts/search",
+                params={
+                    "q": f"dns.names: *.{self.domain}",
+                    "per_page": 100,
+                    "virtual_hosts": "INCLUDE",
+                    "fields": "name,dns.names",
+                },
+                auth=HTTPBasicAuth(api_id, api_secret),
+                timeout=30,
+            )
+        else:
+            data = self._post_json(
+                "censys",
+                "https://api.platform.censys.io/v3/global/search/query",
+                {
+                    "query": f'"{self.domain}"',
+                    "page_size": 100,
+                },
+                headers={
+                    "Authorization": f"Bearer {api_secret}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "ReconX/2.0",
+                },
+                timeout=30,
+            )
+        if not isinstance(data, dict):
+            return []
+        hosts = []
+        for hit in data.get("result", {}).get("hits", []) or []:
+            name = hit.get("name", "")
+            if name:
+                hosts.append(name)
+            dns_names = hit.get("dns", {}).get("names", []) if isinstance(hit.get("dns"), dict) else []
+            hosts.extend(dns_names)
+        hosts.extend(re.findall(r"[a-zA-Z0-9._-]+\." + re.escape(self.domain), json.dumps(data)))
+        return self.unique(hosts)
+
+    def _api_github(self) -> list:
+        token = self.config.get("api_keys", {}).get("github", "")
+        if not token:
+            return []
+        cfg = self.config.get("scan", {}).get("subdomains", {})
+        per_page = int(cfg.get("github_per_page", 30))
+        data = self._request_json(
+            "github",
+            "https://api.github.com/search/code",
+            params={"q": f'"{self.domain}"', "per_page": min(max(per_page, 1), 100)},
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "ReconX/2.0",
+            },
+            timeout=30,
+        )
+        if not isinstance(data, dict):
+            return []
+        text = json.dumps(data, ensure_ascii=False, default=str)
+        return re.findall(r"[a-zA-Z0-9._-]+\." + re.escape(self.domain), text)
+
     # ── Resolution ────────────────────────────────────────────────────────────
 
     def _resolve_subdomains(self) -> None:
@@ -338,11 +502,14 @@ class ReconModule(BaseModule):
 
     def _collect_urls(self) -> dict:
         all_urls: set[str] = set()
-        for tool, cmd in [("waybackurls", f"echo {self.domain} | waybackurls"),
-                           ("gau",         f"gau --subs {self.domain}")]:
+        commands = [
+            ("waybackurls", ["waybackurls", self.domain]),
+            ("gau", ["gau", "--subs", self.domain]),
+        ]
+        for tool, cmd in commands:
             if self.has_tool(tool):
                 self.info(tool)
-                r = self.exec(cmd, timeout=120, shell=True)
+                r = self.exec(cmd, timeout=120)
                 urls = [u.strip() for u in r.stdout.splitlines() if u.strip()]
                 all_urls.update(urls)
                 self.success(f"{tool} → {len(urls)} URLs")
@@ -374,7 +541,7 @@ class ReconModule(BaseModule):
 
     @staticmethod
     def _clean_domain(t: str) -> str:
-        return re.sub(r"https?://", "", t).split("/")[0].strip()
+        return BaseModule._clean_domain(t)
 
     def _empty(self) -> dict:
         return {"target": self.target, "domain": self.domain,

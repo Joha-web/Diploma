@@ -25,6 +25,8 @@ from rich.table import Table
 from rich.rule import Rule
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 
+from modules.base import install_ctrl_c_skip_handler
+
 console = Console()
 
 BANNER = r"""
@@ -457,6 +459,42 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f) or {}
 
 
+ENV_CONFIG_MAP = {
+    "TELEGRAM_BOT_TOKEN": ("telegram", "bot_token"),
+    "TELEGRAM_CHAT_ID": ("telegram", "chat_id"),
+    "OPENAI_API_KEY": ("ai", "openai_api_key"),
+    "OPENAI_BASE_URL": ("ai", "openai_base_url"),
+    "OLLAMA_HOST": ("ai", "ollama_url"),
+    "SHODAN_API_KEY": ("api_keys", "shodan"),
+    "VIRUSTOTAL_API_KEY": ("api_keys", "virustotal"),
+    "WPSCAN_API_TOKEN": ("api_keys", "wpscan"),
+    "CENSYS_API_ID": ("api_keys", "censys_api_id"),
+    "CENSYS_API_SECRET": ("api_keys", "censys_api_secret"),
+    "SECURITYTRAILS_API_KEY": ("api_keys", "securitytrails"),
+    "BINARYEDGE_API_KEY": ("api_keys", "binaryedge"),
+    "GITHUB_TOKEN": ("api_keys", "github"),
+    "PDCP_API_KEY": ("api_keys", "pdcp"),
+}
+
+
+def apply_env_overrides(config: dict) -> dict:
+    """Fill empty config secrets from environment variables without logging values."""
+    for env_name, path in ENV_CONFIG_MAP.items():
+        value = os.getenv(env_name, "").strip()
+        if not value:
+            continue
+
+        section = config
+        for key in path[:-1]:
+            section = section.setdefault(key, {})
+
+        leaf = path[-1]
+        if not section.get(leaf):
+            section[leaf] = value
+
+    return config
+
+
 def load_env_file(path: str | Path = ".env") -> None:
     """Load simple KEY=VALUE pairs from .env without overriding real environment."""
     env_path = Path(path)
@@ -521,7 +559,7 @@ Examples:
         active = [m for m in active if m not in skip]
 
     load_env_file(Path(args.config).with_name(".env"))
-    cfg = load_config(args.config)
+    cfg = apply_env_overrides(load_config(args.config))
     legal_cfg = cfg.get("legal", {})
     if legal_cfg.get("require_acknowledgment", False) and not args.legal_acknowledgment:
         console.print("[red]Error: pass --legal-acknowledgment to confirm authorization[/red]")
@@ -539,6 +577,7 @@ Examples:
     console.print(f"[bold]Output:[/bold]  {session_dir}\n")
 
     try:
+        install_ctrl_c_skip_handler()
         run_pipeline(args.target, cfg, session_dir, active, args.resume)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted — partial results saved.[/yellow]")

@@ -5,6 +5,8 @@ Fallback:  OpenRouter / OpenAI-compatible API
 """
 
 import json
+import os
+import re
 import requests
 from modules.base import BaseModule
 
@@ -30,7 +32,7 @@ class AIReportModule(BaseModule):
 
         provider = ai_cfg.get("provider", "ollama")
         model    = ai_cfg.get("model", "deepseek-r1:7b")
-        lang     = ai_cfg.get("language", "ru")
+        lang     = self._normalize_language(ai_cfg.get("language", "en"))
 
         # Build structured prompt from scan results
         prompt = self._build_prompt(lang)
@@ -52,6 +54,10 @@ class AIReportModule(BaseModule):
             self.warn("AI returned empty response")
             return {"analysis": "", "status": "empty"}
 
+        if lang == "en" and not self._is_acceptable_english_report(analysis):
+            self.warn("AI returned a non-English or unsupported analysis — skipping AI section")
+            return {"analysis": "", "status": "invalid_language"}
+
         self.save_text(analysis, "ai_analysis.md")
         self.success(f"AI analysis ready ({len(analysis):,} chars)")
         return {"analysis": analysis, "model": model, "provider": provider,
@@ -62,7 +68,14 @@ class AIReportModule(BaseModule):
 
     # ── Prompt builder ────────────────────────────────────────────────────────
 
-    def _build_prompt(self, lang: str = "ru") -> str:
+    @staticmethod
+    def _normalize_language(lang: str | None) -> str:
+        """Return a supported report language, defaulting to English."""
+        value = (lang or "en").strip().lower()
+        return "ru" if value == "ru" else "en"
+
+    def _build_prompt(self, lang: str = "en") -> str:
+        lang = self._normalize_language(lang)
         r      = self.all_results
         recon  = r.get("recon", {})
         ports  = r.get("portscan", {})
@@ -185,21 +198,58 @@ class AIReportModule(BaseModule):
 
 Используй только реальные данные из сканирования. Не выдумывай уязвимостей."""
         else:
-            return f"""You are an expert penetration tester with 15 years in AppSec and Red Team. \
-Analyze the automated reconnaissance results and produce a professional security report.
+            return f"""You are a senior application security consultant writing a client-ready penetration testing report.
+
+CRITICAL LANGUAGE RULES:
+- Write the entire report in clear professional English only.
+- Use ASCII English section titles and labels only.
+- Do not use German, Russian, Kazakh, Chinese, mixed-language phrases, emojis, or malformed translated words.
+- Use standard security terminology. Do not invent header names, product names, vulnerabilities, or mitigations.
+- If evidence is weak or missing, say "requires manual verification" instead of presenting it as confirmed.
+- Use only the scan data below. Do not add findings that are not supported by the data.
+- Do not claim the project is "fully secure" or "fully safe"; security is risk-managed, not absolute.
+
+FINDING QUALITY RULES:
+- Every Critical or High finding must cite concrete evidence: IP, port, URL, technology, CVE, or exact issue from scan data.
+- Missing security headers are usually Medium unless paired with a concrete exploit path.
+- Open ports are not automatically vulnerabilities; explain the exposed service and why it matters.
+- Do not recommend fake headers. Valid examples include Content-Security-Policy, Strict-Transport-Security, X-Frame-Options,
+  X-Content-Type-Options, Referrer-Policy, and Permissions-Policy.
+- Do not mention CSRF unless the scan data explicitly contains CSRF evidence.
+- Do not mention DRDoS unless UDP amplification services or related evidence exists in the scan data.
+- Do not describe missing headers as missing authentication. They are browser-side hardening controls.
 
 SCAN DATA:
 {data}
 
-Write the report with these sections:
-## Executive Summary (with A-F security grade)
-## Critical Attack Zones (specific IPs, URLs, attack vectors)
-## Medium Risk Findings
-## Low Risk / Informational
-## Recommendations (prioritized)
-## Attack Surface Summary
+Write the report in Markdown with exactly these sections:
 
-Use only data provided. Do not invent vulnerabilities."""
+## Executive Summary
+3-5 sentences for management. Include an A-F security grade and one sentence explaining the grade.
+
+## Critical and High Risk Findings
+Only include findings supported by concrete evidence. For each finding use:
+- Evidence:
+- Risk:
+- Recommendation:
+
+If there are no supported Critical/High findings, write: "No critical or high-risk findings were confirmed by the automated scan."
+
+## Medium Risk Findings
+Prioritized findings with concrete evidence and remediation.
+
+## Low Risk / Informational Findings
+Useful context such as exposed technologies, non-critical endpoints, and informational observations.
+
+## Prioritized Remediation Plan
+Numbered actions ordered by risk reduction and implementation urgency.
+
+## Attack Surface Summary
+Summarize subdomains, live hosts, open ports, high-risk ports, technologies, vulnerabilities, CVEs, endpoints, and JS secrets.
+
+End with this sentence:
+"All automated findings should be manually verified before remediation tracking or risk acceptance."
+"""
 
     # ── Ollama ────────────────────────────────────────────────────────────────
 
@@ -229,9 +279,7 @@ Use only data provided. Do not invent vulnerabilities."""
             )
             if resp.status_code == 200:
                 text = resp.json().get("response", "")
-                # Strip <think>...</think> blocks that DeepSeek-R1 may include
-                import re
-                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                text = self._clean_model_output(resp.json().get("response", ""))
                 return text
             else:
                 self.error(f"Ollama error {resp.status_code}: {resp.text[:200]}")
@@ -246,12 +294,12 @@ Use only data provided. Do not invent vulnerabilities."""
     # ── OpenAI-compatible fallback ────────────────────────────────────────────
 
     def _openai_compatible_generate(self, cfg: dict, prompt: str) -> str:
-        api_key  = cfg.get("openai_api_key", "")
-        base_url = cfg.get("openai_base_url", "https://api.openai.com/v1")
+        api_key  = cfg.get("openai_api_key") or os.getenv("OPENAI_API_KEY", "")
+        base_url = cfg.get("openai_base_url") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         model    = cfg.get("model", "gpt-4o-mini")
 
         if not api_key:
-            self.warn("OpenAI API key not set in config.yaml")
+            self.warn("OpenAI API key not set (use OPENAI_API_KEY in .env)")
             return ""
 
         try:
@@ -268,10 +316,43 @@ Use only data provided. Do not invent vulnerabilities."""
                 timeout=120,
             )
             if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"]
+                return self._clean_model_output(resp.json()["choices"][0]["message"]["content"])
             else:
                 self.error(f"API error {resp.status_code}: {resp.text[:200]}")
                 return ""
         except Exception as e:
             self.error(f"API request failed: {e}")
             return ""
+
+    @staticmethod
+    def _clean_model_output(text: str) -> str:
+        """Remove reasoning blocks and normalize report output."""
+        text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL | re.IGNORECASE)
+        return text.strip()
+
+    @staticmethod
+    def _is_acceptable_english_report(text: str) -> bool:
+        """Reject mixed-language or clearly unsupported AI reports."""
+        if not text or len(text.strip()) < 120:
+            return False
+
+        non_english_patterns = [
+            r"[\u0400-\u04ff]",  # Cyrillic
+            r"[\u4e00-\u9fff]",  # CJK characters occasionally appear in bad translations
+            r"\b(Kritische|Risikogebiete|Angriff|Entdeckung|Warum|Empfehlung|Mittelrisiko)\b",
+            r"\b(Niedrigen|Informations?ale|OffenePorts|fehlende|Überprüfen|Zertifikat)\b",
+            r"\b(PROtection|Overprüfung|Angriffssfläche|mutsam|sogenah)\b",
+        ]
+        if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in non_english_patterns):
+            return False
+
+        unsupported_claims = [
+            r"\bCSRF\b",
+            r"\bDRDoS\b",
+            r"\bwsgiApparentlyProtected\b",
+            r"\bx-forwarded-uri\b",
+        ]
+        if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in unsupported_claims):
+            return False
+
+        return True

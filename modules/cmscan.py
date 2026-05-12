@@ -7,8 +7,9 @@ Auto-detects CMS from techstack results, then runs the right scanner:
   Moodle    → droopescan
 """
 
-import re
 import json
+import os
+import re
 from modules.base import BaseModule
 
 CMS_SCANNERS: dict[str, dict] = {
@@ -58,9 +59,10 @@ class CMSScanModule(BaseModule):
             self.info("No CMS detected — skipping")
             return {"scans": [], "total_findings": 0}
 
-        cms_cfg = self.config.get("scan", {}).get("cms", {})
-        if not cms_cfg.get("wpscan_api_token"):
-            cms_cfg["wpscan_api_token"] = self.config.get("api_keys", {}).get("wpscan", "")
+        cms_cfg = dict(self.config.get("scan", {}).get("cms", {}))
+        wpscan_token = self._wpscan_api_token(cms_cfg)
+        if wpscan_token:
+            cms_cfg["wpscan_api_token"] = wpscan_token
         scans: list[dict] = []
 
         for cms_name, urls in cms_targets.items():
@@ -134,6 +136,14 @@ class CMSScanModule(BaseModule):
         for cms, urls in found.items():
             self.info(f"Detected {cms} on {len(urls)} host(s)")
         return found
+
+    def _wpscan_api_token(self, cms_cfg: dict) -> str:
+        """Resolve WPScan token from CMS config, shared API keys, or environment."""
+        return (
+            cms_cfg.get("wpscan_api_token")
+            or self.config.get("api_keys", {}).get("wpscan")
+            or os.getenv("WPSCAN_API_TOKEN", "")
+        )
 
     # ── Parsers ───────────────────────────────────────────────────────────────
 

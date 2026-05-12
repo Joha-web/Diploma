@@ -4,7 +4,13 @@
 api_keys:
   shodan: ""
   virustotal: ""
-  wpscan: ""
+  wpscan: ""       # or env WPSCAN_API_TOKEN
+  censys_api_id: ""            # optional; only needed for Legacy Search API
+  censys_api_secret: ""        # Platform PAT, or Legacy secret when censys_api_id is set
+  securitytrails: ""
+  binaryedge: ""
+  github: ""
+  pdcp: ""
 
 telegram:
   enabled: true
@@ -25,7 +31,7 @@ ai:
   openai_base_url: "https://api.openai.com/v1"
   temperature: 0.3
   max_tokens: 4096
-  language: "ru"
+  language: "en"
 
 scan:
   threads: 50
@@ -44,8 +50,12 @@ scan:
     use_rapiddns: true
     use_wayback_cdx: true
     use_threatminer: true
+    use_shodan: true
+    use_censys: true
+    use_github: true
     wayback_timeout: 15
     wayback_limit: 1000
+    github_per_page: 30
     amass_timeout: 180
 
   ports:
@@ -72,9 +82,10 @@ scan:
     exclude_tags: [dos, intrusive, bruteforce, destructive]
     rate_limit: 150
     nuclei_timeout: 3600
+    dashboard_upload: false
 
   cms:
-    wpscan_api_token: ""
+    wpscan_api_token: ""  # optional override; falls back to api_keys.wpscan / WPSCAN_API_TOKEN
     enumerate: "vp,vt,u,tt"
 
   cve_check:
@@ -95,7 +106,7 @@ wordlists:
 
 reporting:
   formats: [html, md, json]
-  language: "ru"
+  language: "en"
 
 scope:
   enforce: true

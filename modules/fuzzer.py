@@ -124,12 +124,14 @@ class FuzzerModule(BaseModule):
         found: set[str] = set()
 
         for host in urls:
+            self.info(f"  katana → {host}")
             safe = re.sub(r"https?://|[/:]", "_", host)
             out  = self.module_dir / "crawl" / f"{safe}.txt"
             self.exec(
                 ["katana", "-u", host, "-d", depth, "-jc", "-kf", "all",
                  "-c", "10", "-p", "10", "-silent", "-o", str(out)],
                 timeout=300,
+                label=f"katana {host}",
             )
             found.update(self.filter_in_scope_urls(self.load_lines(out)))
 
@@ -151,6 +153,7 @@ class FuzzerModule(BaseModule):
         rate = str(self.config.get("scan", {}).get("fuzzing", {}).get("rate", 100))
 
         for host in urls:
+            self.info(f"  feroxbuster → {host}")
             safe = re.sub(r"https?://|[/:]", "_", host)
             out  = self.module_dir / "ferox" / f"{safe}.txt"
             self.exec(
@@ -160,6 +163,7 @@ class FuzzerModule(BaseModule):
                  "--filter-status", "404,400,503",
                  "--output", str(out), "--no-state", "--quiet"],
                 timeout=600,
+                label=f"feroxbuster {host}",
             )
             for line in self.load_lines(out):
                 found.update(self.filter_in_scope_urls(self.extract_urls(line)))
@@ -181,6 +185,7 @@ class FuzzerModule(BaseModule):
         rate = str(self.config.get("scan", {}).get("fuzzing", {}).get("rate", 100))
 
         for host in urls:
+            self.info(f"  ffuf dirs → {host}")
             safe = re.sub(r"https?://|[/:]", "_", host)
 
             # Dir fuzzing
@@ -192,6 +197,7 @@ class FuzzerModule(BaseModule):
                  "-recursion", "-recursion-depth", "2",
                  "-of", "json", "-o", str(out), "-s"],
                 timeout=600,
+                label=f"ffuf dirs {host}",
             )
             data = self.load_json(out)
             for r in data.get("results", []):
@@ -199,6 +205,7 @@ class FuzzerModule(BaseModule):
                     found.add(r["url"])
 
             # Backup / sensitive file fuzzing
+            self.info(f"  ffuf backups → {host}")
             out_bak = self.module_dir / "ffuf" / f"backup_{safe}.json"
             self.exec(
                 ["ffuf", "-u", f"{host}/FUZZ", "-w", self._backup_wordlist(),
@@ -206,6 +213,7 @@ class FuzzerModule(BaseModule):
                  "-t", "20", "-timeout", "10", "-rate", str(max(1, int(rate) // 2)),
                  "-of", "json", "-o", str(out_bak), "-s"],
                 timeout=300,
+                label=f"ffuf backups {host}",
             )
             bak_data = self.load_json(out_bak)
             for r in bak_data.get("results", []):
