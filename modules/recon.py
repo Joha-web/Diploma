@@ -4,6 +4,7 @@ Fixes: wildcard DNS detection, API rate limiting, better filtering.
 """
 
 import re
+import shlex
 import time
 import random
 import json
@@ -154,6 +155,8 @@ class ReconModule(BaseModule):
             ("shodan",       "use_shodan",       self._api_shodan),
             ("censys",       "use_censys",       self._api_censys),
             ("github",       "use_github",       self._api_github),
+            ("securitytrails", "use_securitytrails", self._api_securitytrails),
+            ("binaryedge",   "use_binaryedge",   self._api_binaryedge),
         ]
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {}
@@ -448,6 +451,52 @@ class ReconModule(BaseModule):
         text = json.dumps(data, ensure_ascii=False, default=str)
         return re.findall(r"[a-zA-Z0-9._-]+\." + re.escape(self.domain), text)
 
+    def _api_securitytrails(self) -> list:
+        key = self.config.get("api_keys", {}).get("securitytrails", "")
+        if not key:
+            return []
+        data = self._request_json(
+            "securitytrails",
+            f"https://api.securitytrails.com/v1/domain/{self.domain}/subdomains",
+            headers={
+                "APIKEY": key,
+                "Accept": "application/json",
+                "User-Agent": "ReconX/2.0",
+            },
+            timeout=30,
+        )
+        if not isinstance(data, dict):
+            return []
+        return [
+            f"{str(sub).strip().lstrip('*.')}.{self.domain}"
+            for sub in data.get("subdomains", []) or []
+            if isinstance(sub, str) and sub.strip()
+        ]
+
+    def _api_binaryedge(self) -> list:
+        key = self.config.get("api_keys", {}).get("binaryedge", "")
+        if not key:
+            return []
+        data = self._request_json(
+            "binaryedge",
+            f"https://api.binaryedge.io/v2/query/domains/subdomain/{self.domain}",
+            headers={
+                "X-Key": key,
+                "Accept": "application/json",
+                "User-Agent": "ReconX/2.0",
+            },
+            params={"page": 1},
+            timeout=30,
+        )
+        if not isinstance(data, dict):
+            return []
+        hosts = [
+            str(item).strip().lstrip("*.")
+            for item in data.get("events", []) or []
+            if isinstance(item, str) and item.strip()
+        ]
+        return self.unique(hosts)
+
     # ── Resolution ────────────────────────────────────────────────────────────
 
     def _resolve_subdomains(self) -> None:
@@ -502,17 +551,20 @@ class ReconModule(BaseModule):
 
     def _collect_urls(self) -> dict:
         all_urls: set[str] = set()
-        commands = [
-            ("waybackurls", ["waybackurls", self.domain]),
-            ("gau", ["gau", "--subs", self.domain]),
-        ]
-        for tool, cmd in commands:
-            if self.has_tool(tool):
-                self.info(tool)
-                r = self.exec(cmd, timeout=120)
-                urls = [u.strip() for u in r.stdout.splitlines() if u.strip()]
-                all_urls.update(urls)
-                self.success(f"{tool} → {len(urls)} URLs")
+        if self.has_tool("waybackurls"):
+            self.info("waybackurls")
+            cmd = f"printf '%s\\n' {shlex.quote(self.domain)} | waybackurls"
+            r = self.exec(cmd, timeout=120, shell=True, label="waybackurls")
+            urls = [u.strip() for u in r.stdout.splitlines() if u.strip()]
+            all_urls.update(urls)
+            self.success(f"waybackurls → {len(urls)} URLs")
+
+        if self.has_tool("gau"):
+            self.info("gau")
+            r = self.exec(["gau", "--subs", self.domain], timeout=120)
+            urls = [u.strip() for u in r.stdout.splitlines() if u.strip()]
+            all_urls.update(urls)
+            self.success(f"gau → {len(urls)} URLs")
         lst = self.filter_in_scope_urls(all_urls)
         self.save_text(lst, "urls/all_urls.txt")
         return {"all_urls": lst, "total": len(lst)}

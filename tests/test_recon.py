@@ -77,3 +77,58 @@ def test_github_api_extracts_subdomains(tmp_path, monkeypatch):
     })
 
     assert module._api_github() == ["dev.example.com"]
+
+
+def test_securitytrails_api_extracts_subdomains(tmp_path, monkeypatch):
+    module = ReconModule(
+        "example.com",
+        str(tmp_path),
+        {"api_keys": {"securitytrails": "token"}},
+    )
+    monkeypatch.setattr(module, "_request_json", lambda *args, **kwargs: {
+        "subdomains": ["www", "api", "*.mail"]
+    })
+
+    hosts = module._api_securitytrails()
+
+    assert "www.example.com" in hosts
+    assert "api.example.com" in hosts
+    assert "mail.example.com" in hosts
+
+
+def test_binaryedge_api_extracts_subdomains(tmp_path, monkeypatch):
+    module = ReconModule(
+        "example.com",
+        str(tmp_path),
+        {"api_keys": {"binaryedge": "token"}},
+    )
+    monkeypatch.setattr(module, "_request_json", lambda *args, **kwargs: {
+        "events": ["dev.example.com", "staging.example.com"]
+    })
+
+    hosts = module._api_binaryedge()
+
+    assert "dev.example.com" in hosts
+    assert "staging.example.com" in hosts
+
+
+def test_collect_urls_feeds_waybackurls_via_stdin_pipeline(tmp_path, monkeypatch):
+    module = ReconModule("example.com", str(tmp_path), {})
+    calls = []
+
+    monkeypatch.setattr(module, "has_tool", lambda tool: tool == "waybackurls")
+
+    def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        calls.append({"cmd": cmd, "shell": shell, "label": label})
+        class Result:
+            stdout = "https://www.example.com/login\n"
+        return Result()
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+
+    result = module._collect_urls()
+
+    assert result["total"] == 1
+    assert calls[0]["shell"] is True
+    assert "waybackurls" in calls[0]["cmd"]
+    assert calls[0]["label"] == "waybackurls"

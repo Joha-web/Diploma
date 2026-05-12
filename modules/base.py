@@ -286,6 +286,8 @@ class BaseModule:
             "wpscan": "WPSCAN_API_TOKEN",
             "censys_api_id": "CENSYS_API_ID",
             "censys_api_secret": "CENSYS_API_SECRET",
+            "securitytrails": "SECURITYTRAILS_API_KEY",
+            "binaryedge": "BINARYEDGE_API_KEY",
         }
         for config_key, env_key in mapping.items():
             value = str(keys.get(config_key, "")).strip()

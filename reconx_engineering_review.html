@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ReconX — Engineering Review</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+:root {
+  --bg: #0a0c12;
+  --bg2: #0f1219;
+  --card: #131822;
+  --border: #1d2535;
+  --border2: #26334a;
+  --text: #bdc8dc;
+  --dim: #4a5a78;
+  --accent: #3d7aff;
+  --green: #1db979;
+  --red: #e8394a;
+  --amber: #e89c34;
+  --cyan: #1ecbd8;
+  --purple: #9d5cff;
+  --pink: #e84095;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.7;
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── SIDEBAR ─────────────────────────────────────────── */
+.nav {
+  width: 230px;
+  flex-shrink: 0;
+  position: fixed;
+  top: 0; left: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  padding: 0 0 32px;
+  z-index: 100;
+}
+.nav-logo {
+  padding: 22px 20px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.nav-logo .name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: .08em;
+}
+.nav-logo .meta { font-size: 11px; color: var(--dim); margin-top: 3px; }
+.nav-group { padding: 18px 12px 4px 20px; font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .15em; font-weight: 600; }
+.nav a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 20px;
+  color: var(--dim);
+  text-decoration: none;
+  font-size: 12.5px;
+  transition: color .15s, background .15s;
+  border-radius: 0;
+}
+.nav a:hover { color: var(--text); background: rgba(61,122,255,.07); }
+.nav a .pip {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--dim);
+  flex-shrink: 0;
+}
+.pip.r { background: var(--red); }
+.pip.g { background: var(--green); }
+.pip.a { background: var(--amber); }
+.pip.c { background: var(--cyan); }
+.pip.p { background: var(--purple); }
+
+/* ── MAIN ────────────────────────────────────────────── */
+.main {
+  margin-left: 230px;
+  flex: 1;
+  max-width: 920px;
+  padding: 48px 52px 96px;
+}
+
+/* ── HEADER ──────────────────────────────────────────── */
+.header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 36px;
+  margin-bottom: 48px;
+}
+.header .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .12em;
+  color: var(--dim);
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.header h1 {
+  font-size: 28px;
+  font-weight: 600;
+  color: #dce6f5;
+  letter-spacing: -.02em;
+  line-height: 1.2;
+  margin-bottom: 10px;
+}
+.header .sub {
+  color: var(--dim);
+  font-size: 13.5px;
+  max-width: 580px;
+}
+.header-meta {
+  display: flex;
+  gap: 24px;
+  margin-top: 22px;
+  flex-wrap: wrap;
+}
+.header-meta .item {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.header-meta .item span { color: var(--text); }
+
+/* ── SECTION ─────────────────────────────────────────── */
+.section { margin-bottom: 64px; }
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #dce6f5;
+  letter-spacing: -.01em;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+h2 .n {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  font-weight: 400;
+}
+h3 {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--cyan);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin: 28px 0 10px;
+}
+p { color: var(--text); font-size: 13.5px; margin: 8px 0; }
+strong { color: #dce6f5; font-weight: 500; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── STATS ROW ───────────────────────────────────────── */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 24px 0;
+}
+.stat {
+  background: var(--card);
+  padding: 18px 16px;
+  text-align: center;
+}
+.stat .v {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.stat .l { font-size: 11px; color: var(--dim); letter-spacing: .05em; }
+.v.g { color: var(--green); }
+.v.r { color: var(--red); }
+.v.a { color: var(--amber); }
+.v.c { color: var(--cyan); }
+
+/* ── CARDS ───────────────────────────────────────────── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 22px;
+  margin: 12px 0;
+}
+.card.red { border-left: 3px solid var(--red); }
+.card.amber { border-left: 3px solid var(--amber); }
+.card.green { border-left: 3px solid var(--green); }
+.card.blue { border-left: 3px solid var(--accent); }
+.card.purple { border-left: 3px solid var(--purple); }
+.card.cyan { border-left: 3px solid var(--cyan); }
+.card h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #dce6f5;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card .location {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  margin-bottom: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  display: inline-block;
+}
+
+/* ── BADGES ──────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.b-red { background: rgba(232,57,74,.12); color: var(--red); border: 1px solid rgba(232,57,74,.25); }
+.b-amber { background: rgba(232,156,52,.1); color: var(--amber); border: 1px solid rgba(232,156,52,.25); }
+.b-green { background: rgba(29,185,121,.1); color: var(--green); border: 1px solid rgba(29,185,121,.25); }
+.b-blue { background: rgba(61,122,255,.1); color: var(--accent); border: 1px solid rgba(61,122,255,.25); }
+.b-purple { background: rgba(157,92,255,.1); color: var(--purple); border: 1px solid rgba(157,92,255,.25); }
+.b-cyan { background: rgba(30,203,216,.1); color: var(--cyan); border: 1px solid rgba(30,203,216,.25); }
+.b-gray { background: rgba(255,255,255,.05); color: var(--dim); border: 1px solid var(--border); }
+.b-p1 { background: rgba(232,57,74,.15); color: #f26270; border: 1px solid rgba(232,57,74,.3); }
+.b-p2 { background: rgba(232,156,52,.12); color: var(--amber); border: 1px solid rgba(232,156,52,.28); }
+.b-p3 { background: rgba(30,203,216,.1); color: var(--cyan); border: 1px solid rgba(30,203,216,.2); }
+
+/* ── CODE ────────────────────────────────────────────── */
+pre, .code {
+  background: #070a10;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-x: auto;
+  color: #7a9bbf;
+  margin: 12px 0;
+  white-space: pre;
+}
+.kw { color: #9d5cff; }
+.fn { color: var(--cyan); }
+.st { color: #5cb85c; }
+.cm { color: #2d4060; font-style: italic; }
+.nm { color: var(--amber); }
+.hi { color: var(--red); font-weight: 600; }
+code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: rgba(61,122,255,.08);
+  border: 1px solid rgba(61,122,255,.15);
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: var(--cyan);
+}
+
+/* ── TABLE ───────────────────────────────────────────── */
+.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 14px 0; }
+.tbl th {
+  background: var(--bg2);
+  color: var(--dim);
+  text-align: left;
+  padding: 9px 14px;
+  font-weight: 600;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  border-bottom: 1px solid var(--border);
+}
+.tbl td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.tbl tr:last-child td { border-bottom: none; }
+.tbl tr:hover td { background: rgba(61,122,255,.03); }
+.tbl-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 14px 0; }
+
+/* ── LIST ────────────────────────────────────────────── */
+ul.bl { list-style: none; padding: 0; margin: 10px 0; }
+ul.bl li {
+  padding: 4px 0 4px 18px;
+  position: relative;
+  font-size: 13.5px;
+  color: var(--text);
+}
+ul.bl li::before { content: '·'; position: absolute; left: 0; color: var(--dim); }
+ul.bl.ok li::before { content: '✓'; color: var(--green); font-weight: 700; }
+ul.bl.no li::before { content: '✗'; color: var(--red); font-weight: 700; }
+ul.bl.arr li::before { content: '→'; color: var(--accent); }
+
+/* ── DIFF BLOCK ──────────────────────────────────────── */
+.diff { background: #070a10; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin: 12px 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+.diff .diff-head { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 7px 14px; font-size: 11px; color: var(--dim); letter-spacing: .06em; }
+.diff .diff-body { padding: 12px 14px; }
+.del { color: #e84860; background: rgba(232,57,74,.08); display: block; padding: 0 4px; border-radius: 2px; }
+.add { color: #2dcc7a; background: rgba(29,185,121,.07); display: block; padding: 0 4px; border-radius: 2px; }
+.ctx { color: #3a5070; display: block; padding: 0 4px; }
+
+/* ── PRIORITY ROWS ───────────────────────────────────── */
+.prows { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.prow {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  align-items: start;
+}
+.prow:last-child { border-bottom: none; }
+.prow:hover { background: rgba(61,122,255,.025); }
+.prow .pn {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.prow .pt { font-size: 13px; font-weight: 500; color: #dce6f5; margin-bottom: 3px; }
+.prow .pd { font-size: 12px; color: var(--dim); line-height: 1.55; }
+
+/* ── PHASE TABLE ─────────────────────────────────────── */
+.phase-grid { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 16px 0; }
+.phase-row { display: grid; grid-template-columns: 28px 180px 100px 1fr; gap: 0; background: var(--card); align-items: start; }
+.phase-row.head { background: var(--bg2); }
+.phase-row > div { padding: 11px 14px; border-right: 1px solid var(--border); font-size: 12px; }
+.phase-row > div:last-child { border-right: none; }
+.phase-row.head > div { font-size: 10.5px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.phase-n { font-family: var(--mono); font-weight: 600; color: var(--dim); text-align: center; }
+.phase-name { font-weight: 500; color: #dce6f5; }
+.phase-status { }
+.phase-detail { color: var(--dim); font-size: 11.5px; line-height: 1.5; }
+
+/* ── FOOTER ──────────────────────────────────────────── */
+.footer {
+  margin-top: 80px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.footer code { font-size: 11px; }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+@media (max-width: 860px) {
+  .nav { display: none; }
+  .main { margin-left: 0; padding: 24px 20px 64px; }
+  .stats { grid-template-columns: repeat(2,1fr); }
+  .phase-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-logo">
+    <div class="name">RECONX</div>
+    <div class="meta">Engineering Review · 2026-05</div>
+  </div>
+
+  <div class="nav-group">Summary</div>
+  <a href="#overview"><span class="pip g"></span> Project status</a>
+  <a href="#confirmed-bugs"><span class="pip r"></span> Confirmed bugs</a>
+
+  <div class="nav-group">Phase Coverage</div>
+  <a href="#phases"><span class="pip a"></span> 8-phase assessment</a>
+
+  <div class="nav-group">Immediate work</div>
+  <a href="#p1"><span class="pip r"></span> P1 — Fix now</a>
+  <a href="#p2"><span class="pip a"></span> P2 — Next sprint</a>
+  <a href="#p3"><span class="pip c"></span> P3 — Following sprint</a>
+
+  <div class="nav-group">New modules</div>
+  <a href="#cors"><span class="pip g"></span> cors_checker</a>
+  <a href="#auth"><span class="pip g"></span> auth_probe</a>
+  <a href="#sourcemap"><span class="pip g"></span> sourcemap_analyzer</a>
+  <a href="#vhost"><span class="pip a"></span> vhost_enum</a>
+  <a href="#params"><span class="pip a"></span> parameter_discovery</a>
+  <a href="#ai-advisor"><span class="pip c"></span> ai_advisor</a>
+  <a href="#sectrails"><span class="pip c"></span> securitytrails / binaryedge</a>
+
+  <div class="nav-group">Infrastructure</div>
+  <a href="#deps"><span class="pip p"></span> Dependencies</a>
+  <a href="#tests"><span class="pip g"></span> Test coverage</a>
+  <a href="#questions"><span class="pip a"></span> Open questions</a>
+</nav>
+
+<main class="main">
+
+<!-- ═══════════════════════════════ HEADER ═══════════════════════════════ -->
+<div class="header">
+  <div class="label">Security Engineering Report</div>
+  <h1>ReconX — Code Review &amp; Development Roadmap</h1>
+  <div class="sub">
+    Detailed engineering assessment of the current codebase: confirmed defects with exact locations, prioritised implementation backlog, and full specifications for six new modules ready to ship.
+  </div>
+  <div class="header-meta">
+    <div class="item">Prepared for <span>Security Software Engineer</span></div>
+    <div class="item">Codebase <span>v2.0.0 (latest commit reviewed)</span></div>
+    <div class="item">Date <span>May 2026</span></div>
+    <div class="item">Scope <span>All Python modules, tests, config</span></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ OVERVIEW ═══════════════════════════════ -->
+<div class="section" id="overview">
+  <h2>Project Status <span class="n">§1</span></h2>
+
+  <p>The codebase is in good shape. All critical security defects from the prior review have been resolved. The architecture is clean, the module contract is consistent, and the new test suite covers the right surface area. What remains is a set of confirmed bugs (minor but real), missing API integrations for two configured providers, and six new modules needed to reach meaningful pentest-phase coverage beyond recon.</p>
+
+  <div class="stats">
+    <div class="stat"><div class="v g">✓</div><div class="l">Critical bugs fixed</div></div>
+    <div class="stat"><div class="v a">3</div><div class="l">New bugs found</div></div>
+    <div class="stat"><div class="v c">17</div><div class="l">Test cases added</div></div>
+    <div class="stat"><div class="v r">2</div><div class="l">API stubs (no impl)</div></div>
+  </div>
+
+  <h3>What was fixed correctly</h3>
+  <ul class="bl ok">
+    <li>Telegram token removed from <code>config.yaml</code>; reads from <code>env TELEGRAM_BOT_TOKEN</code></li>
+    <li><code>copy.deepcopy(all_results)</code> replaces the shallow copy race condition in parallel groups</li>
+    <li><code>json.loads()</code> replaces the private <code>requests.models.complexjson</code> call in <code>recon.py</code></li>
+    <li>Scope enforcement via <code>is_in_scope()</code> and <code>filter_in_scope_urls()</code> propagated to all modules</li>
+    <li><code>bleach.clean()</code> sanitises AI output before Jinja2 renders it with <code>| safe</code></li>
+    <li>Global <code>TokenBucket</code> singleton in <code>rate_limiter.py</code> with correct double-checked locking</li>
+    <li><code>ThreadPoolExecutor</code> parallelises SSL checks (was serial, ~10 min for 60 hosts)</li>
+    <li>Ctrl+C skip handler — single interrupt skips current subprocess, second aborts scan</li>
+    <li><code>apply_env_overrides()</code> maps all thirteen env variables to config tree without logging values</li>
+    <li>Shodan, Censys (dual-API: Legacy + Platform PAT), GitHub code search added to passive recon</li>
+    <li>PDCP dashboard upload in nuclei gated on key presence — no flag sent when key absent</li>
+  </ul>
+</div>
+
+<!-- ═══════════════════════════════ BUGS ═══════════════════════════════ -->
+<div class="section" id="confirmed-bugs">
+  <h2>Confirmed Bugs <span class="n">§2</span></h2>
+  <p>Three defects found in the current commit. None are critical, but two will silently produce wrong behaviour.</p>
+
+  <!-- BUG 1 -->
+  <div class="card red">
+    <div class="location">modules/ai_report.py · _ollama_generate() · line ~130</div>
+    <h4><span class="badge b-amber">MEDIUM</span> Dead assignment — response parsed twice, first result discarded</h4>
+    <p>The response JSON is parsed and assigned to <code>text</code>, then immediately overwritten on the next line. The first parse result is thrown away. This is a latent bug: if the two <code>resp.json()</code> calls ever return different objects (e.g. streaming response), the first value is silently lost.</p>
+
+    <div class="diff">
+      <div class="diff-head">CURRENT CODE</div>
+      <div class="diff-body"><span class="del">-  text = resp.json().get("response", "")          # ← written, never read</span>
+<span class="add">+  # line above is dead — remove it</span>
+<span class="ctx">   text = self._clean_model_output(resp.json().get("response", ""))</span></div>
+    </div>
+
+    <p><strong>Fix:</strong> delete the first assignment entirely. The second line is correct.</p>
+  </div>
+
+  <!-- BUG 2 -->
+  <div class="card amber">
+    <div class="location">modules/base.py · _subprocess_env() · lines ~210–225</div>
+    <h4><span class="badge b-amber">LOW</span> SecurityTrails and BinaryEdge tokens never forwarded to subprocesses</h4>
+    <p>Both keys are present in <code>config.yaml</code>, <code>.env.example</code>, <code>apply_env_overrides()</code>, and the test for env overrides — but the subprocess environment mapping in <code>_subprocess_env()</code> is missing both entries. Any external tool that reads <code>SECURITYTRAILS_API_KEY</code> or <code>BINARYEDGE_API_KEY</code> from the environment will not receive the configured value.</p>
+<pre>
+<span class="cm"># modules/base.py — _subprocess_env()</span>
+mapping = {
+    <span class="st">"pdcp"</span>: <span class="st">"PDCP_API_KEY"</span>,
+    <span class="st">"github"</span>: <span class="st">"GITHUB_TOKEN"</span>,
+    <span class="st">"shodan"</span>: <span class="st">"SHODAN_API_KEY"</span>,
+    <span class="st">"virustotal"</span>: <span class="st">"VIRUSTOTAL_API_KEY"</span>,
+    <span class="st">"wpscan"</span>: <span class="st">"WPSCAN_API_TOKEN"</span>,
+    <span class="st">"censys_api_id"</span>: <span class="st">"CENSYS_API_ID"</span>,
+    <span class="st">"censys_api_secret"</span>: <span class="st">"CENSYS_API_SECRET"</span>,
+    <span class="hi">    # ← missing:</span>
+    <span class="add">+   "securitytrails": "SECURITYTRAILS_API_KEY",</span>
+    <span class="add">+   "binaryedge":     "BINARYEDGE_API_KEY",</span>
+}
+</pre>
+    <p><strong>Fix:</strong> add both entries to the <code>mapping</code> dict. Also add corresponding assertions to <code>tests/test_base.py::test_subprocess_env_includes_configured_cli_tokens</code>.</p>
+  </div>
+
+  <!-- BUG 3 -->
+  <div class="card amber">
+    <div class="location">modules/recon.py · _collect_urls() · lines ~290–302</div>
+    <h4><span class="badge b-amber">LOW</span> waybackurls receives domain via stdin pipe but exec() no longer uses shell=True</h4>
+    <p>Previous version used <code>shell=True</code> with <code>echo domain | waybackurls</code>. The current version correctly passes a list, but <code>waybackurls</code> does not accept the domain as a positional argument — it reads from stdin. The call will silently produce zero results without any error.</p>
+    <div class="diff">
+      <div class="diff-head">CURRENT (broken for waybackurls)</div>
+      <div class="diff-body"><span class="del">- ("waybackurls", ["waybackurls", self.domain]),</span>
+<span class="add">+ # waybackurls reads domain from stdin, not argv</span>
+<span class="add">+ # option A: keep shell=True for this one call</span>
+<span class="add">+ r = self.exec(f"echo {shlex.quote(self.domain)} | waybackurls", shell=True, timeout=120)</span>
+<span class="add">+ # option B: use subprocess.Popen with stdin=PIPE</span></div>
+    </div>
+    <p><strong>Fix:</strong> either restore the shell pipeline specifically for <code>waybackurls</code>, or open a <code>Popen</code> and write the domain to <code>stdin</code>. <code>gau</code> with <code>--subs domain</code> is a positional arg, so it works correctly as-is.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ PHASES ═══════════════════════════════ -->
+<div class="section" id="phases">
+  <h2>Pentest Phase Coverage <span class="n">§3</span></h2>
+  <p>Coverage across the standard eight-phase web application pentest lifecycle. Phases 1 and 4–7 require new work.</p>
+
+  <div class="phase-grid">
+    <div class="phase-row head">
+      <div>#</div>
+      <div>Phase</div>
+      <div>Status</div>
+      <div>Notes</div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-n">1</div>
+      <div class="phase-name">Pre-Engagement</div>
+      <div><span class="badge b-red">Missing</span></div>
+      <div class="phase-detail">Only <code>--legal-acknowledgment</code> flag. No scope template, no engagement record, no RoE file.</div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-n">2</div>
+      <div class="phase-name">Information Gathering</div>
+      <div><span class="badge b-amber">~75%</span></div>
+      <div class="phase-detail">DNS, subdomains, passive APIs (9 sources), port scan, web detect, tech stack, JS mining. Missing: vhost enum, parameter discovery, OpenAPI parsing, SecurityTrails/BinaryEdge methods, source map analysis.</div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-n">3</div>
+      <div class="phase-name">Vulnerability Assessment</div>
+      <div><span class="badge b-amber">~60%</span></div>
+      <div class="phase-detail">Nuclei templates, SSL/TLS, CMS scanners (wp/joomla/drupal), CVE + ExploitDB correlation, GraphQL probe. Missing: CORS checker, auth probe (JWT/cookies), OpenAPI audit, deep GraphQL introspection, subdomain takeover checker.</div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-n">4</div>
+      <div class="phase-name">Exploitation</div>
+      <div><span class="badge b-red">Missing</span></div>
+      <div class="phase-detail">CVE dry-run simulation only. No safe validation (SSRF callback, reflected XSS marker, SQLi error detection, open redirect verify).</div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-n">5</div>
+      <div class="phase-name">Post-Exploitation</div>
+      <div><span class="badge b-red">Missing</span></div>
+      <div class="phase-detail">Out of scope for recon-only tool. Document as explicitly out-of-scope in README.</div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-n">6</div>
+      <div class="phase-name">Lateral Movement</div>
+      <div><span class="badge b-red">Missing</span></div>
+      <div class="phase-detail">Out of scope. Requires internal network access context.</div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-n">7</div>
+      <div class="phase-name">Proof of Concept</div>
+      <div><span class="badge b-amber">~20%</span></div>
+      <div class="phase-detail"><code>curl_command</code> stored in findings, ExploitDB links in CVE correlation. No AI PoC generation, no structured reproducibility steps per finding.</div>
+    </div>
+    <div class="phase-row">
+      <div class="phase-n">8</div>
+      <div class="phase-name">Post-Engagement</div>
+      <div><span class="badge b-green">~65%</span></div>
+      <div class="phase-detail">HTML/MD/JSON/PDF reports, Telegram delivery. Missing: executive summary generation, prioritised remediation roadmap, diff between scan runs.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ P1 ═══════════════════════════════ -->
+<div class="section" id="p1">
+  <h2>P1 — Fix now <span class="n">§4</span></h2>
+  <p>These are code defects or missing wiring in already-configured features. All can be done in one session.</p>
+
+  <div class="prows">
+    <div class="prow">
+      <div class="pn">1</div>
+      <div>
+        <div class="pt">Remove dead assignment in <code>_ollama_generate</code></div>
+        <div class="pd">One line deletion in <code>modules/ai_report.py</code>. See §2 Bug 1.</div>
+      </div>
+      <div><span class="badge b-p1">P1</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">2</div>
+      <div>
+        <div class="pt">Add SecurityTrails + BinaryEdge to <code>_subprocess_env()</code></div>
+        <div class="pd">Two dict entries in <code>modules/base.py</code>. Update <code>test_base.py</code> assertion list. See §2 Bug 2.</div>
+      </div>
+      <div><span class="badge b-p1">P1</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">3</div>
+      <div>
+        <div class="pt">Fix <code>waybackurls</code> stdin handling in <code>recon.py</code></div>
+        <div class="pd">Tool reads domain from stdin, not argv. Currently produces zero results silently. See §2 Bug 3.</div>
+      </div>
+      <div><span class="badge b-p1">P1</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">4</div>
+      <div>
+        <div class="pt">Add <code>_api_securitytrails()</code> and <code>_api_binaryedge()</code> to <code>recon.py</code></div>
+        <div class="pd">Both keys are configured, env-mapped, and tested — but no API call methods exist. Full specs in §10.</div>
+      </div>
+      <div><span class="badge b-p1">P1</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">5</div>
+      <div>
+        <div class="pt">Add <code>pyjwt</code> and <code>dnspython</code> to <code>requirements.txt</code></div>
+        <div class="pd">Required by <code>auth_probe</code> (P2) and <code>takeover_checker</code> (P2). Lock now to avoid dependency drift.</div>
+      </div>
+      <div><span class="badge b-p1">P1</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ P2 ═══════════════════════════════ -->
+<div class="section" id="p2">
+  <h2>P2 — Next sprint <span class="n">§5</span></h2>
+  <p>New modules with full specifications below. All are pure-Python, no new binary dependencies except <code>arjun</code> for parameter discovery.</p>
+
+  <div class="prows">
+    <div class="prow">
+      <div class="pn">6</div>
+      <div>
+        <div class="pt"><code>modules/cors_checker.py</code> — CORS misconfiguration scanner</div>
+        <div class="pd">Five targeted checks, PoC fetch snippet per finding, integrates into pipeline after <code>ssl_checker</code>. Full spec in §7.</div>
+      </div>
+      <div><span class="badge b-p2">P2</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">7</div>
+      <div>
+        <div class="pt"><code>modules/auth_probe.py</code> — JWT and cookie security</div>
+        <div class="pd">JWT decode, <code>alg:none</code> detection, weak secret bruteforce (mini wordlist), cookie flag analysis. Spec in §8.</div>
+      </div>
+      <div><span class="badge b-p2">P2</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">8</div>
+      <div>
+        <div class="pt"><code>modules/sourcemap_analyzer.py</code> — JS source map extraction</div>
+        <div class="pd">Finds <code>.js.map</code> files, reconstructs source tree, searches for hardcoded credentials and internal paths. Spec in §9.</div>
+      </div>
+      <div><span class="badge b-p2">P2</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">9</div>
+      <div>
+        <div class="pt"><code>modules/vhost_enum.py</code> — virtual host discovery</div>
+        <div class="pd"><code>ffuf</code> with <code>-H "Host: FUZZ"</code> to find staging/internal apps on the same IP without DNS records. Spec in §11.</div>
+      </div>
+      <div><span class="badge b-p2">P2</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">10</div>
+      <div>
+        <div class="pt"><code>modules/parameter_discovery.py</code> — hidden parameter fuzzing</div>
+        <div class="pd">Arjun wrapper. Runs against all live URLs. Feeds discovered parameters back to <code>vulnscan</code> as additional targets. Spec in §12.</div>
+      </div>
+      <div><span class="badge b-p2">P2</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ P3 ═══════════════════════════════ -->
+<div class="section" id="p3">
+  <h2>P3 — Following sprint <span class="n">§6</span></h2>
+
+  <div class="prows">
+    <div class="prow">
+      <div class="pn">11</div>
+      <div>
+        <div class="pt"><code>modules/ai_advisor.py</code> — real-time AI analysis per module</div>
+        <div class="pd">DeepSeek called after each module completes, not just at the end. Result sent to Telegram immediately. Spec in §13.</div>
+      </div>
+      <div><span class="badge b-p3">P3</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">12</div>
+      <div>
+        <div class="pt"><code>modules/takeover_checker.py</code> — subdomain takeover</div>
+        <div class="pd">CNAME → dangling service detection. Fingerprints for 40+ providers (GitHub Pages, Heroku, Netlify, Vercel, Azure, Fastly). Uses <code>dnspython</code>.</div>
+      </div>
+      <div><span class="badge b-p3">P3</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">13</div>
+      <div>
+        <div class="pt">Diff engine in <code>reporting/json_report.py</code></div>
+        <div class="pd">Compare current <code>all_results.json</code> to a previous scan. Output: new subdomains, new open ports, new findings, closed hosts. Add <code>--diff path/to/previous</code> CLI flag.</div>
+      </div>
+      <div><span class="badge b-p3">P3</span></div>
+    </div>
+    <div class="prow">
+      <div class="pn">14</div>
+      <div>
+        <div class="pt"><code>modules/openapi_parser.py</code> — Swagger / OpenAPI discovery</div>
+        <div class="pd">Auto-detect <code>swagger.json</code>, <code>/api-docs</code>, <code>openapi.yaml</code>. Extract all paths and parameters. Generate targeted wordlist for <code>ffuf</code>. Pass parameter names to <code>parameter_discovery</code>.</div>
+      </div>
+      <div><span class="badge b-p3">P3</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ MODULE SPECS ═══════════════════════════════ -->
+<div class="section" id="cors">
+  <h2>Module Spec: cors_checker.py <span class="n">§7</span></h2>
+  <p>Runs after <code>ssl_checker</code> in group 4. Pure Python, no new binaries. Add <code>cors_checker</code> to <code>PIPELINE</code> and <code>CLASS_MAP</code> in <code>main.py</code>.</p>
+
+  <h3>Five checks implemented</h3>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>Check</th><th>Request</th><th>Vulnerable condition</th><th>Severity</th></tr>
+      <tr><td>Wildcard origin</td><td><code>Origin: https://attacker.com</code></td><td>Response: <code>Access-Control-Allow-Origin: *</code></td><td><span class="badge b-amber">MEDIUM</span></td></tr>
+      <tr><td>Reflected origin</td><td><code>Origin: https://attacker.com</code></td><td>Response mirrors the sent origin exactly</td><td><span class="badge b-red">HIGH</span></td></tr>
+      <tr><td>Null origin</td><td><code>Origin: null</code></td><td>Response: <code>Access-Control-Allow-Origin: null</code></td><td><span class="badge b-red">HIGH</span></td></tr>
+      <tr><td>Credentialed + wildcard</td><td><code>Origin: https://attacker.com</code></td><td>ACAO: * AND ACAC: true</td><td><span class="badge b-red">CRITICAL</span></td></tr>
+      <tr><td>Prefix bypass</td><td><code>Origin: https://target.com.attacker.com</code></td><td>Response mirrors the sent origin</td><td><span class="badge b-red">HIGH</span></td></tr>
+    </table>
+  </div>
+
+  <h3>Implementation skeleton</h3>
+<pre>
+<span class="kw">class</span> <span class="fn">CORSCheckerModule</span>(BaseModule):
+    name = <span class="st">"cors_checker"</span>
+    description = <span class="st">"CORS Misconfiguration Scanner"</span>
+    required_tools = []
+
+    ORIGIN_PROBES = [
+        (<span class="st">"reflected"</span>,        <span class="st">"https://attacker-reconx.com"</span>,          <span class="st">"HIGH"</span>),
+        (<span class="st">"null"</span>,             <span class="st">"null"</span>,                                     <span class="st">"HIGH"</span>),
+        (<span class="st">"prefix_bypass"</span>,   <span class="st">"https://{domain}.attacker-reconx.com"</span>,    <span class="st">"HIGH"</span>),
+        (<span class="st">"suffix_bypass"</span>,   <span class="st">"https://not{domain}"</span>,                      <span class="st">"HIGH"</span>),
+    ]
+
+    <span class="kw">def</span> <span class="fn">_check_url</span>(self, url: str, sess) -> list[dict]:
+        findings = []
+        domain = urlparse(url).hostname <span class="kw">or</span> <span class="st">""</span>
+
+        <span class="kw">for</span> probe_name, origin_tmpl, severity <span class="kw">in</span> self.ORIGIN_PROBES:
+            origin = origin_tmpl.format(domain=domain)
+            resp = self.http_get(
+                url, session=sess,
+                headers={<span class="st">"Origin"</span>: origin},
+                timeout=<span class="nm">8</span>, verify=<span class="nm">False</span>,
+            )
+            <span class="kw">if</span> resp <span class="kw">is None</span>:
+                <span class="kw">continue</span>
+
+            acao = resp.headers.get(<span class="st">"access-control-allow-origin"</span>, <span class="st">""</span>)
+            acac = resp.headers.get(<span class="st">"access-control-allow-credentials"</span>, <span class="st">""</span>).lower()
+
+            vulnerable = (acao == origin <span class="kw">or</span> acao == <span class="st">"null"</span> <span class="kw">and</span> origin == <span class="st">"null"</span>)
+            <span class="kw">if not</span> vulnerable:
+                <span class="kw">continue</span>
+
+            <span class="cm"># Escalate if credentials are also allowed</span>
+            actual_sev = <span class="st">"CRITICAL"</span> <span class="kw">if</span> acac == <span class="st">"true"</span> <span class="kw">else</span> severity
+
+            findings.append({
+                <span class="st">"url"</span>:      url,
+                <span class="st">"type"</span>:     probe_name,
+                <span class="st">"severity"</span>: actual_sev,
+                <span class="st">"origin_sent"</span>: origin,
+                <span class="st">"acao"</span>:     acao,
+                <span class="st">"acac"</span>:     acac,
+                <span class="st">"poc"</span>:      self._poc(url, origin, acac == <span class="st">"true"</span>),
+                <span class="st">"confidence"</span>: <span class="nm">0.95</span>,
+            })
+
+        <span class="kw">return</span> findings
+
+    <span class="kw">def</span> <span class="fn">_poc</span>(self, url: str, origin: str, credentialed: bool) -> str:
+        creds = <span class="st">"credentials: 'include',"</span> <span class="kw">if</span> credentialed <span class="kw">else</span> <span class="st">""</span>
+        <span class="kw">return</span> <span class="st">f"""fetch('{url}', {{ {creds} headers: {{Origin: '{origin}'}} }})
+  .then(r => r.json()).then(console.log)"""</span>
+</pre>
+  <p>Output shape must match the standard finding dict so <code>json_report.py</code> picks it up without changes. Add <code>"cors_checker"</code> to the <code>reporting/html_report.py</code> context builder and to the HTML template sidebar.</p>
+</div>
+
+<div class="section" id="auth">
+  <h2>Module Spec: auth_probe.py <span class="n">§8</span></h2>
+  <p>Groups with <code>cors_checker</code> in pipeline group 4 (parallel to <code>fuzzer</code> and <code>ssl_checker</code>). Requires <code>pyjwt&gt;=2.8</code>.</p>
+
+  <h3>Four checks</h3>
+  <ul class="bl arr">
+    <li><strong>JWT discovery:</strong> look for <code>Authorization: Bearer</code> headers or cookies containing base64-encoded JWT structure (<code>xxxxx.yyyyy.zzzzz</code>). Decode without verification. Log <code>alg</code>, <code>exp</code>, <code>iss</code>.</li>
+    <li><strong>alg:none attack:</strong> if a JWT endpoint is found, craft a token with <code>"alg":"none"</code> and no signature. Check if the server accepts it (HTTP 200 vs 401).</li>
+    <li><strong>Weak HMAC secret:</strong> attempt to verify the JWT signature against a small wordlist (<code>secret</code>, <code>password</code>, <code>123456</code>, domain name, company name). Use <code>jwt.decode(token, candidate, algorithms=["HS256"])</code>.</li>
+    <li><strong>Cookie flags audit:</strong> for all <code>Set-Cookie</code> headers on HTTPS pages, flag missing <code>Secure</code>, missing <code>HttpOnly</code>, missing or permissive <code>SameSite</code>.</li>
+  </ul>
+
+<pre>
+<span class="kw">import</span> jwt   <span class="cm"># pyjwt</span>
+<span class="kw">import</span> base64, json, re
+
+WEAK_SECRETS = [
+    <span class="st">"secret"</span>, <span class="st">"password"</span>, <span class="st">"123456"</span>, <span class="st">"changeme"</span>,
+    <span class="st">"supersecret"</span>, <span class="st">"qwerty"</span>, <span class="st">"letmein"</span>, <span class="st">"admin"</span>,
+]
+
+<span class="kw">def</span> <span class="fn">_analyse_jwt</span>(self, token: str, url: str) -> list[dict]:
+    findings = []
+    <span class="kw">try</span>:
+        header = jwt.get_unverified_header(token)
+        payload = jwt.decode(token, options={<span class="st">"verify_signature"</span>: <span class="nm">False</span>})
+    <span class="kw">except</span> Exception:
+        <span class="kw">return</span> []
+
+    <span class="cm"># Check alg:none</span>
+    <span class="kw">if</span> header.get(<span class="st">"alg"</span>, <span class="st">""</span>).lower() == <span class="st">"none"</span>:
+        findings.append({<span class="st">"type"</span>: <span class="st">"jwt_alg_none"</span>, <span class="st">"severity"</span>: <span class="st">"CRITICAL"</span>, <span class="st">"url"</span>: url})
+
+    <span class="cm"># Brute-force weak secret</span>
+    candidates = WEAK_SECRETS + [self.domain, self.target]
+    <span class="kw">for</span> secret <span class="kw">in</span> candidates:
+        <span class="kw">try</span>:
+            jwt.decode(token, secret, algorithms=[<span class="st">"HS256"</span>, <span class="st">"HS384"</span>, <span class="st">"HS512"</span>])
+            findings.append({
+                <span class="st">"type"</span>: <span class="st">"jwt_weak_secret"</span>, <span class="st">"severity"</span>: <span class="st">"CRITICAL"</span>,
+                <span class="st">"url"</span>: url, <span class="st">"secret"</span>: secret,
+            })
+            <span class="kw">break</span>
+        <span class="kw">except</span> jwt.InvalidSignatureError:
+            <span class="kw">pass</span>
+        <span class="kw">except</span> Exception:
+            <span class="kw">pass</span>
+
+    <span class="kw">return</span> findings
+</pre>
+</div>
+
+<div class="section" id="sourcemap">
+  <h2>Module Spec: sourcemap_analyzer.py <span class="n">§9</span></h2>
+  <p>Runs in group 5, after <code>fuzzer</code> (which discovers JS URLs). Receives the crawled JS URL list from <code>fuzzer</code> results via <code>_build_kwargs()</code>.</p>
+
+  <h3>Algorithm</h3>
+  <ul class="bl arr">
+    <li>For each JS URL ending in <code>.js</code>, request <code>URL + ".map"</code> and check the <code>X-SourceMap</code> / <code>SourceMap</code> response headers.</li>
+    <li>Parse the source map JSON: extract <code>sources</code> array (file paths) and <code>sourcesContent</code> array (reconstructed file content).</li>
+    <li>Search each content string for secret patterns (same <code>SECRET_PATTERNS</code> list used in <code>fuzzer.py</code>).</li>
+    <li>Search source paths for interesting indicators: <code>.env</code>, <code>config</code>, <code>credentials</code>, <code>internal</code>, <code>private</code>.</li>
+    <li>Save reconstructed source tree to <code>session/sourcemap_analyzer/reconstructed/</code>.</li>
+  </ul>
+
+<pre>
+<span class="kw">def</span> <span class="fn">_fetch_sourcemap</span>(self, js_url: str, sess) -> dict | None:
+    <span class="cm"># Check response header first (most reliable)</span>
+    resp = self.http_get(js_url, session=sess, timeout=<span class="nm">10</span>)
+    <span class="kw">if</span> resp <span class="kw">is None</span>:
+        <span class="kw">return None</span>
+    map_url = (
+        resp.headers.get(<span class="st">"SourceMap"</span>)
+        <span class="kw">or</span> resp.headers.get(<span class="st">"X-SourceMap"</span>)
+    )
+    <span class="kw">if not</span> map_url:
+        <span class="cm"># Fallback: try appending .map</span>
+        map_url = js_url + <span class="st">".map"</span>
+        <span class="cm"># Also scan last line for //# sourceMappingURL=...</span>
+        last_lines = (resp.text <span class="kw">or</span> <span class="st">""</span>)[-<span class="nm">500</span>:]
+        m = re.search(<span class="st">r"sourceMappingURL=(.+)"</span>, last_lines)
+        <span class="kw">if</span> m:
+            map_url = urljoin(js_url, m.group(<span class="nm">1</span>).strip())
+
+    map_resp = self.http_get(map_url, session=sess, timeout=<span class="nm">10</span>)
+    <span class="kw">if</span> map_resp <span class="kw">is None or</span> map_resp.status_code != <span class="nm">200</span>:
+        <span class="kw">return None</span>
+    <span class="kw">try</span>:
+        <span class="kw">return</span> map_resp.json()
+    <span class="kw">except</span>:
+        <span class="kw">return None</span>
+</pre>
+  <p>Add <code>sourcemap_analyzer</code> to <code>_build_kwargs()</code> to receive <code>fuzzer.classified</code> JS URLs. Wire into pipeline group 5.</p>
+</div>
+
+<div class="section" id="sectrails">
+  <h2>API methods: SecurityTrails + BinaryEdge <span class="n">§10</span></h2>
+  <p>Both keys are already configured everywhere except the actual API call methods. Add these to <code>modules/recon.py</code> and register them in <code>_enumerate_subdomains()</code>.</p>
+
+<pre>
+<span class="cm"># SecurityTrails — subdomain list endpoint</span>
+<span class="kw">def</span> <span class="fn">_api_securitytrails</span>(self) -> list:
+    key = self.config.get(<span class="st">"api_keys"</span>, {}).get(<span class="st">"securitytrails"</span>, <span class="st">""</span>)
+    <span class="kw">if not</span> key:
+        <span class="kw">return</span> []
+    data = self._request_json(
+        <span class="st">"securitytrails"</span>,
+        <span class="st">f"https://api.securitytrails.com/v1/domain/{self.domain}/subdomains"</span>,
+        headers={
+            <span class="st">"APIKEY"</span>: key,
+            <span class="st">"Accept"</span>: <span class="st">"application/json"</span>,
+            <span class="st">"User-Agent"</span>: <span class="st">"ReconX/2.0"</span>,
+        },
+        timeout=<span class="nm">30</span>,
+    )
+    <span class="kw">if not</span> isinstance(data, dict):
+        <span class="kw">return</span> []
+    <span class="kw">return</span> [
+        <span class="st">f"{sub}.{self.domain}"</span>
+        <span class="kw">for</span> sub <span class="kw">in</span> data.get(<span class="st">"subdomains"</span>, [])
+        <span class="kw">if</span> isinstance(sub, str) <span class="kw">and</span> sub
+    ]
+
+<span class="cm"># BinaryEdge — host search by domain</span>
+<span class="kw">def</span> <span class="fn">_api_binaryedge</span>(self) -> list:
+    key = self.config.get(<span class="st">"api_keys"</span>, {}).get(<span class="st">"binaryedge"</span>, <span class="st">""</span>)
+    <span class="kw">if not</span> key:
+        <span class="kw">return</span> []
+    data = self._request_json(
+        <span class="st">"binaryedge"</span>,
+        <span class="st">f"https://api.binaryedge.io/v2/query/domains/subdomain/{self.domain}"</span>,
+        headers={
+            <span class="st">"X-Key"</span>: key,
+            <span class="st">"User-Agent"</span>: <span class="st">"ReconX/2.0"</span>,
+        },
+        params={<span class="st">"page"</span>: <span class="nm">1</span>},
+        timeout=<span class="nm">30</span>,
+    )
+    <span class="kw">if not</span> isinstance(data, dict):
+        <span class="kw">return</span> []
+    <span class="kw">return</span> [
+        str(e).strip()
+        <span class="kw">for</span> e <span class="kw">in</span> data.get(<span class="st">"events"</span>, [])
+        <span class="kw">if</span> isinstance(e, str)
+    ]
+</pre>
+  <p>Register both in <code>api_fns</code> list inside <code>_enumerate_subdomains()</code> with config keys <code>use_securitytrails</code> and <code>use_binaryedge</code>. Add matching entries in <code>config.yaml</code> subdomains section.</p>
+  <p>Add tests in <code>tests/test_recon.py</code> following the same pattern as the existing <code>test_shodan_api_*</code> and <code>test_censys_*</code> tests.</p>
+</div>
+
+<div class="section" id="vhost">
+  <h2>Module Spec: vhost_enum.py <span class="n">§11</span></h2>
+  <p>Virtual host enumeration finds applications that share an IP with the main target but are not publicly DNS-resolvable. Runs in group 5, requires <code>ffuf</code>.</p>
+
+<pre>
+<span class="kw">class</span> <span class="fn">VHostEnumModule</span>(BaseModule):
+    name = <span class="st">"vhost_enum"</span>
+    description = <span class="st">"Virtual Host Enumeration"</span>
+    required_tools = [<span class="st">"ffuf"</span>]
+
+    <span class="kw">def</span> <span class="fn">run</span>(self) -> dict:
+        ips = list({
+            self._host_from_url(url)
+            <span class="kw">for</span> url <span class="kw">in</span> self.live_hosts
+            <span class="kw">if</span> self.is_in_scope(url)
+        })
+        wl = self._vhost_wordlist()   <span class="cm"># SecLists/Discovery/DNS/subdomains-top1million-5000.txt</span>
+        found = []
+
+        <span class="kw">for</span> ip <span class="kw">in</span> ips:
+            out = self.module_dir / <span class="st">f"vhost_{ip.replace('.','_')}.json"</span>
+            self.exec([
+                <span class="st">"ffuf"</span>,
+                <span class="st">"-u"</span>, <span class="st">f"http://{ip}/"</span>,
+                <span class="st">"-H"</span>, <span class="st">f"Host: FUZZ.{self.domain}"</span>,
+                <span class="st">"-w"</span>, wl,
+                <span class="st">"-mc"</span>, <span class="st">"200,201,204,301,302,307,401,403"</span>,
+                <span class="st">"-fs"</span>, self._baseline_size(ip),  <span class="cm"># filter default vhost size</span>
+                <span class="st">"-t"</span>, <span class="st">"30"</span>, <span class="st">"-rate"</span>, <span class="st">"50"</span>,
+                <span class="st">"-of"</span>, <span class="st">"json"</span>, <span class="st">"-o"</span>, str(out), <span class="st">"-s"</span>,
+            ], timeout=<span class="nm">600</span>)
+
+            <span class="kw">for</span> r <span class="kw">in</span> (self.load_json(out).get(<span class="st">"results"</span>, []) <span class="kw">or</span> []):
+                vhost = <span class="st">f"{r['input']['FUZZ']}.{self.domain}"</span>
+                found.append({
+                    <span class="st">"ip"</span>: ip, <span class="st">"vhost"</span>: vhost,
+                    <span class="st">"status"</span>: r.get(<span class="st">"status"</span>, <span class="nm">0</span>),
+                    <span class="st">"size"</span>: r.get(<span class="st">"length"</span>, <span class="nm">0</span>),
+                })
+                self.warn(<span class="st">f"  VHost found: {vhost} → {ip}"</span>)
+
+        <span class="kw">return</span> {<span class="st">"found"</span>: found, <span class="st">"total"</span>: len(found)}
+
+    <span class="kw">def</span> <span class="fn">_baseline_size</span>(self, ip: str) -> str:
+        <span class="cm"># Request with a random hostname to get default response size</span>
+        resp = self.http_get(
+            <span class="st">f"http://{ip}/"</span>,
+            headers={<span class="st">"Host"</span>: <span class="st">f"nxvhost-{random.randint(10000,99999)}.{self.domain}"</span>},
+            timeout=<span class="nm">8</span>, verify=<span class="nm">False</span>,
+        )
+        <span class="kw">return</span> str(len(resp.content)) <span class="kw">if</span> resp <span class="kw">else</span> <span class="st">"0"</span>
+</pre>
+</div>
+
+<div class="section" id="params">
+  <h2>Module Spec: parameter_discovery.py <span class="n">§12</span></h2>
+  <p>Wraps <a href="https://github.com/s0md3v/Arjun">Arjun</a> and feeds discovered parameters back to the pipeline as additional scan targets. Runs in group 5.</p>
+
+<pre>
+<span class="kw">class</span> <span class="fn">ParameterDiscoveryModule</span>(BaseModule):
+    name = <span class="st">"parameter_discovery"</span>
+    description = <span class="st">"Hidden Parameter Discovery (Arjun)"</span>
+    required_tools = [<span class="st">"arjun"</span>]
+
+    <span class="kw">def</span> <span class="fn">run</span>(self) -> dict:
+        urls = self._select_targets()   <span class="cm"># auth + API endpoints from fuzzer</span>
+        <span class="kw">if not</span> urls:
+            <span class="kw">return</span> {<span class="st">"parameters"</span>: [], <span class="st">"total"</span>: <span class="nm">0</span>}
+
+        url_file = self.module_dir / <span class="st">"arjun_targets.txt"</span>
+        out_file  = self.module_dir / <span class="st">"arjun_results.json"</span>
+        self.save_text(urls, <span class="st">"arjun_targets.txt"</span>)
+
+        self.exec([
+            <span class="st">"arjun"</span>,
+            <span class="st">"-i"</span>, str(url_file),
+            <span class="st">"-oJ"</span>, str(out_file),
+            <span class="st">"-t"</span>, <span class="st">"10"</span>,    <span class="cm"># threads</span>
+            <span class="st">"-d"</span>, <span class="st">"2"</span>,      <span class="cm"># delay seconds</span>
+            <span class="st">"--stable"</span>,     <span class="cm"># conservative mode</span>
+        ], timeout=<span class="nm">1200</span>)
+
+        data = self.load_json(out_file)
+        params = []
+        <span class="kw">for</span> url, found <span class="kw">in</span> (data <span class="kw">if</span> isinstance(data, dict) <span class="kw">else</span> {}).items():
+            <span class="kw">for</span> param <span class="kw">in</span> (found <span class="kw">or</span> []):
+                params.append({<span class="st">"url"</span>: url, <span class="st">"param"</span>: param})
+                self.warn(<span class="st">f"  Parameter found: {url}?{param}=..."</span>)
+
+        <span class="kw">return</span> {<span class="st">"parameters"</span>: params, <span class="st">"total"</span>: len(params)}
+
+    <span class="kw">def</span> <span class="fn">_select_targets</span>(self) -> list[str]:
+        <span class="cm"># Pull auth + API endpoints from fuzzer classified output</span>
+        classified = self.fuzzer_results.get(<span class="st">"classified"</span>, {})
+        candidates = set()
+        <span class="kw">for</span> category <span class="kw">in</span> (<span class="st">"auth"</span>, <span class="st">"api"</span>, <span class="st">"with_params"</span>):
+            candidates.update(classified.get(category, []))
+        <span class="kw">return</span> self.filter_in_scope_urls(candidates)[:<span class="nm">150</span>]
+</pre>
+  <p>Add <code>fuzzer_results</code> to constructor kwargs and wire in <code>_build_kwargs()</code>. Install Arjun via <code>pip install arjun</code> (add to <code>requirements.txt</code>).</p>
+</div>
+
+<div class="section" id="ai-advisor">
+  <h2>Module Spec: ai_advisor.py <span class="n">§13</span></h2>
+  <p>Called from <code>run_pipeline()</code> in a background thread after each module completes. Does not block the pipeline. Sends result to Telegram immediately. Requires no pipeline group changes.</p>
+
+<pre>
+<span class="cm"># main.py — add after run_one() returns:</span>
+
+<span class="kw">from</span> modules.ai_advisor <span class="kw">import</span> AIAdvisor
+advisor = AIAdvisor(config)   <span class="cm"># instantiate once before pipeline loop</span>
+
+<span class="cm"># Inside the pipeline loop, after all_results[name] = result:</span>
+<span class="kw">if</span> advisor.should_advise(name, result):
+    <span class="cm"># Run in background thread — do not block next module group</span>
+    threading.Thread(
+        target=_send_ai_advice,
+        args=(advisor, name, result, target, tg),
+        daemon=<span class="nm">True</span>,
+    ).start()
+
+<span class="kw">def</span> <span class="fn">_send_ai_advice</span>(advisor, name, result, target, tg):
+    advice = advisor.analyse(name, result, target)
+    <span class="kw">if</span> advice <span class="kw">and</span> tg.is_ready():
+        tg.send_message(<span class="st">f"🤖 *AI · {name.upper()}*\n\n{advice[:3000]}"</span>)
+</pre>
+
+  <h3>Per-module prompt templates</h3>
+  <p>Each module gets a short, focused prompt. The key constraint: prompt must fit in ~800 tokens so <code>deepseek-r1:7b</code> responds in under 30 seconds and does not block Telegram delivery.</p>
+
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>Module</th><th>Focus question for AI</th><th>Max input tokens</th></tr>
+      <tr><td><code>recon</code></td><td>Which subdomains look like forgotten assets, dev/staging, or high-value targets?</td><td>400</td></tr>
+      <tr><td><code>portscan</code></td><td>Which open ports represent the highest attack risk and what service-specific checks should follow?</td><td>300</td></tr>
+      <tr><td><code>techstack</code></td><td>Which technology versions are outdated or have known CVEs? What tech-specific templates should nuclei run?</td><td>350</td></tr>
+      <tr><td><code>fuzzer</code></td><td>Which discovered endpoints and JS secrets are highest priority for manual review?</td><td>500</td></tr>
+      <tr><td><code>vulnscan</code></td><td>For each CRITICAL/HIGH finding: real attack vector, manual verification steps, business impact.</td><td>600</td></tr>
+      <tr><td><code>cve_check</code></td><td>Which CVEs with ExploitDB matches are most likely exploitable in this environment?</td><td>400</td></tr>
+    </table>
+  </div>
+
+  <p><strong>Important:</strong> add <code>realtime_advice: true</code> and <code>advise_on: [recon, portscan, ...]</code> to the <code>ai:</code> section of <code>config.yaml</code> and <code>config.yaml.example</code>.</p>
+</div>
+
+<!-- ═══════════════════════════════ DEPS + TESTS ═══════════════════════════════ -->
+<div class="section" id="deps">
+  <h2>Dependency changes <span class="n">§14</span></h2>
+
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>Package</th><th>Version</th><th>Reason</th><th>Action</th></tr>
+      <tr><td><code>pyjwt</code></td><td><code>&gt;=2.8.0</code></td><td>auth_probe JWT decode and verification</td><td><span class="badge b-p2">Add to requirements.txt</span></td></tr>
+      <tr><td><code>dnspython</code></td><td><code>&gt;=2.6.0</code></td><td>takeover_checker CNAME resolution</td><td><span class="badge b-p3">Add to requirements.txt</span></td></tr>
+      <tr><td><code>arjun</code></td><td><code>&gt;=2.2.1</code></td><td>parameter_discovery</td><td><span class="badge b-p2">Add to requirements.txt</span></td></tr>
+      <tr><td><code>censys</code> SDK</td><td><code>&gt;=2.2</code></td><td>Optional: richer Censys queries</td><td><span class="badge b-gray">Optional / P3</span></td></tr>
+      <tr><td><code>aiohttp</code></td><td>already present</td><td>Could replace sync SSL loop if async refactor done</td><td><span class="badge b-gray">No change</span></td></tr>
+    </table>
+  </div>
+
+  <p>Also add to <code>install.sh</code>: <code>pip install arjun -q</code> after the droopescan step.</p>
+</div>
+
+<div class="section" id="tests">
+  <h2>Test coverage — gaps to fill <span class="n">§15</span></h2>
+  <p>Current coverage is good for a tool at this stage. The following are the missing assertions for newly confirmed bugs and the new API methods.</p>
+
+  <h3>Add to tests/test_recon.py</h3>
+<pre>
+<span class="kw">def</span> <span class="fn">test_securitytrails_api_extracts_subdomains</span>(tmp_path, monkeypatch):
+    module = ReconModule(<span class="st">"example.com"</span>, str(tmp_path),
+                         {<span class="st">"api_keys"</span>: {<span class="st">"securitytrails"</span>: <span class="st">"token"</span>}})
+    monkeypatch.setattr(module, <span class="st">"_request_json"</span>, <span class="kw">lambda</span> *a, **k: {
+        <span class="st">"subdomains"</span>: [<span class="st">"www"</span>, <span class="st">"api"</span>, <span class="st">"mail"</span>]
+    })
+    hosts = module._api_securitytrails()
+    <span class="kw">assert</span> <span class="st">"www.example.com"</span> <span class="kw">in</span> hosts
+    <span class="kw">assert</span> <span class="st">"api.example.com"</span> <span class="kw">in</span> hosts
+
+<span class="kw">def</span> <span class="fn">test_binaryedge_api_extracts_subdomains</span>(tmp_path, monkeypatch):
+    module = ReconModule(<span class="st">"example.com"</span>, str(tmp_path),
+                         {<span class="st">"api_keys"</span>: {<span class="st">"binaryedge"</span>: <span class="st">"token"</span>}})
+    monkeypatch.setattr(module, <span class="st">"_request_json"</span>, <span class="kw">lambda</span> *a, **k: {
+        <span class="st">"events"</span>: [<span class="st">"dev.example.com"</span>, <span class="st">"staging.example.com"</span>]
+    })
+    hosts = module._api_binaryedge()
+    <span class="kw">assert</span> <span class="st">"dev.example.com"</span> <span class="kw">in</span> hosts
+</pre>
+
+  <h3>Add to tests/test_base.py</h3>
+<pre>
+<span class="kw">def</span> <span class="fn">test_subprocess_env_includes_securitytrails_and_binaryedge</span>(tmp_path, monkeypatch):
+    monkeypatch.delenv(<span class="st">"SECURITYTRAILS_API_KEY"</span>, raising=<span class="nm">False</span>)
+    monkeypatch.delenv(<span class="st">"BINARYEDGE_API_KEY"</span>, raising=<span class="nm">False</span>)
+    module = BaseModule(<span class="st">"example.com"</span>, str(tmp_path), {
+        <span class="st">"api_keys"</span>: {
+            <span class="st">"securitytrails"</span>: <span class="st">"st-token"</span>,
+            <span class="st">"binaryedge"</span>: <span class="st">"be-token"</span>,
+        }
+    })
+    env = module._subprocess_env()
+    <span class="kw">assert</span> env[<span class="st">"SECURITYTRAILS_API_KEY"</span>] == <span class="st">"st-token"</span>
+    <span class="kw">assert</span> env[<span class="st">"BINARYEDGE_API_KEY"</span>]     == <span class="st">"be-token"</span>
+</pre>
+
+  <h3>Add to tests/test_config_env.py</h3>
+<pre>
+<span class="kw">def</span> <span class="fn">test_apply_env_overrides_maps_securitytrails_and_binaryedge</span>(monkeypatch):
+    monkeypatch.setenv(<span class="st">"SECURITYTRAILS_API_KEY"</span>, <span class="st">"st-env"</span>)
+    monkeypatch.setenv(<span class="st">"BINARYEDGE_API_KEY"</span>,     <span class="st">"be-env"</span>)
+    cfg = apply_env_overrides({})
+    <span class="kw">assert</span> cfg[<span class="st">"api_keys"</span>][<span class="st">"securitytrails"</span>] == <span class="st">"st-env"</span>
+    <span class="kw">assert</span> cfg[<span class="st">"api_keys"</span>][<span class="st">"binaryedge"</span>]     == <span class="st">"be-env"</span>
+</pre>
+</div>
+
+<!-- ═══════════════════════════════ QUESTIONS ═══════════════════════════════ -->
+<div class="section" id="questions">
+  <h2>Open questions <span class="n">§16</span></h2>
+
+  <div class="card blue">
+    <h4>1. Should AI advisor block or run in background?</h4>
+    <p>The background thread approach means Telegram gets the advice 20–60 seconds after the module finishes, while the next module group is already running. This is the right default for speed. However if someone wants to review AI advice before proceeding (e.g. to manually adjust scope), a <code>--ai-wait</code> flag that blocks until advice is sent would be useful. Recommend: background by default, opt-in blocking.</p>
+  </div>
+
+  <div class="card blue">
+    <h4>2. SecurityTrails and BinaryEdge — free tiers have rate limits</h4>
+    <p>SecurityTrails free tier: 50 requests/month. BinaryEdge free tier: 250 credits/month. Both should be gated behind <code>use_securitytrails: true</code> / <code>use_binaryedge: true</code> flags that default to <code>false</code> in <code>config.yaml</code>, unlike the other passive sources which default to <code>true</code>. This prevents accidental quota burn.</p>
+  </div>
+
+  <div class="card blue">
+    <h4>3. arjun install method</h4>
+    <p>Arjun is a pip package. It should go in <code>requirements.txt</code> and be installed inside the venv, not system-wide. However it also installs a CLI binary. Verify that the venv bin path is in <code>PATH</code> during subprocess calls, or use <code>python -m arjun</code> as the command instead of bare <code>arjun</code>.</p>
+  </div>
+
+  <div class="card blue">
+    <h4>4. Pipeline group for new modules</h4>
+    <p>Suggested group assignments for new modules to maintain parallelism without data dependency violations:</p>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <tr><th>Module</th><th>Group</th><th>Depends on</th></tr>
+        <tr><td><code>cors_checker</code></td><td>4 (parallel with fuzzer, ssl_checker)</td><td>webdetect live_urls</td></tr>
+        <tr><td><code>auth_probe</code></td><td>4</td><td>webdetect live_urls</td></tr>
+        <tr><td><code>sourcemap_analyzer</code></td><td>5 (parallel with cmscan)</td><td>fuzzer classified JS URLs</td></tr>
+        <tr><td><code>vhost_enum</code></td><td>5</td><td>portscan resolved IPs, recon domain</td></tr>
+        <tr><td><code>parameter_discovery</code></td><td>5</td><td>fuzzer classified endpoints</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div>ReconX Engineering Review · For authorized security testing only</div>
+  <div><code>python3 main.py --legal-acknowledgment -t &lt;target&gt;</code></div>
+</div>
+
+</main>
+</body>
+</html>

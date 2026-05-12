@@ -61,6 +61,8 @@ scan:
     use_shodan:       true
     use_censys:       true
     use_github:       true
+    use_securitytrails: false  # disabled by default to avoid free-tier quota burn
+    use_binaryedge:   false    # disabled by default to avoid free-tier quota burn
     wayback_timeout:  15        # seconds; CDX often stalls on large domains
     wayback_limit:    1000      # lower is faster and less likely to time out
     github_per_page:  30        # GitHub code search results to inspect

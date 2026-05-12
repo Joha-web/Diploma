@@ -39,13 +39,22 @@ def test_scope_ip_requires_allowed_ip(tmp_path):
 
 def test_subprocess_env_includes_configured_cli_tokens(tmp_path, monkeypatch):
     monkeypatch.delenv("PDCP_API_KEY", raising=False)
+    monkeypatch.delenv("SECURITYTRAILS_API_KEY", raising=False)
+    monkeypatch.delenv("BINARYEDGE_API_KEY", raising=False)
     module = BaseModule(
         "example.com",
         str(tmp_path),
-        {"api_keys": {"pdcp": "pdcp-token", "github": "github-token"}},
+        {"api_keys": {
+            "pdcp": "pdcp-token",
+            "github": "github-token",
+            "securitytrails": "st-token",
+            "binaryedge": "be-token",
+        }},
     )
 
     env = module._subprocess_env()
 
     assert env["PDCP_API_KEY"] == "pdcp-token"
     assert env["GITHUB_TOKEN"] == "github-token"
+    assert env["SECURITYTRAILS_API_KEY"] == "st-token"
+    assert env["BINARYEDGE_API_KEY"] == "be-token"

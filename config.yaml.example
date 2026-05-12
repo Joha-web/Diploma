@@ -53,6 +53,8 @@ scan:
     use_shodan: true
     use_censys: true
     use_github: true
+    use_securitytrails: false
+    use_binaryedge: false
     wayback_timeout: 15
     wayback_limit: 1000
     github_per_page: 30

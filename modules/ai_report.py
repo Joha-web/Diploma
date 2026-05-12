@@ -278,7 +278,6 @@ End with this sentence:
                 timeout=600,
             )
             if resp.status_code == 200:
-                text = resp.json().get("response", "")
                 text = self._clean_model_output(resp.json().get("response", ""))
                 return text
             else:

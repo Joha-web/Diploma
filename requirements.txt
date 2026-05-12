@@ -24,3 +24,5 @@ aiofiles>=23.2.1
 # Utilities
 python-dateutil>=2.9.0
 tldextract>=5.1.1          # clean domain parsing
+pyjwt>=2.8.0               # JWT analysis for auth_probe
+dnspython>=2.6.0           # DNS CNAME checks for takeover_checker
