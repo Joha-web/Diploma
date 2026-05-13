@@ -8,6 +8,7 @@ Output: live_hosts list used by all downstream modules
 import re
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 from modules.base import BaseModule
 
@@ -36,11 +37,6 @@ class WebdetectModule(BaseModule):
         # Run httpx
         live = self._run_httpx(candidates_file)
 
-        # Screenshots (optional)
-        if self.config.get("scan", {}).get("http", {}).get("screenshots", False):
-            if self.has_tool("gowitness"):
-                self._run_gowitness(candidates_file)
-
         counts = {
             "total":          len(live),
             "status_200":     sum(1 for h in live if h.get("status") == 200),
@@ -51,10 +47,26 @@ class WebdetectModule(BaseModule):
         # Write clean URL list for downstream modules
         live_urls = [h["url"] for h in live]
         self.save_text(live_urls, "live_urls.txt")
+
+        screenshots: list[dict] = []
+        if live_urls and self.config.get("scan", {}).get("http", {}).get("screenshots", False):
+            if self.has_tool("gowitness"):
+                screenshots = self._run_gowitness(self.module_dir / "live_urls.txt")
+                self._attach_screenshots(live, screenshots)
+            else:
+                self.warn("gowitness not found - screenshots skipped")
+
         self.save_json(live, "live_hosts.json")
+        if screenshots:
+            self.save_json(screenshots, "screenshots.json")
 
         self.success(f"{len(live)} live web apps found")
-        return {"live_hosts": live, "live_urls": live_urls, "counts": counts}
+        return {
+            "live_hosts": live,
+            "live_urls": live_urls,
+            "counts": counts,
+            "screenshots": screenshots,
+        }
 
     # ── collect candidates ────────────────────────────────────────────────────
 
@@ -176,18 +188,53 @@ class WebdetectModule(BaseModule):
 
     # ── gowitness ─────────────────────────────────────────────────────────────
 
-    def _run_gowitness(self, candidates_file: Path) -> None:
+    def _run_gowitness(self, urls_file: Path) -> list[dict]:
         shots_dir = self.module_dir / "screenshots"
         shots_dir.mkdir(exist_ok=True)
         self.info("Taking screenshots (gowitness)...")
         self.exec(
             ["gowitness", "file",
-             "-f", str(candidates_file),
+             "-f", str(urls_file),
              "--screenshot-path", str(shots_dir),
              "--threads", "5",
              "--timeout", "15",
              "--disable-logging"],
             timeout=600,
         )
-        count = len(list(shots_dir.glob("*.png")))
+        shots = [
+            {
+                "path": str(path),
+                "relative_path": str(path.relative_to(self.output_dir)),
+                "filename": path.name,
+            }
+            for path in sorted(shots_dir.glob("*.png"))
+        ]
+        count = len(shots)
         self.success(f"Screenshots: {count}")
+        return shots
+
+    def _attach_screenshots(self, live: list[dict], screenshots: list[dict]) -> None:
+        unused = list(screenshots)
+        for host in live:
+            url = host.get("url", "")
+            match = self._match_screenshot(url, unused)
+            if not match:
+                continue
+            host["screenshot"] = match["relative_path"]
+            match["url"] = url
+            unused.remove(match)
+
+    @staticmethod
+    def _match_screenshot(url: str, screenshots: list[dict]) -> dict | None:
+        parsed = urlparse(url)
+        host_token = re.sub(r"[^a-z0-9]+", "", (parsed.hostname or "").lower())
+        if not host_token:
+            return None
+
+        best = None
+        for shot in screenshots:
+            file_token = re.sub(r"[^a-z0-9]+", "", shot.get("filename", "").lower())
+            if host_token in file_token:
+                best = shot
+                break
+        return best

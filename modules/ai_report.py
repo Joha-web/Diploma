@@ -78,6 +78,7 @@ class AIReportModule(BaseModule):
         lang = self._normalize_language(lang)
         r      = self.all_results
         recon  = r.get("recon", {})
+        web    = r.get("webdetect", {})
         ports  = r.get("portscan", {})
         tech   = r.get("techstack", {})
         fuzz   = r.get("fuzzer", {})
@@ -85,13 +86,14 @@ class AIReportModule(BaseModule):
         vuln   = r.get("vulnscan", {})
         cve    = r.get("cve_check", {})
         ssl    = r.get("ssl_checker", {})
+        corr   = r.get("correlator", {})
 
         blocks: list[str] = []
 
         # ── Target overview
         blocks.append(f"TARGET: {self.target}")
         blocks.append(f"Subdomains: {recon.get('subdomains_total', 0)}")
-        blocks.append(f"Live HTTP hosts: {len(recon.get('live_http', []))}")
+        blocks.append(f"Live HTTP hosts: {len(web.get('live_urls') or recon.get('live_http', []))}")
         blocks.append(f"Unique IPs: {len(recon.get('resolved_ips', []))}")
 
         # ── Open ports
@@ -135,6 +137,15 @@ class AIReportModule(BaseModule):
                 blocks.append(
                     f"  [{item.get('severity','?')}] {item.get('cve','')} "
                     f"→ {item.get('matched_url','')} ({edb}, dry-run only)"
+                )
+
+        correlated = corr.get("findings", [])
+        if correlated:
+            blocks.append(f"\nCROSS-FINDING PRIORITIES ({len(correlated)}):")
+            for item in correlated[:10]:
+                blocks.append(
+                    f"  [{item.get('severity','?')}] {item.get('title','')} "
+                    f"→ {item.get('matched_url') or item.get('url','')}"
                 )
 
         # ── Fuzzing

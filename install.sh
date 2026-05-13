@@ -92,6 +92,7 @@ GO_TOOLS=(
     "github.com/projectdiscovery/httpx/cmd/httpx@latest"
     "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"
     "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
+    "github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest"
     "github.com/projectdiscovery/katana/cmd/katana@latest"
     "github.com/ffuf/ffuf/v2@latest"
     "github.com/tomnomnom/assetfinder@latest"
@@ -198,7 +199,7 @@ echo -e "${BOLD}${CYAN}═══════════════════
 
 TOOLS=(
     nmap masscan subfinder amass assetfinder dnsx httpx
-    nuclei katana ffuf whatweb wafw00f wpscan joomscan
+    nuclei interactsh-client katana ffuf whatweb wafw00f wpscan joomscan
     droopescan arjun gowitness waybackurls gau ollama
 )
 

@@ -21,7 +21,8 @@ class CORSCheckerModule(BaseModule):
         ("reflected_origin", "https://attacker-reconx.com", "HIGH"),
         ("null_origin", "null", "HIGH"),
         ("prefix_bypass", "https://{domain}.attacker-reconx.com", "HIGH"),
-        ("suffix_bypass", "https://not{domain}", "HIGH"),
+        ("suffix_bypass", "https://evil{domain}", "HIGH"),
+        ("unrelated_domain", "https://notexample.com", "HIGH"),
     ]
 
     def __init__(self, target: str, output_dir: str, config: dict,

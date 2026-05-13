@@ -6,6 +6,7 @@ Includes retry logic with exponential backoff.
 import time
 import logging
 import os
+import re
 import requests
 from pathlib import Path
 from datetime import datetime
@@ -49,6 +50,13 @@ class TelegramNotifier:
     def is_ready(self) -> bool:
         return bool(self.enabled) and bool(self.bot_token) and bool(self.chat_id)
 
+    def _sanitize_error(self, error: Exception | str) -> str:
+        """Remove Telegram credentials from exception strings before logging."""
+        text = str(error)
+        if self.bot_token:
+            text = text.replace(self.bot_token, "<redacted>")
+        return re.sub(r"/bot[^/\s]+", "/bot<redacted>", text)
+
     # ── Core send methods with retry ─────────────────────────────────────────
 
     def send_message(self, text: str, parse_mode: str | None = "Markdown") -> bool:
@@ -82,16 +90,17 @@ class TelegramNotifier:
                     logger.warning(f"Telegram rate limited, waiting {retry_after}s")
                     time.sleep(retry_after)
                 else:
+                    response_text = self._sanitize_error(r.text[:200])
                     logger.warning(
                         f"Telegram send failed (attempt {attempt}/{self.max_retries}): "
-                        f"HTTP {r.status_code} — {r.text[:200]}"
+                        f"HTTP {r.status_code} — {response_text}"
                     )
             except requests.exceptions.Timeout:
                 logger.warning(f"Telegram timeout (attempt {attempt}/{self.max_retries})")
             except requests.exceptions.ConnectionError:
                 logger.warning(f"Telegram connection error (attempt {attempt}/{self.max_retries})")
             except Exception as e:
-                logger.error(f"Telegram unexpected error: {e}")
+                logger.error(f"Telegram unexpected error: {self._sanitize_error(e)}")
                 return False
 
             if attempt < self.max_retries:
@@ -127,7 +136,9 @@ class TelegramNotifier:
                     f"HTTP {r.status_code}"
                 )
             except Exception as e:
-                logger.warning(f"Telegram document error (attempt {attempt}): {e}")
+                logger.warning(
+                    f"Telegram document error (attempt {attempt}): {self._sanitize_error(e)}"
+                )
 
             if attempt < self.max_retries:
                 time.sleep(delay)

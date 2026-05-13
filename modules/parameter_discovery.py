@@ -2,6 +2,8 @@
 ReconX - Module: hidden parameter discovery with Arjun.
 """
 
+import importlib.util
+import sys
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from modules.base import BaseModule
@@ -10,7 +12,7 @@ from modules.base import BaseModule
 class ParameterDiscoveryModule(BaseModule):
     name = "parameter_discovery"
     description = "Hidden Parameter Discovery"
-    required_tools = ["arjun"]
+    required_tools: list[str] = []
 
     def __init__(self, target: str, output_dir: str, config: dict,
                  fuzzer_results: dict | None = None,
@@ -28,12 +30,17 @@ class ParameterDiscoveryModule(BaseModule):
         if not targets:
             self.warn("No URLs for parameter discovery")
             return {"parameters": [], "parameterized_targets": [], "total": 0}
+        arjun_cmd = self._arjun_command()
+        if not arjun_cmd:
+            self.warn("Arjun not available in PATH or current Python environment")
+            return {"parameters": [], "parameterized_targets": [], "total": 0,
+                    "status": "dependency_missing"}
 
         url_file = self.module_dir / "arjun_targets.txt"
         out_file = self.module_dir / "arjun_results.json"
         self.save_text(targets, "arjun_targets.txt")
         self.exec(
-            ["arjun", "-i", str(url_file), "-oJ", str(out_file),
+            [*arjun_cmd, "-i", str(url_file), "-oJ", str(out_file),
              "-t", str(cfg.get("threads", 10)), "-d", str(cfg.get("delay", 2)),
              "--stable"],
             timeout=int(cfg.get("timeout", 1200)),
@@ -103,3 +110,10 @@ class ParameterDiscoveryModule(BaseModule):
         if parsed.query:
             query = f"{parsed.query}&{query}"
         return urlunparse(parsed._replace(query=query))
+
+    def _arjun_command(self) -> list[str]:
+        if importlib.util.find_spec("arjun") is not None:
+            return [sys.executable, "-m", "arjun"]
+        if self.has_tool("arjun"):
+            return ["arjun"]
+        return []

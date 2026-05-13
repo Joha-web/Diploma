@@ -37,3 +37,11 @@ def test_cors_checker_flags_wildcard_origin(tmp_path, monkeypatch):
 
     assert findings[0]["type"] == "cors_wildcard_origin"
     assert findings[0]["severity"] == "MEDIUM"
+
+
+def test_cors_checker_uses_requested_bypass_origins():
+    origins = [origin for _, origin, _ in CORSCheckerModule.ORIGIN_PROBES]
+
+    assert "https://evil{domain}" in origins
+    assert "https://notexample.com" in origins
+    assert "https://not{domain}" not in origins

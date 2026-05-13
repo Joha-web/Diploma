@@ -521,6 +521,11 @@ class BaseModule:
         if self.required_tools and not self.any_tool_available():
             self.warn("No required tools available — module skipped")
             self.results = {"status": "skipped", "reason": "no_tools"}
+            self.end_time = datetime.now()
+            elapsed = (self.end_time - self.start_time).total_seconds()
+            self.results["elapsed_seconds"] = round(elapsed, 1)
+            self.success(f"Completed in {elapsed:.1f}s")
+            self.save_json(self.results, f"{self.name}_results.json")
             return self.results
 
         try:

@@ -60,7 +60,8 @@ PIPELINE: list[dict] = [
     {"name": "parameter_discovery", "group": 6},
     {"name": "vulnscan",    "group": 7},
     {"name": "cve_check",   "group": 8},
-    {"name": "ai_report",   "group": 9},
+    {"name": "correlator",  "group": 9},
+    {"name": "ai_report",   "group": 10},
 ]
 
 CLASS_MAP = {
@@ -80,6 +81,7 @@ CLASS_MAP = {
     "parameter_discovery": ("modules.parameter_discovery", "ParameterDiscoveryModule"),
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
     "cve_check":   ("modules.cve_check",    "CVECheckModule"),
+    "correlator":  ("modules.correlator",   "CorrelatorModule"),
     "ai_report":   ("modules.ai_report",    "AIReportModule"),
 }
 
@@ -101,6 +103,7 @@ MODULE_LABELS = {
     "parameter_discovery": "Hidden Parameter Discovery",
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
     "cve_check":   "CVE & ExploitDB Correlation",
+    "correlator":  "Cross-Finding Correlation",
     "ai_report":   "AI Security Analysis",
 }
 
@@ -136,7 +139,7 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
     live   = _live_urls(all_results)
     kwargs: dict = {}
     if name == "portscan":
-        kwargs["resolved_ips"] = recon.get("resolved_ips", [])
+        kwargs["resolved_ips"] = recon.get("scan_ips") or recon.get("resolved_ips", [])
     elif name in ("webdetect", "techstack", "fuzzer", "ssl_checker",
                   "cors_checker", "auth_probe", "openapi_parser"):
         kwargs["live_hosts"] = live
@@ -146,7 +149,7 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
     elif name == "vhost_enum":
         kwargs["live_hosts"] = live
-        kwargs["resolved_ips"] = recon.get("resolved_ips", [])
+        kwargs["resolved_ips"] = recon.get("scan_ips") or recon.get("resolved_ips", [])
     elif name == "takeover_checker":
         kwargs["recon_results"] = recon
     elif name == "parameter_discovery":
@@ -156,12 +159,13 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["live_hosts"] = live
         kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
         kwargs["openapi_results"] = all_results.get("openapi_parser", {})
+        kwargs["tech_results"] = all_results.get("techstack", {})
     elif name == "cve_check":
         kwargs["live_hosts"] = live
         kwargs["tech_results"] = all_results.get("techstack", {})
         kwargs["vuln_results"] = all_results.get("vulnscan", {})
         kwargs["all_results"] = all_results
-    elif name == "ai_report":
+    elif name in ("correlator", "ai_report"):
         kwargs["all_results"] = all_results
     return kwargs
 
@@ -193,6 +197,8 @@ def _module_summary(name: str, result: dict) -> str:
         summary = result.get("summary", {})
         return (f"{summary.get('total_cves', 0)} CVEs, "
                 f"{summary.get('with_exploitdb', 0)} ExploitDB match(es)")
+    elif name == "correlator":
+        return f"{result.get('total', 0)} correlated priority item(s)"
     elif name == "cmscan":
         return f"{result.get('total_findings', 0)} findings"
     elif name in ("cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker"):
@@ -413,6 +419,7 @@ def run_pipeline(
     # ── Telegram: final completion notification ───────────────────────────────
     if tg_ready:
         recon = all_results.get("recon", {})
+        web   = all_results.get("webdetect", {})
         ports = all_results.get("portscan", {}).get("summary", {})
         tech  = all_results.get("techstack", {})
         fuzz  = all_results.get("fuzzer", {})
@@ -424,7 +431,7 @@ def run_pipeline(
 
         tg_summary = {
             "subdomains":      recon.get("subdomains_total", 0),
-            "live_hosts":      len(recon.get("live_http", [])),
+            "live_hosts":      len(web.get("live_urls") or recon.get("live_http", [])),
             "open_ports":      ports.get("total_open_ports", 0),
             "technologies":    len(tech.get("technologies_summary", {})),
             "vulnerabilities": vuln.get("total", 0),
@@ -449,6 +456,7 @@ def _md_report(
     session_dir: Path, target: str, results: dict, ai: str, elapsed: str
 ) -> str:
     recon = results.get("recon", {})
+    web = results.get("webdetect", {})
     ports = results.get("portscan", {}).get("summary", {})
     tech  = results.get("techstack", {})
     fuzz  = results.get("fuzzer", {})
@@ -459,6 +467,7 @@ def _md_report(
     takeover = results.get("takeover_checker", {})
     openapi = results.get("openapi_parser", {})
     params = results.get("parameter_discovery", {})
+    corr = results.get("correlator", {})
 
     lines = [
         f"# 🔬 ReconX: `{target}`",
@@ -466,7 +475,7 @@ def _md_report(
         "---\n## 📊 Summary\n",
         "| Metric | Value |", "|--------|-------|",
         f"| Subdomains | {recon.get('subdomains_total', 0)} |",
-        f"| Live HTTP hosts | {len(recon.get('live_http', []))} |",
+        f"| Live HTTP hosts | {len(web.get('live_urls') or recon.get('live_http', []))} |",
         f"| Unique IPs | {len(recon.get('resolved_ips', []))} |",
         f"| Open ports | {ports.get('total_open_ports', 0)} |",
         f"| Technologies | {len(tech.get('technologies_summary', {}))} |",
@@ -480,6 +489,7 @@ def _md_report(
         f"| Takeover candidates | {takeover.get('total', len(takeover.get('findings', [])))} |",
         f"| OpenAPI endpoints | {openapi.get('total_endpoints', 0)} |",
         f"| Parameters | {params.get('total', 0)} |",
+        f"| Correlated priorities | {corr.get('total', 0)} |",
         "",
     ]
     if ai:
@@ -504,10 +514,12 @@ def _md_report(
             )
 
     for module_name, title in (
+        ("fuzzer", "Fuzzer Findings"),
         ("cors_checker", "CORS Findings"),
         ("auth_probe", "Auth Findings"),
         ("sourcemap_analyzer", "Source Map Findings"),
         ("takeover_checker", "Subdomain Takeover Candidates"),
+        ("correlator", "Cross-Finding Correlation"),
     ):
         findings = results.get(module_name, {}).get("findings", [])
         if findings:
@@ -529,6 +541,7 @@ def _md_report(
 
 def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     recon = results.get("recon", {})
+    web   = results.get("webdetect", {})
     ports = results.get("portscan", {}).get("summary", {})
     tech  = results.get("techstack", {})
     fuzz  = results.get("fuzzer", {})
@@ -538,6 +551,7 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     auth  = results.get("auth_probe", {})
     takeover = results.get("takeover_checker", {})
     params = results.get("parameter_discovery", {})
+    corr = results.get("correlator", {})
     n_vuln = vuln.get("total", 0)
 
     t = Table(show_header=False, border_style="dim", box=None, padding=(0, 1))
@@ -546,7 +560,7 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     t.add_row("📁 Output dir",       str(session_dir))
     t.add_row("⏱  Duration",         elapsed)
     t.add_row("🌐 Subdomains",       str(recon.get("subdomains_total", 0)))
-    t.add_row("✅ Live HTTP",        str(len(recon.get("live_http", []))))
+    t.add_row("✅ Live HTTP",        str(len(web.get("live_urls") or recon.get("live_http", []))))
     t.add_row("🖥  Unique IPs",       str(len(recon.get("resolved_ips", []))))
     t.add_row("🔌 Open ports",       str(ports.get("total_open_ports", 0)))
     t.add_row("🧰 Technologies",     str(len(tech.get("technologies_summary", {}))))
@@ -558,6 +572,7 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     t.add_row("Auth findings",       str(auth.get("total", len(auth.get("findings", [])))))
     t.add_row("Takeover candidates", str(takeover.get("total", len(takeover.get("findings", [])))))
     t.add_row("Parameters",          str(params.get("total", 0)))
+    t.add_row("Correlated priorities", str(corr.get("total", 0)))
 
     console.print(Panel(t, title="[bold magenta]ReconX — Complete[/bold magenta]",
                         border_style="magenta", padding=(1, 2)))

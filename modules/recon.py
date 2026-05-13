@@ -8,6 +8,7 @@ import shlex
 import time
 import random
 import json
+import ipaddress
 import requests
 from requests.auth import HTTPBasicAuth
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -46,22 +47,28 @@ class ReconModule(BaseModule):
         self._detect_wildcard()
         whois  = self._whois()
         dns    = self._dns_records()
+        email_security = self._analyze_email_security(dns)
         zone   = self._zone_transfer()
         self._enumerate_subdomains()
         self._resolve_subdomains()
         self._http_probe()
         urls   = self._collect_urls()
+        asn_info = self._asn_lookup()
+        scan_ips = self._scan_target_ips(asn_info)
 
         return {
             "target": self.target, "domain": self.domain, "is_ip": self.is_ip,
             "reverse_dns": rdns, "wildcard_detected": bool(self.wildcard_ips),
             "wildcard_ips": sorted(self.wildcard_ips), "whois": whois,
             "dns_records": dns, "zone_transfer": zone,
+            "email_security": email_security,
             "subdomains_total": len(self.subdomains),
             "subdomains": sorted(self.subdomains),
             "resolved_hosts": self.resolved_hosts,
             "resolved_ips": sorted(self.resolved_ips),
+            "scan_ips": scan_ips,
             "live_http": self.live_http, "urls": urls,
+            "asn": asn_info,
         }
 
     # ── Wildcard detection ────────────────────────────────────────────────────
@@ -119,8 +126,72 @@ class ReconModule(BaseModule):
             r = self.exec(["dig", "+short", rtype, self.domain], timeout=15)
             if r.stdout.strip():
                 records[rtype] = [x.strip() for x in r.stdout.splitlines() if x.strip()]
+        dmarc = self.exec(["dig", "+short", "TXT", f"_dmarc.{self.domain}"], timeout=15)
+        if dmarc.stdout.strip():
+            records["DMARC_TXT"] = [x.strip() for x in dmarc.stdout.splitlines() if x.strip()]
         self.save_json(records, "dns/dns_records.json")
         return records
+
+    def _analyze_email_security(self, records: dict) -> dict:
+        """Extract SPF/DMARC posture from already-collected DNS records."""
+        txt_records = [self._normalize_txt(r) for r in records.get("TXT", [])]
+        dmarc_records = [self._normalize_txt(r) for r in records.get("DMARC_TXT", [])]
+        spf_records = [r for r in txt_records if r.lower().startswith("v=spf1")]
+        dmarc_policy = ""
+        if dmarc_records:
+            policy_match = re.search(r"(?:^|;)\s*p\s*=\s*([a-z0-9_-]+)", dmarc_records[0], re.I)
+            dmarc_policy = policy_match.group(1).lower() if policy_match else ""
+
+        findings: list[dict] = []
+        if not spf_records:
+            findings.append({
+                "source": self.name,
+                "id": "missing_spf",
+                "type": "missing_spf",
+                "name": "Email spoofing possible",
+                "title": "Email spoofing possible",
+                "severity": "MEDIUM",
+                "description": "Domain has no SPF TXT record.",
+                "evidence": {"record": "TXT", "expected_prefix": "v=spf1"},
+                "confidence": 0.9,
+            })
+        if not dmarc_records:
+            findings.append({
+                "source": self.name,
+                "id": "missing_dmarc",
+                "type": "missing_dmarc",
+                "name": "Phishing risk",
+                "title": "Phishing risk",
+                "severity": "MEDIUM",
+                "description": "Domain has no _dmarc TXT record.",
+                "evidence": {"record": f"_dmarc.{self.domain} TXT"},
+                "confidence": 0.9,
+            })
+        elif dmarc_policy in ("", "none"):
+            findings.append({
+                "source": self.name,
+                "id": "weak_dmarc_policy",
+                "type": "weak_dmarc_policy",
+                "name": "DMARC policy is not enforcing",
+                "title": "DMARC policy is not enforcing",
+                "severity": "LOW",
+                "description": f"DMARC policy is '{dmarc_policy or 'unset'}'.",
+                "evidence": {"dmarc_policy": dmarc_policy or "unset"},
+                "confidence": 0.85,
+            })
+
+        result = {
+            "has_spf": bool(spf_records),
+            "spf_records": spf_records,
+            "has_dmarc": bool(dmarc_records),
+            "dmarc_records": dmarc_records,
+            "dmarc_policy": dmarc_policy,
+            "findings": findings,
+        }
+        self.save_json(result, "dns/email_security.json")
+        if findings:
+            self.warn(f"Email DNS findings: {len(findings)}")
+        return result
 
     # ── Zone Transfer ─────────────────────────────────────────────────────────
 
@@ -192,8 +263,45 @@ class ReconModule(BaseModule):
             r = self.exec(["amass", "enum", "-passive", "-d", self.domain], timeout=t)
             self._merge_subs(r.stdout.splitlines(), "amass")
 
+        if cfg.get("use_active_bruteforce", False) or cfg.get("enable_active_enum", False):
+            added = self._active_dns_bruteforce(cfg)
+            if added:
+                self.success(f"  active dnsx brute-force → +{added}")
+
         self.save_text(sorted(self.subdomains), "subdomains/all_subdomains.txt")
         self.success(f"Total unique subdomains: {len(self.subdomains)}")
+
+    def _active_dns_bruteforce(self, cfg: dict) -> int:
+        if not self.has_tool("dnsx"):
+            self.warn("  active dns brute-force requested but dnsx is not installed")
+            return 0
+
+        wordlist = self._subdomain_wordlist(cfg.get("active_wordlist", "subdomains-top1million-5000.txt"))
+        if not wordlist:
+            self.warn("  active dns brute-force requested but no subdomain wordlist was found")
+            return 0
+
+        self.info(f"  dnsx brute-force ({wordlist})")
+        out = self.module_dir / "subdomains" / "dnsx_bruteforce.txt"
+        threads = str(cfg.get("active_threads", 100))
+        timeout = int(cfg.get("active_timeout", 900))
+        r = self.exec(
+            [
+                "dnsx", "-d", self.domain, "-w", wordlist,
+                "-a", "-resp", "-t", threads,
+                "-silent", "-no-color", "-o", str(out),
+            ],
+            timeout=timeout,
+            label="dnsx active brute-force",
+        )
+        lines = self.load_lines(out) or r.stdout.splitlines()
+        candidates = []
+        pattern = re.compile(r"\b(?:[a-zA-Z0-9-]+\.)+" + re.escape(self.domain) + r"\b", re.I)
+        for line in lines:
+            match = pattern.search(line)
+            if match:
+                candidates.append(match.group(0).lower())
+        return self._merge_subs(candidates, "dnsx_bruteforce")
 
     # ── API sources ───────────────────────────────────────────────────────────
 
@@ -423,6 +531,9 @@ class ReconModule(BaseModule):
             name = hit.get("name", "")
             if name:
                 hosts.append(name)
+            web_name = hit.get("web", {}).get("name", "") if isinstance(hit.get("web"), dict) else ""
+            if web_name:
+                hosts.append(web_name)
             dns_names = hit.get("dns", {}).get("names", []) if isinstance(hit.get("dns"), dict) else []
             hosts.extend(dns_names)
         hosts.extend(re.findall(r"[a-zA-Z0-9._-]+\." + re.escape(self.domain), json.dumps(data)))
@@ -569,6 +680,82 @@ class ReconModule(BaseModule):
         self.save_text(lst, "urls/all_urls.txt")
         return {"all_urls": lst, "total": len(lst)}
 
+    def _asn_lookup(self) -> list[dict]:
+        cfg = self.config.get("scan", {}).get("subdomains", {})
+        if not cfg.get("use_asn_lookup", False) or not self.resolved_ips:
+            return []
+
+        max_lookups = int(cfg.get("max_asn_lookups", 40))
+        by_net: dict[str, str] = {}
+        for ip in sorted(self.resolved_ips):
+            try:
+                net = str(ipaddress.ip_network(f"{ip}/24", strict=False))
+            except ValueError:
+                continue
+            by_net.setdefault(net, ip)
+
+        results: list[dict] = []
+        for net, sample_ip in list(by_net.items())[:max_lookups]:
+            data = self._request_json(
+                "ipinfo",
+                f"https://ipinfo.io/{sample_ip}/json",
+                timeout=10,
+            )
+            if not isinstance(data, dict):
+                continue
+            org = str(data.get("org", "")).strip()
+            entry = {
+                "network": net,
+                "sample_ip": sample_ip,
+                "asn": org.split()[0] if org.upper().startswith("AS") else "",
+                "org": org,
+                "country": data.get("country", ""),
+                "cdn_or_cloud_hint": self._looks_like_cdn_or_cloud(org),
+            }
+            results.append(entry)
+
+        self.save_json(results, "dns/asn_lookup.json")
+        if results:
+            self.success(f"ASN lookup: {len(results)} network(s)")
+        return results
+
+    def _scan_target_ips(self, asn_info: list[dict]) -> list[str]:
+        cfg = self.config.get("scan", {}).get("subdomains", {})
+        resolved = sorted(self.resolved_ips)
+        if not resolved:
+            return []
+        if not asn_info or not cfg.get("exclude_cdn_ips", True):
+            self.save_text(resolved, "dns/scan_ips.txt")
+            return resolved
+
+        cdn_networks = []
+        for entry in asn_info:
+            if not entry.get("cdn_or_cloud_hint"):
+                continue
+            try:
+                cdn_networks.append(ipaddress.ip_network(str(entry.get("network", "")), strict=False))
+            except ValueError:
+                continue
+
+        scan_ips: list[str] = []
+        excluded: list[dict] = []
+        for ip in resolved:
+            try:
+                ip_obj = ipaddress.ip_address(ip)
+            except ValueError:
+                continue
+            matching_net = next((net for net in cdn_networks if ip_obj in net), None)
+            if matching_net:
+                excluded.append({"ip": ip, "reason": "cdn_or_cloud_asn", "network": str(matching_net)})
+            else:
+                scan_ips.append(ip)
+
+        self.save_text(scan_ips, "dns/scan_ips.txt")
+        if excluded:
+            self.save_json(excluded, "dns/excluded_cdn_ips.json")
+            self.warn(f"ASN filter excluded {len(excluded)} CDN/cloud IP(s) from active port scanning")
+        return scan_ips
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _merge_subs(self, items, source: str) -> int:
@@ -591,6 +778,42 @@ class ReconModule(BaseModule):
             self.success(f"Reverse DNS: {rdns}")
         return rdns
 
+    def _subdomain_wordlist(self, filename: str) -> str:
+        from pathlib import Path
+
+        direct = Path(str(filename)).expanduser()
+        if direct.is_file():
+            return str(direct)
+
+        for base in self.config.get("wordlists", {}).get("search_paths", [
+            "/opt/SecLists", "/usr/share/seclists", "/usr/share/wordlists",
+        ]):
+            candidates = []
+            try:
+                root_path = Path(base)
+                if root_path.exists():
+                    candidates = list(root_path.rglob(filename))
+            except Exception:
+                candidates = []
+            for candidate in candidates:
+                if candidate.is_file():
+                    return str(candidate)
+        return ""
+
+    @staticmethod
+    def _normalize_txt(value: str) -> str:
+        return value.replace('" "', "").replace('"', "").strip()
+
+    @staticmethod
+    def _looks_like_cdn_or_cloud(org: str) -> bool:
+        org_l = org.lower()
+        markers = (
+            "cloudflare", "akamai", "fastly", "cloudfront", "amazon", "aws",
+            "google", "microsoft", "azure", "digitalocean", "linode", "ovh",
+            "hetzner", "oracle", "gcore", "cdn77", "bunny",
+        )
+        return any(marker in org_l for marker in markers)
+
     @staticmethod
     def _clean_domain(t: str) -> str:
         return BaseModule._clean_domain(t)
@@ -599,4 +822,5 @@ class ReconModule(BaseModule):
         return {"target": self.target, "domain": self.domain,
                 "subdomains_total": 0, "subdomains": [],
                 "resolved_hosts": [], "resolved_ips": [],
-                "live_http": [], "urls": {}}
+                "scan_ips": [], "live_http": [], "urls": {},
+                "email_security": {}, "asn": []}

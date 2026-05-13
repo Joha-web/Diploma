@@ -63,10 +63,14 @@ def generate_json_report(session_dir: Path, target: str, results: dict, elapsed:
         })
 
     for module_name in (
-        "cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker",
+        "fuzzer", "cors_checker", "auth_probe", "sourcemap_analyzer",
+        "takeover_checker", "correlator",
     ):
         for finding in results.get(module_name, {}).get("findings", []):
             findings.append(_normalize_finding(module_name, finding))
+
+    for finding in results.get("recon", {}).get("email_security", {}).get("findings", []):
+        findings.append(_normalize_finding("recon", finding))
 
     report = {
         "schema_version": "reconx/v2",
@@ -106,6 +110,7 @@ def _normalize_finding(module_name: str, finding: dict) -> dict:
 
 def _summary(results: dict) -> dict:
     recon = results.get("recon", {})
+    web = results.get("webdetect", {})
     ports = results.get("portscan", {}).get("summary", {})
     tech = results.get("techstack", {})
     fuzz = results.get("fuzzer", {})
@@ -118,9 +123,10 @@ def _summary(results: dict) -> dict:
     openapi = results.get("openapi_parser", {})
     params = results.get("parameter_discovery", {})
     vhosts = results.get("vhost_enum", {})
+    corr = results.get("correlator", {})
     return {
         "subdomains": recon.get("subdomains_total", 0),
-        "live_hosts": len(recon.get("live_http", [])),
+        "live_hosts": len(web.get("live_urls") or recon.get("live_http", [])),
         "resolved_ips": len(recon.get("resolved_ips", [])),
         "open_ports": ports.get("total_open_ports", 0),
         "technologies": len(tech.get("technologies_summary", {})),
@@ -136,6 +142,7 @@ def _summary(results: dict) -> dict:
         "openapi_specs": openapi.get("total_specs", 0),
         "parameters": params.get("total", 0),
         "vhosts": vhosts.get("total", 0),
+        "correlated_findings": corr.get("total", 0),
     }
 
 
@@ -145,6 +152,7 @@ def _assets(results: dict) -> dict:
     return {
         "subdomains": recon.get("subdomains", []),
         "resolved_ips": recon.get("resolved_ips", []),
+        "scan_ips": recon.get("scan_ips", recon.get("resolved_ips", [])),
         "live_urls": web.get("live_urls") or recon.get("live_http", []),
         "ports_by_host": results.get("portscan", {}).get("hosts", []),
         "technologies": results.get("techstack", {}).get("hosts", []),
@@ -152,6 +160,9 @@ def _assets(results: dict) -> dict:
         "openapi_endpoints": results.get("openapi_parser", {}).get("endpoints", []),
         "parameters": results.get("parameter_discovery", {}).get("parameters", []),
         "sourcemaps": results.get("sourcemap_analyzer", {}).get("maps", []),
+        "cloud_assets": results.get("fuzzer", {}).get("cloud_assets", []),
+        "graphql": results.get("fuzzer", {}).get("graphql_details", []),
+        "screenshots": web.get("screenshots", []),
     }
 
 
@@ -188,7 +199,10 @@ def _port_set(results: dict) -> set[str]:
 
 def _finding_set(results: dict) -> set[str]:
     items = set()
-    for module_name in ("vulnscan", "cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker"):
+    for module_name in (
+        "vulnscan", "fuzzer", "cors_checker", "auth_probe",
+        "sourcemap_analyzer", "takeover_checker", "correlator",
+    ):
         for finding in results.get(module_name, {}).get("findings", []):
             key = (
                 finding.get("template_id")
@@ -198,4 +212,7 @@ def _finding_set(results: dict) -> set[str]:
             )
             url = finding.get("matched_url") or finding.get("url", "")
             items.add(f"{module_name}:{key}:{url}")
+    for finding in results.get("recon", {}).get("email_security", {}).get("findings", []):
+        key = finding.get("id") or finding.get("type") or finding.get("name", "")
+        items.add(f"recon:{key}:")
     return items

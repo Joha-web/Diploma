@@ -1,6 +1,15 @@
 from modules.base import BaseModule
 
 
+class MissingToolModule(BaseModule):
+    name = "missing_tool"
+    description = "Missing tool test"
+    required_tools = ["definitely-not-a-real-reconx-tool"]
+
+    def run(self):
+        raise AssertionError("run should not be called when required tools are absent")
+
+
 def test_exec_returns_interrupted_for_sigint_exit(tmp_path):
     module = BaseModule("example.com", str(tmp_path), {})
 
@@ -58,3 +67,15 @@ def test_subprocess_env_includes_configured_cli_tokens(tmp_path, monkeypatch):
     assert env["GITHUB_TOKEN"] == "github-token"
     assert env["SECURITYTRAILS_API_KEY"] == "st-token"
     assert env["BINARYEDGE_API_KEY"] == "be-token"
+
+
+def test_execute_persists_skipped_result_when_required_tools_missing(tmp_path):
+    module = MissingToolModule("example.com", str(tmp_path), {})
+
+    result = module.execute()
+
+    results_file = tmp_path / "missing_tool" / "missing_tool_results.json"
+    assert result["status"] == "skipped"
+    assert result["reason"] == "no_tools"
+    assert "elapsed_seconds" in result
+    assert results_file.exists()

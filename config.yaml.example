@@ -61,6 +61,14 @@ scan:
     wayback_limit: 1000
     github_per_page: 30
     amass_timeout: 180
+    enable_active_enum: false
+    use_active_bruteforce: false
+    active_wordlist: "subdomains-top1million-5000.txt"
+    active_threads: 100
+    active_timeout: 900
+    use_asn_lookup: false
+    max_asn_lookups: 40
+    exclude_cdn_ips: true
 
   ports:
     mode: "top-1000"
@@ -76,6 +84,10 @@ scan:
     depth: 3
     rate: 100
     graphql_probe: true
+    graphql_introspection: true
+    robots_sitemap: true
+    cloud_assets: true
+    reuse_host_outputs: true
     extensions: [".php", ".asp", ".aspx", ".jsp", ".html", ".js", ".json"]
 
   cors_checker:
@@ -119,8 +131,21 @@ scan:
     enable_risky: false
     exclude_tags: [dos, intrusive, bruteforce, destructive]
     rate_limit: 150
+    waf_rate_limit: 30
+    waf_scan_strategy: host-spray
+    waf_exclude_tags: [fuzz, fuzzing, bruteforce, headless]
     nuclei_timeout: 3600
     dashboard_upload: false
+    oob:
+      enabled: true
+      auto_client: true
+      interactsh_server: ""
+      interactsh_token: ""
+      registration_timeout: 10
+      cooldown_period: 5
+
+  correlator:
+    enabled: true
 
   cms:
     wpscan_api_token: ""  # optional override; falls back to api_keys.wpscan / WPSCAN_API_TOKEN

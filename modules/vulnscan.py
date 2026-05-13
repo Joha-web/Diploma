@@ -6,6 +6,11 @@ severity levels and template categories.
 
 import re
 import json
+import os
+import select
+import signal
+import subprocess
+import time
 from pathlib import Path
 from modules.base import BaseModule
 
@@ -18,11 +23,14 @@ class VulnScanModule(BaseModule):
     def __init__(self, target: str, output_dir: str, config: dict,
                  live_hosts: list | None = None,
                  parameter_results: dict | None = None,
-                 openapi_results: dict | None = None):
+                 openapi_results: dict | None = None,
+                 tech_results: dict | None = None):
         super().__init__(target, output_dir, config)
         self.live_hosts = live_hosts or []
         self.parameter_results = parameter_results or {}
         self.openapi_results = openapi_results or {}
+        self.tech_results = tech_results or {}
+        self.nuclei_runtime: dict = {}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -60,6 +68,7 @@ class VulnScanModule(BaseModule):
             "findings":    findings,
             "by_severity": {k: len(v) for k, v in by_sev.items()},
             "total":       len(findings),
+            "runtime":     self.nuclei_runtime,
         }
 
     def summary(self) -> str:
@@ -82,7 +91,10 @@ class VulnScanModule(BaseModule):
     def _run_nuclei(self, url_file: Path, out_file: Path):
         ncfg = self.config.get("scan", {}).get("nuclei", {})
         severity  = ",".join(ncfg.get("severity", ["critical", "high", "medium"]))
-        rate      = str(ncfg.get("rate_limit", 150))
+        waf_names = self._detected_wafs()
+        waf_detected = bool(waf_names)
+        rate_value = ncfg.get("waf_rate_limit", 30) if waf_detected else ncfg.get("rate_limit", 150)
+        rate      = str(rate_value)
         templates = ncfg.get("templates", ["cves", "exposures", "misconfiguration",
                                            "takeovers"])
         enable_risky = ncfg.get("enable_risky", False)
@@ -90,6 +102,10 @@ class VulnScanModule(BaseModule):
             risky_templates = {"default-logins", "fuzzing", "workflows"}
             templates = [t for t in templates if t not in risky_templates]
         exclude_tags = ncfg.get("exclude_tags", ["dos", "intrusive", "bruteforce", "destructive"])
+        if waf_detected:
+            exclude_tags = sorted(set(exclude_tags + ncfg.get(
+                "waf_exclude_tags", ["fuzz", "fuzzing", "bruteforce", "headless"]
+            )))
 
         cmd = [
             "nuclei",
@@ -107,12 +123,29 @@ class VulnScanModule(BaseModule):
             cmd.extend(["-t", t])
         if exclude_tags and not enable_risky:
             cmd.extend(["-exclude-tags", ",".join(exclude_tags)])
+        if waf_detected:
+            cmd.extend(["-ss", str(ncfg.get("waf_scan_strategy", "host-spray"))])
+
+        oob_runtime = self._apply_oob_flags(cmd, ncfg)
         if ncfg.get("dashboard_upload") and self.config.get("api_keys", {}).get("pdcp"):
             cmd.append("-dashboard")
 
         timeout = ncfg.get("nuclei_timeout", 3600)
-        self.info(f"nuclei → {self._line_count(url_file)} URLs | severity: {severity}")
-        self.exec(cmd, timeout=timeout)
+        self.nuclei_runtime = {
+            "rate_limit": int(rate_value),
+            "waf_detected": waf_detected,
+            "waf": waf_names,
+            "templates": templates,
+            "exclude_tags": exclude_tags if not enable_risky else [],
+            "oob": oob_runtime,
+        }
+        waf_note = f" | WAF-aware rate: {rate}" if waf_detected else ""
+        oob_note = " | OOB enabled" if oob_runtime.get("enabled") else " | OOB disabled"
+        self.info(f"nuclei → {self._line_count(url_file)} URLs | severity: {severity}{waf_note}{oob_note}")
+        try:
+            self.exec(cmd, timeout=timeout)
+        finally:
+            self._stop_oob_client(oob_runtime)
         self.success(f"nuclei finished → {self._line_count(out_file)} raw findings")
 
     # ── Parsers ───────────────────────────────────────────────────────────────
@@ -181,6 +214,142 @@ class VulnScanModule(BaseModule):
             if isinstance(item, dict) and item.get("url"):
                 urls.add(item["url"])
         return self.filter_in_scope_urls(urls)
+
+    def _apply_oob_flags(self, cmd: list[str], ncfg: dict) -> dict:
+        oob_cfg = ncfg.get("oob", {})
+        enabled = bool(oob_cfg.get("enabled", True))
+        runtime = {
+            "enabled": enabled,
+            "client_available": self.has_tool("interactsh-client"),
+            "server": oob_cfg.get("interactsh_server", ""),
+            "callback_url": "",
+            "interactions_log": "",
+            "cooldown_period": int(oob_cfg.get("cooldown_period", 5)),
+        }
+        if not enabled:
+            cmd.append("-ni")
+            return runtime
+
+        if runtime["client_available"] and oob_cfg.get("auto_client", True):
+            client_runtime = self._start_interactsh_client(oob_cfg)
+            runtime.update(client_runtime)
+
+        server = str(oob_cfg.get("interactsh_server") or "").strip()
+        if not server and runtime.get("callback_url"):
+            server = self._server_from_callback(str(runtime["callback_url"]))
+        if server:
+            runtime["server"] = server
+            cmd.extend(["-iserver", server])
+        if oob_cfg.get("interactsh_token"):
+            cmd.extend(["-itoken", str(oob_cfg["interactsh_token"])])
+        cmd.extend(["-interactions-cooldown-period", str(runtime["cooldown_period"])])
+        return runtime
+
+    def _start_interactsh_client(self, oob_cfg: dict) -> dict:
+        log_file = self.module_dir / "interactsh_interactions.jsonl"
+        cmd = ["interactsh-client", "-json", "-o", str(log_file), "-silent"]
+        if oob_cfg.get("interactsh_server"):
+            cmd.extend(["-server", str(oob_cfg["interactsh_server"])])
+        if oob_cfg.get("interactsh_token"):
+            cmd.extend(["-token", str(oob_cfg["interactsh_token"])])
+
+        runtime = {
+            "client_started": False,
+            "callback_url": "",
+            "interactions_log": str(log_file.relative_to(self.output_dir)),
+        }
+        try:
+            popen_kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "env": self._subprocess_env(),
+            }
+            if os.name != "nt":
+                popen_kwargs["start_new_session"] = True
+            proc = subprocess.Popen(cmd, **popen_kwargs)
+            runtime["_process"] = proc
+            runtime["client_started"] = True
+            runtime["client_pid"] = proc.pid
+        except Exception as exc:
+            runtime["client_error"] = str(exc)
+            return runtime
+
+        callback = self._read_interactsh_callback(
+            runtime["_process"],
+            timeout=float(oob_cfg.get("registration_timeout", 10)),
+        )
+        if callback:
+            runtime["callback_url"] = callback
+            self.success(f"Interactsh callback: {callback}")
+        else:
+            self.warn("Interactsh client started but no callback URL was observed")
+        return runtime
+
+    def _read_interactsh_callback(self, proc: subprocess.Popen, timeout: float = 10) -> str:
+        deadline = time.monotonic() + timeout
+        while proc.poll() is None and time.monotonic() < deadline:
+            stream = proc.stdout
+            if stream is None:
+                break
+            readable, _, _ = select.select([stream], [], [], 0.25)
+            if not readable:
+                continue
+            line = stream.readline()
+            if not line:
+                continue
+            callback = self._extract_interactsh_callback(line)
+            if callback:
+                return callback
+        return ""
+
+    @staticmethod
+    def _extract_interactsh_callback(text: str) -> str:
+        match = re.search(
+            r"\b([a-z0-9][a-z0-9-]{4,}\.(?:oast\.(?:pro|live|site|online)|interact\.sh))\b",
+            text,
+            re.I,
+        )
+        return match.group(1).lower() if match else ""
+
+    @staticmethod
+    def _server_from_callback(callback: str) -> str:
+        host = callback.split("/", 1)[0].strip().strip(".")
+        labels = host.split(".")
+        if len(labels) < 2:
+            return ""
+        return "https://" + ".".join(labels[-2:])
+
+    def _stop_oob_client(self, runtime: dict) -> None:
+        proc = runtime.pop("_process", None)
+        if not proc or proc.poll() is not None:
+            return
+        try:
+            if os.name != "nt":
+                os.killpg(proc.pid, signal.SIGTERM)
+            else:
+                proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def _detected_wafs(self) -> list[str]:
+        names: set[str] = set()
+        for host in self.tech_results.get("hosts", []) or []:
+            for waf in host.get("waf", []) or []:
+                if waf:
+                    names.add(str(waf))
+            for tech in host.get("technologies", []) or []:
+                name = str(tech.get("name", ""))
+                category = str(tech.get("category", ""))
+                if "waf" in category.lower() or name.lower() in {
+                    "cloudflare", "akamai", "imperva", "sucuri", "fastly",
+                }:
+                    names.add(name)
+        return sorted(names)
 
     def _line_count(self, path: Path) -> int:
         if not path.exists():

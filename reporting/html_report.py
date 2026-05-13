@@ -63,6 +63,7 @@ class HTMLReportGenerator:
 
     def _build_context(self, r: dict, ai_analysis: str) -> dict:
         recon = r.get("recon", {})
+        web   = r.get("webdetect", {})
         ports = r.get("portscan", {})
         tech  = r.get("techstack", {})
         fuzz  = r.get("fuzzer", {})
@@ -77,6 +78,7 @@ class HTMLReportGenerator:
         takeover = r.get("takeover_checker", {})
         openapi = r.get("openapi_parser", {})
         params = r.get("parameter_discovery", {})
+        corr = r.get("correlator", {})
 
         # Ensure by_severity exists
         if "by_severity" not in vuln:
@@ -96,7 +98,7 @@ class HTMLReportGenerator:
 
         summary = {
             "subdomains":      recon.get("subdomains_total", 0),
-            "live_hosts":      len(recon.get("live_http", [])),
+            "live_hosts":      len(web.get("live_urls") or recon.get("live_http", [])),
             "resolved_ips":    len(recon.get("resolved_ips", [])),
             "open_ports":      ports.get("summary", {}).get("total_open_ports", 0),
             "technologies":    len(tech.get("technologies_summary", {})),
@@ -109,6 +111,8 @@ class HTMLReportGenerator:
             "auth_findings":   auth.get("total", len(auth.get("findings", []))),
             "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
             "parameters":      params.get("total", 0),
+            "correlated":      corr.get("total", 0),
+            "screenshots":     len(web.get("screenshots", [])),
         }
 
         # Render AI analysis from Markdown to HTML
@@ -121,6 +125,7 @@ class HTMLReportGenerator:
             "date":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "duration":    self.duration,
             "recon":       recon,
+            "web":         web,
             "ports":       ports,
             "tech":        tech,
             "fuzz":        fuzz,
@@ -135,6 +140,7 @@ class HTMLReportGenerator:
             "takeover":    takeover,
             "openapi":     openapi,
             "params":      params,
+            "corr":        corr,
             "diff":        r.get("diff", {}),
             "ai_analysis": ai_html,
             "summary":     summary,

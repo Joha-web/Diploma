@@ -33,12 +33,55 @@ class AIAdvisor:
         return self._openai(prompt)
 
     def _prompt(self, module_name: str, result: dict, target: str) -> str:
-        compact = json.dumps(result, ensure_ascii=False, default=str)[:3000]
+        compact_result = self._compact_result(module_name, result)
+        compact = json.dumps(compact_result, ensure_ascii=False, default=str)[:3000]
         return (
             "You are a security testing assistant. Give concise, evidence-based next steps. "
             "Do not invent findings. Mention manual verification when needed.\n\n"
             f"Target: {target}\nModule: {module_name}\nResult JSON:\n{compact}\n\n"
             "Return 3-6 bullets only."
+        )
+
+    def _compact_result(self, module_name: str, result: dict) -> dict:
+        if module_name == "vulnscan":
+            findings = sorted(
+                result.get("findings", []) or [],
+                key=lambda f: self._severity_rank(str(f.get("severity", "INFO"))),
+            )[:10]
+            return {
+                "status": result.get("status"),
+                "total": result.get("total", len(result.get("findings", []) or [])),
+                "by_severity": result.get("by_severity", {}),
+                "runtime": result.get("runtime", {}),
+                "top_findings": [
+                    {
+                        "severity": f.get("severity"),
+                        "name": f.get("name"),
+                        "template_id": f.get("template_id"),
+                        "matched_url": f.get("matched_url"),
+                        "cves": f.get("cves", []),
+                    }
+                    for f in findings
+                ],
+            }
+        if module_name == "fuzzer":
+            classified = result.get("classified", {}) or {}
+            return {
+                "status": result.get("status"),
+                "total_endpoints": result.get("total_endpoints"),
+                "js_secrets_count": result.get("js_secrets_count"),
+                "graphql_details": result.get("graphql_details", [])[:5],
+                "cloud_assets": result.get("cloud_assets", [])[:10],
+                "classified_counts": {
+                    k: len(v) for k, v in classified.items() if isinstance(v, list)
+                },
+            }
+        return result
+
+    @staticmethod
+    def _severity_rank(severity: str) -> int:
+        return {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}.get(
+            severity.upper(), 5
         )
 
     def _ollama(self, prompt: str) -> str:

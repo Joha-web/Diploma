@@ -132,3 +132,53 @@ def test_collect_urls_feeds_waybackurls_via_stdin_pipeline(tmp_path, monkeypatch
     assert calls[0]["shell"] is True
     assert "waybackurls" in calls[0]["cmd"]
     assert calls[0]["label"] == "waybackurls"
+
+
+def test_active_dns_bruteforce_uses_dnsx_wordlist_domain_flags(tmp_path, monkeypatch):
+    module = ReconModule("example.com", str(tmp_path), {})
+    captured = {}
+
+    monkeypatch.setattr(module, "has_tool", lambda tool: tool == "dnsx")
+    monkeypatch.setattr(module, "_subdomain_wordlist", lambda filename: "/tmp/subs.txt")
+
+    def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        captured["cmd"] = cmd
+        class Result:
+            stdout = "www.example.com [A] [192.0.2.10]\n"
+        return Result()
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+
+    added = module._active_dns_bruteforce({"active_wordlist": "subs.txt"})
+
+    assert added == 1
+    assert captured["cmd"][:5] == ["dnsx", "-d", "example.com", "-w", "/tmp/subs.txt"]
+    assert "-silent" in captured["cmd"]
+    assert "-a" in captured["cmd"]
+
+
+def test_email_security_generates_requested_findings(tmp_path):
+    module = ReconModule("example.com", str(tmp_path), {})
+
+    result = module._analyze_email_security({})
+
+    names = {finding["name"] for finding in result["findings"]}
+    assert "Email spoofing possible" in names
+    assert "Phishing risk" in names
+
+
+def test_asn_filter_excludes_cdn_cloud_ips_from_scan_targets(tmp_path):
+    module = ReconModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"subdomains": {"exclude_cdn_ips": True}}},
+    )
+    module.resolved_ips = {"192.0.2.10", "198.51.100.20"}
+
+    scan_ips = module._scan_target_ips([
+        {"network": "192.0.2.0/24", "cdn_or_cloud_hint": True},
+        {"network": "198.51.100.0/24", "cdn_or_cloud_hint": False},
+    ])
+
+    assert scan_ips == ["198.51.100.20"]
+    assert (tmp_path / "recon" / "dns" / "excluded_cdn_ips.json").exists()

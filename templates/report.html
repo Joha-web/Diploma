@@ -326,6 +326,33 @@ td code { font-family: var(--mono); font-size: .9em; color: var(--cyan); word-br
   line-height: 1.6;
 }
 
+/* Screenshots */
+.screenshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.screenshot-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.screenshot-card img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  display: block;
+  background: #04070e;
+}
+.screenshot-card .caption {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  font-size: .78em;
+  color: var(--muted);
+  word-break: break-all;
+}
+
 /* ── Collapsible ─────────────────────────────────── */
 details { margin: 8px 0; }
 details summary {
@@ -426,6 +453,8 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 
   <div class="sidebar-section">Web</div>
   <a href="#endpoints"><span class="dot"></span> Endpoints</a>
+  {% if fuzz.findings %}<a href="#fuzzer-findings"><span class="dot"></span> Fuzzer Findings</a>{% endif %}
+  {% if web.screenshots %}<a href="#screenshots"><span class="dot"></span> Screenshots</a>{% endif %}
   <a href="#secrets"><span class="dot"></span> JS Secrets</a>
   {% if cors.findings %}<a href="#cors"><span class="dot"></span> CORS</a>{% endif %}
   {% if auth.findings %}<a href="#auth"><span class="dot"></span> Auth</a>{% endif %}
@@ -434,6 +463,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   {% if params.parameters %}<a href="#parameters"><span class="dot"></span> Parameters</a>{% endif %}
   {% if vhost.found %}<a href="#vhosts"><span class="dot"></span> VHosts</a>{% endif %}
   {% if takeover.findings %}<a href="#takeover"><span class="dot"></span> Takeover</a>{% endif %}
+  {% if corr.findings %}<a href="#correlator"><span class="dot"></span> Correlation</a>{% endif %}
   {% if cms.scans %}<a href="#cms"><span class="dot"></span> CMS Scan</a>{% endif %}
   <a href="#ssl"><span class="dot"></span> SSL / Headers</a>
 
@@ -531,6 +561,10 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div class="stat-card">
     <div class="val">{{ summary.parameters }}</div>
     <div class="lbl">Parameters</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.correlated > 0 %}warn{% endif %}">{{ summary.correlated }}</div>
+    <div class="lbl">Correlated</div>
   </div>
 </div>
 
@@ -650,10 +684,12 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 
 <!-- P2/P3 Findings -->
 {% set extra_modules = [
+  ('fuzzer-findings', 'Fuzzer Findings', fuzz.findings),
   ('cors', 'CORS Findings', cors.findings),
   ('auth', 'Auth Findings', auth.findings),
   ('sourcemaps', 'Source Map Findings', sourcemap.findings),
-  ('takeover', 'Subdomain Takeover Candidates', takeover.findings)
+  ('takeover', 'Subdomain Takeover Candidates', takeover.findings),
+  ('correlator', 'Cross-Finding Correlation', corr.findings)
 ] %}
 {% for section_id, title, findings in extra_modules %}
 {% if findings %}
@@ -679,6 +715,23 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 </div>
 {% endif %}
 {% endfor %}
+
+<!-- Screenshots -->
+{% if web.screenshots %}
+<div class="section" id="screenshots">
+  <div class="section-header">
+    <div class="section-title">Screenshots <span class="count-badge">{{ web.screenshots | length }}</span></div>
+  </div>
+  <div class="screenshot-grid">
+    {% for shot in web.screenshots[:80] %}
+    <div class="screenshot-card">
+      <img src="{{ shot.relative_path }}" alt="{{ shot.url or shot.filename }}">
+      <div class="caption">{{ shot.url or shot.filename }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 <!-- OpenAPI -->
 {% if openapi.specs %}
