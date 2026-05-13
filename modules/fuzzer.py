@@ -84,7 +84,7 @@ class FuzzerModule(BaseModule):
         all_endpoints.update(ffuf_results)
 
         # 4. JS mining
-        js_eps, js_secrets = self._js_mining(crawled)
+        js_eps, js_secrets, js_urls = self._js_mining(crawled)
         all_endpoints.update(js_eps)
 
         # 5. Lightweight GraphQL endpoint detection
@@ -103,6 +103,8 @@ class FuzzerModule(BaseModule):
         self.success(f"Total unique endpoints: {len(merged)}")
         return {
             "total_endpoints":  len(merged),
+            "all_endpoints":    merged,
+            "js_urls":          js_urls,
             "classified":       classified,
             "js_secrets_count": len(js_secrets),
             "graphql_endpoints": graphql,
@@ -226,7 +228,7 @@ class FuzzerModule(BaseModule):
 
     # ── JS Mining ─────────────────────────────────────────────────────────────
 
-    def _js_mining(self, crawled: set[str]) -> tuple[set[str], list[dict]]:
+    def _js_mining(self, crawled: set[str]) -> tuple[set[str], list[dict], list[str]]:
         self.info("JS Mining — endpoints & secrets")
         js_urls = sorted({
             u for u in crawled
@@ -271,7 +273,7 @@ class FuzzerModule(BaseModule):
 
         self.save_json(secrets, "js_mining/js_secrets.json")
         self.success(f"JS Mining → {len(endpoints)} endpoints, {len(secrets)} secrets")
-        return endpoints, secrets
+        return endpoints, secrets, js_urls
 
     # ── GraphQL detection ───────────────────────────────────────────────────
 

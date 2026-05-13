@@ -199,7 +199,7 @@ echo -e "${BOLD}${CYAN}═══════════════════
 TOOLS=(
     nmap masscan subfinder amass assetfinder dnsx httpx
     nuclei katana ffuf whatweb wafw00f wpscan joomscan
-    droopescan gowitness waybackurls gau ollama
+    droopescan arjun gowitness waybackurls gau ollama
 )
 
 FOUND=0; MISSING=0

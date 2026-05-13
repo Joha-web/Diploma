@@ -1,0 +1,84 @@
+"""
+ReconX - Realtime AI advice helper.
+
+This is intentionally lightweight and optional. It is triggered by main.py in a
+background thread after configured modules complete.
+"""
+
+import json
+import os
+
+import requests
+
+
+class AIAdvisor:
+    def __init__(self, config: dict):
+        self.config = config
+        self.ai_cfg = config.get("ai", {})
+        self.enabled = bool(self.ai_cfg.get("enabled", True) and self.ai_cfg.get("realtime_advice", False))
+        self.advise_on = set(self.ai_cfg.get("advise_on", [
+            "recon", "portscan", "techstack", "fuzzer", "vulnscan", "cve_check",
+        ]))
+
+    def should_advise(self, module_name: str, result: dict) -> bool:
+        if not self.enabled or module_name not in self.advise_on:
+            return False
+        return isinstance(result, dict) and result.get("status") == "completed"
+
+    def analyse(self, module_name: str, result: dict, target: str) -> str:
+        prompt = self._prompt(module_name, result, target)
+        provider = self.ai_cfg.get("provider", "ollama")
+        if provider == "ollama":
+            return self._ollama(prompt)
+        return self._openai(prompt)
+
+    def _prompt(self, module_name: str, result: dict, target: str) -> str:
+        compact = json.dumps(result, ensure_ascii=False, default=str)[:3000]
+        return (
+            "You are a security testing assistant. Give concise, evidence-based next steps. "
+            "Do not invent findings. Mention manual verification when needed.\n\n"
+            f"Target: {target}\nModule: {module_name}\nResult JSON:\n{compact}\n\n"
+            "Return 3-6 bullets only."
+        )
+
+    def _ollama(self, prompt: str) -> str:
+        url = self.ai_cfg.get("ollama_url", "http://localhost:11434")
+        try:
+            resp = requests.post(
+                f"{url}/api/generate",
+                json={
+                    "model": self.ai_cfg.get("model", "deepseek-r1:7b"),
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.2, "num_predict": 512},
+                },
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                return (resp.json().get("response", "") or "").strip()
+        except Exception:
+            return ""
+        return ""
+
+    def _openai(self, prompt: str) -> str:
+        key = self.ai_cfg.get("openai_api_key") or os.getenv("OPENAI_API_KEY", "")
+        if not key:
+            return ""
+        base_url = self.ai_cfg.get("openai_base_url", "https://api.openai.com/v1")
+        try:
+            resp = requests.post(
+                f"{base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": self.ai_cfg.get("model", "gpt-4o-mini"),
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2,
+                    "max_tokens": 512,
+                },
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                return resp.json()["choices"][0]["message"]["content"].strip()
+        except Exception:
+            return ""
+        return ""

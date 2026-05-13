@@ -62,6 +62,12 @@ def generate_json_report(session_dir: Path, target: str, results: dict, elapsed:
             "confidence": cve.get("confidence", 0.75),
         })
 
+    for module_name in (
+        "cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker",
+    ):
+        for finding in results.get(module_name, {}).get("findings", []):
+            findings.append(_normalize_finding(module_name, finding))
+
     report = {
         "schema_version": "reconx/v2",
         "scan_target": target,
@@ -70,6 +76,7 @@ def generate_json_report(session_dir: Path, target: str, results: dict, elapsed:
         "summary": _summary(results),
         "findings": findings,
         "assets": _assets(results),
+        "diff": results.get("diff", {}),
         "raw_module_status": {
             name: data.get("status", "unknown")
             for name, data in results.items()
@@ -82,6 +89,21 @@ def generate_json_report(session_dir: Path, target: str, results: dict, elapsed:
     return str(path)
 
 
+def _normalize_finding(module_name: str, finding: dict) -> dict:
+    return {
+        "source": finding.get("source", module_name),
+        "id": finding.get("id") or finding.get("type", ""),
+        "title": finding.get("title") or finding.get("name", ""),
+        "severity": finding.get("severity", "INFO"),
+        "url": finding.get("url") or finding.get("matched_url", ""),
+        "description": finding.get("description", ""),
+        "evidence": finding.get("evidence", {}),
+        "references": finding.get("references", []),
+        "tags": [module_name, finding.get("type", "")],
+        "confidence": finding.get("confidence", 0.75),
+    }
+
+
 def _summary(results: dict) -> dict:
     recon = results.get("recon", {})
     ports = results.get("portscan", {}).get("summary", {})
@@ -89,6 +111,13 @@ def _summary(results: dict) -> dict:
     fuzz = results.get("fuzzer", {})
     vuln = results.get("vulnscan", {})
     cve = results.get("cve_check", {})
+    cors = results.get("cors_checker", {})
+    auth = results.get("auth_probe", {})
+    sourcemaps = results.get("sourcemap_analyzer", {})
+    takeover = results.get("takeover_checker", {})
+    openapi = results.get("openapi_parser", {})
+    params = results.get("parameter_discovery", {})
+    vhosts = results.get("vhost_enum", {})
     return {
         "subdomains": recon.get("subdomains_total", 0),
         "live_hosts": len(recon.get("live_http", [])),
@@ -100,6 +129,13 @@ def _summary(results: dict) -> dict:
         "cves": cve.get("summary", {}).get("total_cves", 0),
         "exploitdb_matches": cve.get("summary", {}).get("with_exploitdb", 0),
         "js_secrets": fuzz.get("js_secrets_count", 0),
+        "cors_findings": cors.get("total", len(cors.get("findings", []))),
+        "auth_findings": auth.get("total", len(auth.get("findings", []))),
+        "sourcemap_findings": sourcemaps.get("total", len(sourcemaps.get("findings", []))),
+        "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
+        "openapi_specs": openapi.get("total_specs", 0),
+        "parameters": params.get("total", 0),
+        "vhosts": vhosts.get("total", 0),
     }
 
 
@@ -112,4 +148,54 @@ def _assets(results: dict) -> dict:
         "live_urls": web.get("live_urls") or recon.get("live_http", []),
         "ports_by_host": results.get("portscan", {}).get("hosts", []),
         "technologies": results.get("techstack", {}).get("hosts", []),
+        "vhosts": results.get("vhost_enum", {}).get("found", []),
+        "openapi_endpoints": results.get("openapi_parser", {}).get("endpoints", []),
+        "parameters": results.get("parameter_discovery", {}).get("parameters", []),
+        "sourcemaps": results.get("sourcemap_analyzer", {}).get("maps", []),
     }
+
+
+def build_results_diff(previous: dict, current: dict) -> dict:
+    """Return a compact diff between two all_results-like dictionaries."""
+    prev_subs = set(previous.get("recon", {}).get("subdomains", []))
+    curr_subs = set(current.get("recon", {}).get("subdomains", []))
+    prev_live = set(previous.get("webdetect", {}).get("live_urls", []))
+    curr_live = set(current.get("webdetect", {}).get("live_urls", []))
+    prev_ports = _port_set(previous)
+    curr_ports = _port_set(current)
+    prev_findings = _finding_set(previous)
+    curr_findings = _finding_set(current)
+    return {
+        "new_subdomains": sorted(curr_subs - prev_subs),
+        "removed_subdomains": sorted(prev_subs - curr_subs),
+        "new_live_urls": sorted(curr_live - prev_live),
+        "removed_live_urls": sorted(prev_live - curr_live),
+        "new_open_ports": sorted(curr_ports - prev_ports),
+        "closed_ports": sorted(prev_ports - curr_ports),
+        "new_findings": sorted(curr_findings - prev_findings),
+        "resolved_findings": sorted(prev_findings - curr_findings),
+    }
+
+
+def _port_set(results: dict) -> set[str]:
+    ports = set()
+    for host in results.get("portscan", {}).get("hosts", []):
+        ip = host.get("ip", "")
+        for port in host.get("open_ports", []):
+            ports.add(f"{ip}:{port.get('port')}")
+    return ports
+
+
+def _finding_set(results: dict) -> set[str]:
+    items = set()
+    for module_name in ("vulnscan", "cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker"):
+        for finding in results.get(module_name, {}).get("findings", []):
+            key = (
+                finding.get("template_id")
+                or finding.get("id")
+                or finding.get("type")
+                or finding.get("name", "")
+            )
+            url = finding.get("matched_url") or finding.get("url", "")
+            items.add(f"{module_name}:{key}:{url}")
+    return items

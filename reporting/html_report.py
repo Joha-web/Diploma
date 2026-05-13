@@ -70,6 +70,13 @@ class HTMLReportGenerator:
         vuln  = r.get("vulnscan", {})
         cve   = r.get("cve_check", {})
         ssl   = r.get("ssl_checker", {})
+        cors  = r.get("cors_checker", {})
+        auth  = r.get("auth_probe", {})
+        sourcemap = r.get("sourcemap_analyzer", {})
+        vhost = r.get("vhost_enum", {})
+        takeover = r.get("takeover_checker", {})
+        openapi = r.get("openapi_parser", {})
+        params = r.get("parameter_discovery", {})
 
         # Ensure by_severity exists
         if "by_severity" not in vuln:
@@ -98,6 +105,10 @@ class HTMLReportGenerator:
             "cves":            cve.get("summary", {}).get("total_cves", 0),
             "exploitdb":        cve.get("summary", {}).get("with_exploitdb", 0),
             "js_secrets":      fuzz.get("js_secrets_count", 0),
+            "cors_findings":   cors.get("total", len(cors.get("findings", []))),
+            "auth_findings":   auth.get("total", len(auth.get("findings", []))),
+            "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
+            "parameters":      params.get("total", 0),
         }
 
         # Render AI analysis from Markdown to HTML
@@ -117,6 +128,14 @@ class HTMLReportGenerator:
             "vuln":        vuln,
             "cve":         cve,
             "ssl":         ssl,
+            "cors":        cors,
+            "auth":        auth,
+            "sourcemap":   sourcemap,
+            "vhost":       vhost,
+            "takeover":    takeover,
+            "openapi":     openapi,
+            "params":      params,
+            "diff":        r.get("diff", {}),
             "ai_analysis": ai_html,
             "summary":     summary,
         }

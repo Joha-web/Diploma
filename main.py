@@ -12,6 +12,7 @@ import copy
 import json
 import os
 import sys
+import threading
 import time
 import importlib
 from pathlib import Path
@@ -47,12 +48,19 @@ PIPELINE: list[dict] = [
     {"name": "portscan",    "group": 2},   # parallel with webdetect
     {"name": "webdetect",   "group": 2},   # parallel with portscan
     {"name": "techstack",   "group": 3},
-    {"name": "fuzzer",      "group": 4},   # parallel with ssl_checker
-    {"name": "ssl_checker", "group": 4},   # parallel with fuzzer
+    {"name": "fuzzer",      "group": 4},   # parallel with ssl/auth/cors
+    {"name": "ssl_checker", "group": 4},
+    {"name": "cors_checker","group": 4},
+    {"name": "auth_probe",  "group": 4},
     {"name": "cmscan",      "group": 5},
-    {"name": "vulnscan",    "group": 6},
-    {"name": "cve_check",   "group": 7},
-    {"name": "ai_report",   "group": 8},
+    {"name": "sourcemap_analyzer", "group": 5},
+    {"name": "vhost_enum",  "group": 5},
+    {"name": "takeover_checker", "group": 5},
+    {"name": "openapi_parser", "group": 5},
+    {"name": "parameter_discovery", "group": 6},
+    {"name": "vulnscan",    "group": 7},
+    {"name": "cve_check",   "group": 8},
+    {"name": "ai_report",   "group": 9},
 ]
 
 CLASS_MAP = {
@@ -62,7 +70,14 @@ CLASS_MAP = {
     "techstack":   ("modules.techstack",    "TechStackModule"),
     "fuzzer":      ("modules.fuzzer",       "FuzzerModule"),
     "ssl_checker": ("modules.ssl_checker",  "SSLCheckerModule"),
+    "cors_checker":("modules.cors_checker", "CORSCheckerModule"),
+    "auth_probe":  ("modules.auth_probe",   "AuthProbeModule"),
     "cmscan":      ("modules.cmscan",       "CMSScanModule"),
+    "sourcemap_analyzer": ("modules.sourcemap_analyzer", "SourceMapAnalyzerModule"),
+    "vhost_enum":  ("modules.vhost_enum",   "VHostEnumModule"),
+    "takeover_checker": ("modules.takeover_checker", "TakeoverCheckerModule"),
+    "openapi_parser": ("modules.openapi_parser", "OpenAPIParserModule"),
+    "parameter_discovery": ("modules.parameter_discovery", "ParameterDiscoveryModule"),
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
     "cve_check":   ("modules.cve_check",    "CVECheckModule"),
     "ai_report":   ("modules.ai_report",    "AIReportModule"),
@@ -76,7 +91,14 @@ MODULE_LABELS = {
     "techstack":   "Technology Fingerprinting",
     "fuzzer":      "Crawling & Fuzzing",
     "ssl_checker": "SSL/TLS & Headers Analysis",
+    "cors_checker":"CORS Misconfiguration Scanner",
+    "auth_probe":  "JWT & Cookie Security Checks",
     "cmscan":      "CMS Vulnerability Scanning",
+    "sourcemap_analyzer": "JavaScript Source Map Analysis",
+    "vhost_enum":  "Virtual Host Enumeration",
+    "takeover_checker": "Subdomain Takeover Checks",
+    "openapi_parser": "OpenAPI Discovery",
+    "parameter_discovery": "Hidden Parameter Discovery",
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
     "cve_check":   "CVE & ExploitDB Correlation",
     "ai_report":   "AI Security Analysis",
@@ -115,10 +137,25 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
     kwargs: dict = {}
     if name == "portscan":
         kwargs["resolved_ips"] = recon.get("resolved_ips", [])
-    elif name in ("webdetect", "techstack", "fuzzer", "ssl_checker", "vulnscan"):
+    elif name in ("webdetect", "techstack", "fuzzer", "ssl_checker",
+                  "cors_checker", "auth_probe", "openapi_parser"):
         kwargs["live_hosts"] = live
     elif name == "cmscan":
         kwargs["tech_results"] = all_results.get("techstack", {})
+    elif name == "sourcemap_analyzer":
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "vhost_enum":
+        kwargs["live_hosts"] = live
+        kwargs["resolved_ips"] = recon.get("resolved_ips", [])
+    elif name == "takeover_checker":
+        kwargs["recon_results"] = recon
+    elif name == "parameter_discovery":
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+        kwargs["openapi_results"] = all_results.get("openapi_parser", {})
+    elif name == "vulnscan":
+        kwargs["live_hosts"] = live
+        kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
+        kwargs["openapi_results"] = all_results.get("openapi_parser", {})
     elif name == "cve_check":
         kwargs["live_hosts"] = live
         kwargs["tech_results"] = all_results.get("techstack", {})
@@ -158,6 +195,14 @@ def _module_summary(name: str, result: dict) -> str:
                 f"{summary.get('with_exploitdb', 0)} ExploitDB match(es)")
     elif name == "cmscan":
         return f"{result.get('total_findings', 0)} findings"
+    elif name in ("cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker"):
+        return f"{result.get('total', len(result.get('findings', [])))} findings"
+    elif name == "vhost_enum":
+        return f"{result.get('total', 0)} vhosts"
+    elif name == "openapi_parser":
+        return f"{result.get('total_specs', 0)} specs, {result.get('total_endpoints', 0)} endpoints"
+    elif name == "parameter_discovery":
+        return f"{result.get('total', 0)} parameters"
     elif name == "ssl_checker":
         return (f"{len(result.get('ssl_issues', []))} SSL issues, "
                 f"{result.get('total_missing_headers', 0)} missing headers")
@@ -189,6 +234,18 @@ def run_one(
                       "traceback": traceback.format_exc()}
 
 
+def _maybe_send_ai_advice(advisor, name: str, result: dict, target: str, tg) -> None:
+    if not advisor or not advisor.should_advise(name, result):
+        return
+
+    def _worker():
+        advice = advisor.analyse(name, result, target)
+        if advice and tg.is_ready():
+            tg.send_message(f"AI advice - {name.upper()}\n\n{advice[:3000]}", parse_mode=None)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 # ─── Pipeline orchestrator ────────────────────────────────────────────────────
 
 def run_pipeline(
@@ -197,8 +254,10 @@ def run_pipeline(
     session_dir: Path,
     active: list[str],
     resume: bool,
+    previous_results: dict | None = None,
 ) -> dict:
     from reporting.telegram import TelegramNotifier
+    from modules.ai_advisor import AIAdvisor
 
     t0 = time.time()
     all_results: dict = {}
@@ -206,6 +265,7 @@ def run_pipeline(
 
     # Initialize Telegram notifier
     tg = TelegramNotifier(config)
+    advisor = AIAdvisor(config)
     tg_ready = tg.is_ready()
     if tg_ready:
         console.print("[green]✓[/green] Telegram notifications enabled")
@@ -253,6 +313,7 @@ def run_pipeline(
                     tg.notify_error(name, result.get("error", "Unknown error"))
                 else:
                     tg.notify_module_complete(name, status, elapsed, summary)
+            _maybe_send_ai_advice(advisor, name, result, target, tg)
         else:
             # Parallel — snapshot all_results so threads don't race
             console.print(f"\n[bold cyan]⚡ Running in parallel: {', '.join(names)}[/bold cyan]")
@@ -276,12 +337,29 @@ def run_pipeline(
                             tg.notify_error(n, result.get("error", "Unknown error"))
                         else:
                             tg.notify_module_complete(n, status, elapsed, summary)
+                    _maybe_send_ai_advice(advisor, n, result, target, tg)
 
         # Persist after every group — enables resume on crash
         master_json.write_text(
             json.dumps(all_results, indent=2, ensure_ascii=False, default=str),
             encoding="utf-8",
         )
+
+    if previous_results:
+        try:
+            from reporting.json_report import build_results_diff
+            diff = build_results_diff(previous_results, all_results)
+            all_results["diff"] = diff
+            (session_dir / "diff_results.json").write_text(
+                json.dumps(diff, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            master_json.write_text(
+                json.dumps(all_results, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            console.print(f"[yellow]![/yellow] Diff skipped: {e}")
 
     # ── Telegram: critical vulnerability alerts ───────────────────────────────
     vuln_findings = all_results.get("vulnscan", {}).get("findings", [])
@@ -340,6 +418,9 @@ def run_pipeline(
         fuzz  = all_results.get("fuzzer", {})
         vuln  = all_results.get("vulnscan", {})
         cve   = all_results.get("cve_check", {})
+        cors  = all_results.get("cors_checker", {})
+        auth  = all_results.get("auth_probe", {})
+        takeover = all_results.get("takeover_checker", {})
 
         tg_summary = {
             "subdomains":      recon.get("subdomains_total", 0),
@@ -350,6 +431,9 @@ def run_pipeline(
             "cves":            cve.get("summary", {}).get("total_cves", 0),
             "endpoints":       fuzz.get("total_endpoints", 0),
             "js_secrets":      fuzz.get("js_secrets_count", 0),
+            "cors_findings":   cors.get("total", len(cors.get("findings", []))),
+            "auth_findings":   auth.get("total", len(auth.get("findings", []))),
+            "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
             "elapsed":         elapsed,
         }
 
@@ -370,6 +454,11 @@ def _md_report(
     fuzz  = results.get("fuzzer", {})
     vuln  = results.get("vulnscan", {})
     cve   = results.get("cve_check", {})
+    cors  = results.get("cors_checker", {})
+    auth  = results.get("auth_probe", {})
+    takeover = results.get("takeover_checker", {})
+    openapi = results.get("openapi_parser", {})
+    params = results.get("parameter_discovery", {})
 
     lines = [
         f"# 🔬 ReconX: `{target}`",
@@ -386,6 +475,11 @@ def _md_report(
         f"| CVEs | {cve.get('summary', {}).get('total_cves', 0)} |",
         f"| ExploitDB matches | {cve.get('summary', {}).get('with_exploitdb', 0)} |",
         f"| JS Secrets | {fuzz.get('js_secrets_count', 0)} |",
+        f"| CORS findings | {cors.get('total', len(cors.get('findings', [])))} |",
+        f"| Auth findings | {auth.get('total', len(auth.get('findings', [])))} |",
+        f"| Takeover candidates | {takeover.get('total', len(takeover.get('findings', [])))} |",
+        f"| OpenAPI endpoints | {openapi.get('total_endpoints', 0)} |",
+        f"| Parameters | {params.get('total', 0)} |",
         "",
     ]
     if ai:
@@ -409,6 +503,23 @@ def _md_report(
                 f"{target_ref} | {edb} | {sim} |"
             )
 
+    for module_name, title in (
+        ("cors_checker", "CORS Findings"),
+        ("auth_probe", "Auth Findings"),
+        ("sourcemap_analyzer", "Source Map Findings"),
+        ("takeover_checker", "Subdomain Takeover Candidates"),
+    ):
+        findings = results.get(module_name, {}).get("findings", [])
+        if findings:
+            lines += ["", f"---\n## {title}\n",
+                      "| Severity | Type | URL |",
+                      "|----------|------|-----|"]
+            for item in findings[:50]:
+                lines.append(
+                    f"| {item.get('severity', 'INFO')} | {item.get('type', '')} | "
+                    f"{item.get('url') or item.get('matched_url', '')} |"
+                )
+
     path = session_dir / "report.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return str(path)
@@ -423,6 +534,10 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     fuzz  = results.get("fuzzer", {})
     vuln  = results.get("vulnscan", {})
     cve   = results.get("cve_check", {})
+    cors  = results.get("cors_checker", {})
+    auth  = results.get("auth_probe", {})
+    takeover = results.get("takeover_checker", {})
+    params = results.get("parameter_discovery", {})
     n_vuln = vuln.get("total", 0)
 
     t = Table(show_header=False, border_style="dim", box=None, padding=(0, 1))
@@ -439,6 +554,10 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     t.add_row("🚨 Vulnerabilities",  f"[{'red' if n_vuln else 'green'}]{n_vuln}[/{'red' if n_vuln else 'green'}]")
     t.add_row("🧨 CVEs",             str(cve.get("summary", {}).get("total_cves", 0)))
     t.add_row("🔑 JS Secrets",       str(fuzz.get("js_secrets_count", 0)))
+    t.add_row("CORS findings",       str(cors.get("total", len(cors.get("findings", [])))))
+    t.add_row("Auth findings",       str(auth.get("total", len(auth.get("findings", [])))))
+    t.add_row("Takeover candidates", str(takeover.get("total", len(takeover.get("findings", [])))))
+    t.add_row("Parameters",          str(params.get("total", 0)))
 
     console.print(Panel(t, title="[bold magenta]ReconX — Complete[/bold magenta]",
                         border_style="magenta", padding=(1, 2)))
@@ -532,6 +651,7 @@ Examples:
     p.add_argument("-s", "--skip",    help="Comma-separated modules to skip")
     p.add_argument("-r", "--resume",  action="store_true",
                    help="Reuse cached module results from a previous run")
+    p.add_argument("--diff", help="Compare against previous all_results.json or report.json")
     p.add_argument("--legal-acknowledgment", action="store_true",
                    help="Confirm you are authorized to scan the target")
     p.add_argument("--list-modules",  action="store_true")
@@ -560,6 +680,7 @@ Examples:
 
     load_env_file(Path(args.config).with_name(".env"))
     cfg = apply_env_overrides(load_config(args.config))
+    previous_results = _load_previous_results(args.diff) if args.diff else None
     legal_cfg = cfg.get("legal", {})
     if legal_cfg.get("require_acknowledgment", False) and not args.legal_acknowledgment:
         console.print("[red]Error: pass --legal-acknowledgment to confirm authorization[/red]")
@@ -578,7 +699,7 @@ Examples:
 
     try:
         install_ctrl_c_skip_handler()
-        run_pipeline(args.target, cfg, session_dir, active, args.resume)
+        run_pipeline(args.target, cfg, session_dir, active, args.resume, previous_results)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted — partial results saved.[/yellow]")
         sys.exit(1)
@@ -589,6 +710,22 @@ def create_session_dir(target: str, base: str) -> Path:
     d = Path(base) / "output" / f"reconx_{safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _load_previous_results(path: str) -> dict:
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception as exc:
+        console.print(f"[yellow]Could not load diff baseline: {exc}[/yellow]")
+        return {}
+    if "raw_module_status" in data and "assets" in data:
+        return {
+            "recon": {"subdomains": data.get("assets", {}).get("subdomains", [])},
+            "webdetect": {"live_urls": data.get("assets", {}).get("live_urls", [])},
+            "portscan": {"hosts": data.get("assets", {}).get("ports_by_host", [])},
+            "vulnscan": {"findings": data.get("findings", [])},
+        }
+    return data if isinstance(data, dict) else {}
 
 
 if __name__ == "__main__":

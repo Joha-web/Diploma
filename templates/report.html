@@ -427,6 +427,13 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div class="sidebar-section">Web</div>
   <a href="#endpoints"><span class="dot"></span> Endpoints</a>
   <a href="#secrets"><span class="dot"></span> JS Secrets</a>
+  {% if cors.findings %}<a href="#cors"><span class="dot"></span> CORS</a>{% endif %}
+  {% if auth.findings %}<a href="#auth"><span class="dot"></span> Auth</a>{% endif %}
+  {% if sourcemap.maps %}<a href="#sourcemaps"><span class="dot"></span> Source Maps</a>{% endif %}
+  {% if openapi.specs %}<a href="#openapi"><span class="dot"></span> OpenAPI</a>{% endif %}
+  {% if params.parameters %}<a href="#parameters"><span class="dot"></span> Parameters</a>{% endif %}
+  {% if vhost.found %}<a href="#vhosts"><span class="dot"></span> VHosts</a>{% endif %}
+  {% if takeover.findings %}<a href="#takeover"><span class="dot"></span> Takeover</a>{% endif %}
   {% if cms.scans %}<a href="#cms"><span class="dot"></span> CMS Scan</a>{% endif %}
   <a href="#ssl"><span class="dot"></span> SSL / Headers</a>
 
@@ -508,6 +515,22 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
       {{ summary.js_secrets }}
     </div>
     <div class="lbl">JS Secrets</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.cors_findings > 0 %}warn{% endif %}">{{ summary.cors_findings }}</div>
+    <div class="lbl">CORS Findings</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.auth_findings > 0 %}warn{% endif %}">{{ summary.auth_findings }}</div>
+    <div class="lbl">Auth Findings</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.takeover_findings > 0 %}danger{% endif %}">{{ summary.takeover_findings }}</div>
+    <div class="lbl">Takeover</div>
+  </div>
+  <div class="stat-card">
+    <div class="val">{{ summary.parameters }}</div>
+    <div class="lbl">Parameters</div>
   </div>
 </div>
 
@@ -622,6 +645,93 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
       </p>
     </div>
   </details>
+</div>
+{% endif %}
+
+<!-- P2/P3 Findings -->
+{% set extra_modules = [
+  ('cors', 'CORS Findings', cors.findings),
+  ('auth', 'Auth Findings', auth.findings),
+  ('sourcemaps', 'Source Map Findings', sourcemap.findings),
+  ('takeover', 'Subdomain Takeover Candidates', takeover.findings)
+] %}
+{% for section_id, title, findings in extra_modules %}
+{% if findings %}
+<div class="section" id="{{ section_id }}">
+  <div class="section-header">
+    <div class="section-title">{{ title }} <span class="count-badge">{{ findings | length }}</span></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Evidence</th></tr></thead>
+      <tbody>
+        {% for f in findings %}
+        <tr>
+          <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+          <td>{{ f.title or f.name or f.type }}</td>
+          <td><code>{{ f.url or f.matched_url }}</code></td>
+          <td><code>{{ f.evidence | jsonpretty }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+
+<!-- OpenAPI -->
+{% if openapi.specs %}
+<div class="section" id="openapi">
+  <div class="section-header">
+    <div class="section-title">OpenAPI / Swagger <span class="count-badge">{{ openapi.total_endpoints }} endpoints</span></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Method</th><th>URL</th><th>Summary</th></tr></thead>
+      <tbody>
+        {% for e in openapi.endpoints[:300] %}
+        <tr><td><span class="badge badge-INFO">{{ e.method }}</span></td><td><code>{{ e.url }}</code></td><td>{{ e.summary }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Parameters / VHosts -->
+{% if params.parameters %}
+<div class="section" id="parameters">
+  <div class="section-header">
+    <div class="section-title">Hidden / Documented Parameters <span class="count-badge">{{ params.total }}</span></div>
+  </div>
+  <div class="code-block">{% for p in params.parameters[:300] %}{{ p.url }} ? {{ p.param }} ({{ p.source }})
+{% endfor %}</div>
+</div>
+{% endif %}
+
+{% if vhost.found %}
+<div class="section" id="vhosts">
+  <div class="section-header">
+    <div class="section-title">Virtual Hosts <span class="count-badge">{{ vhost.total }}</span></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>IP</th><th>VHost</th><th>Status</th><th>Size</th></tr></thead>
+      <tbody>
+        {% for item in vhost.found %}
+        <tr><td><code>{{ item.ip }}</code></td><td><code>{{ item.vhost }}</code></td><td>{{ item.status }}</td><td>{{ item.size }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if diff %}
+<div class="section" id="diff">
+  <div class="section-header"><div class="section-title">Scan Diff</div></div>
+  <div class="code-block">{{ diff | jsonpretty }}</div>
 </div>
 {% endif %}
 

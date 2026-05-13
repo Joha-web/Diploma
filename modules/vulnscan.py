@@ -16,9 +16,13 @@ class VulnScanModule(BaseModule):
     required_tools = ["nuclei"]
 
     def __init__(self, target: str, output_dir: str, config: dict,
-                 live_hosts: list | None = None):
+                 live_hosts: list | None = None,
+                 parameter_results: dict | None = None,
+                 openapi_results: dict | None = None):
         super().__init__(target, output_dir, config)
         self.live_hosts = live_hosts or []
+        self.parameter_results = parameter_results or {}
+        self.openapi_results = openapi_results or {}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -170,6 +174,12 @@ class VulnScanModule(BaseModule):
             m = re.search(r"https?://[^\s]+", line)
             if m:
                 urls.add(m.group(0))
+        for item in self.parameter_results.get("parameterized_targets", []) or []:
+            if isinstance(item, str):
+                urls.add(item)
+        for item in self.openapi_results.get("endpoints", []) or []:
+            if isinstance(item, dict) and item.get("url"):
+                urls.add(item["url"])
         return self.filter_in_scope_urls(urls)
 
     def _line_count(self, path: Path) -> int:

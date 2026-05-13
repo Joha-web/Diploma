@@ -1,0 +1,39 @@
+from modules.cors_checker import CORSCheckerModule
+
+
+class DummyResponse:
+    def __init__(self, headers=None, status_code=200, text=""):
+        self.headers = headers or {}
+        self.status_code = status_code
+        self.text = text
+        self.content = text.encode()
+
+
+def test_cors_checker_flags_reflected_credentialed_origin(tmp_path, monkeypatch):
+    module = CORSCheckerModule("example.com", str(tmp_path), {}, live_hosts=[])
+
+    def fake_get(url, **kwargs):
+        return DummyResponse({
+            "Access-Control-Allow-Origin": kwargs["headers"]["Origin"],
+            "Access-Control-Allow-Credentials": "true",
+        })
+
+    monkeypatch.setattr(module, "http_get", fake_get)
+
+    findings = module._check_url("https://example.com", object())
+
+    assert findings
+    assert findings[0]["severity"] == "CRITICAL"
+    assert findings[0]["evidence"]["access_control_allow_credentials"] == "true"
+
+
+def test_cors_checker_flags_wildcard_origin(tmp_path, monkeypatch):
+    module = CORSCheckerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    monkeypatch.setattr(module, "http_get", lambda *args, **kwargs: DummyResponse({
+        "Access-Control-Allow-Origin": "*",
+    }))
+
+    findings = module._check_url("https://example.com", object())
+
+    assert findings[0]["type"] == "cors_wildcard_origin"
+    assert findings[0]["severity"] == "MEDIUM"

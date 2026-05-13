@@ -38,6 +38,8 @@ ai:
   temperature:   0.3
   max_tokens:    4096
   language:      "en"              # en | ru
+  realtime_advice: true            # send short per-module AI notes to Telegram
+  advise_on: [recon, portscan, techstack, fuzzer, vulnscan, cve_check]
 
 # ── Scan Settings ────────────────────────────────────────────
 scan:
@@ -86,6 +88,40 @@ scan:
     rate:         100           # requests/sec per host
     extensions:   [".php", ".asp", ".aspx", ".jsp", ".html", ".js", ".json"]
 
+  cors_checker:
+    enabled: true
+    max_urls: 200
+
+  auth_probe:
+    enabled: true
+    max_urls: 150
+
+  sourcemap_analyzer:
+    enabled: true
+    max_js: 150
+
+  vhost_enum:
+    enabled: true
+    max_ips: 40
+    rate: 50
+    timeout: 600
+    wordlist: "subdomains-top1million-5000.txt"
+
+  openapi_parser:
+    enabled: true
+    max_hosts: 100
+
+  parameter_discovery:
+    enabled: true
+    max_targets: 150
+    threads: 10
+    delay: 2
+    timeout: 1200
+
+  takeover_checker:
+    enabled: true
+    max_hosts: 500
+
   # Nuclei vulnerability scanner
   nuclei:
     enabled: true
@@ -106,7 +142,7 @@ scan:
       - destructive
     rate_limit:     150
     nuclei_timeout: 3600        # 1 hour max
-    dashboard_upload: false     # true uploads nuclei results to PDCP when PDCP_API_KEY is set
+    dashboard_upload: true     # true uploads nuclei results to PDCP when PDCP_API_KEY is set
 
   # CVE and ExploitDB correlation. This module never executes public exploit code.
   cve_check:
