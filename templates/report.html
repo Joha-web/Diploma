@@ -235,6 +235,27 @@ td code { font-family: var(--mono); font-size: .9em; color: var(--cyan); word-br
 }
 .filter-input:focus { border-color: var(--accent); }
 .filter-input::placeholder { color: var(--muted); }
+.finding-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.finding-filters select,
+.finding-filters input {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: .82em;
+  outline: none;
+}
+.finding-filters label {
+  color: var(--muted);
+  font-size: .78em;
+}
+.finding-hidden { display: none !important; }
 
 /* ── Severity badges ─────────────────────────────── */
 .badge {
@@ -459,7 +480,9 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <a href="#secrets"><span class="dot"></span> JS Secrets</a>
   {% if cors.findings %}<a href="#cors"><span class="dot"></span> CORS</a>{% endif %}
   {% if auth.findings %}<a href="#auth"><span class="dot"></span> Auth</a>{% endif %}
-  {% if injection.findings %}<a href="#injection-probe"><span class="dot"></span> Injection Probe</a>{% endif %}
+  {% for section_id, title, module in active_probe_sections %}
+  {% if module.findings %}<a href="#{{ section_id }}"><span class="dot"></span> {{ title }}</a>{% endif %}
+  {% endfor %}
   {% if sourcemap.maps %}<a href="#sourcemaps"><span class="dot"></span> Source Maps</a>{% endif %}
   {% if openapi.specs %}<a href="#openapi"><span class="dot"></span> OpenAPI</a>{% endif %}
   {% if params.parameters %}<a href="#parameters"><span class="dot"></span> Parameters</a>{% endif %}
@@ -566,8 +589,8 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
     <div class="lbl">Git Secrets</div>
   </div>
   <div class="stat-card">
-    <div class="val {% if summary.injection_findings > 0 %}danger{% endif %}">{{ summary.injection_findings }}</div>
-    <div class="lbl">Injection</div>
+    <div class="val {% if summary.active_probe_findings > 0 %}danger{% endif %}">{{ summary.active_probe_findings }}</div>
+    <div class="lbl">Active Probes</div>
   </div>
   <div class="stat-card">
     <div class="val {% if summary.takeover_findings > 0 %}danger{% endif %}">{{ summary.takeover_findings }}</div>
@@ -593,6 +616,37 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 </div>
 {% endif %}
 
+{% if all_findings_count %}
+<div class="section" id="finding-filters">
+  <div class="section-header">
+    <div class="section-title">Finding Filters <span class="count-badge">{{ all_findings_count }}</span></div>
+  </div>
+  <div class="finding-filters">
+    <label>Module
+      <select id="finding-module-filter" onchange="applyFindingFilters()">
+        <option value="">All modules</option>
+        {% for module_id, label in finding_filter_modules %}
+        <option value="{{ module_id }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Severity
+      <select id="finding-severity-filter" onchange="applyFindingFilters()">
+        <option value="">All severities</option>
+        <option value="CRITICAL">Critical</option>
+        <option value="HIGH">High</option>
+        <option value="MEDIUM">Medium</option>
+        <option value="LOW">Low</option>
+        <option value="INFO">Info</option>
+      </select>
+    </label>
+    <label>Min confidence
+      <input id="finding-confidence-filter" type="number" min="0" max="1" step="0.05" placeholder="0.00" oninput="applyFindingFilters()">
+    </label>
+  </div>
+</div>
+{% endif %}
+
 <!-- Vulnerabilities -->
 {% if vuln.findings %}
 <div class="section" id="vulns">
@@ -609,7 +663,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
       </tr></thead>
       <tbody>
         {% for f in vuln.findings %}
-        <tr>
+        <tr class="finding-row" data-module="vulnscan" data-severity="{{ f.severity }}" data-confidence="{{ f.confidence | default(0.8) }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
           <td>{{ f.name }}</td>
           <td><code>{{ f.matched_url }}</code></td>
@@ -698,18 +752,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 {% endif %}
 
 <!-- P2/P3 Findings -->
-{% set extra_modules = [
-  ('secret-scanner', 'Git Secret Findings', secret.findings),
-  ('fuzzer-findings', 'Fuzzer Findings', fuzz.findings),
-  ('email-security', 'Email DNS Security', email_security.findings),
-  ('cors', 'CORS Findings', cors.findings),
-  ('auth', 'Auth Findings', auth.findings),
-  ('injection-probe', 'Injection Probe Findings', injection.findings),
-  ('sourcemaps', 'Source Map Findings', sourcemap.findings),
-  ('takeover', 'Subdomain Takeover Candidates', takeover.findings),
-  ('correlator', 'Cross-Finding Correlation', corr.findings)
-] %}
-{% for section_id, title, findings in extra_modules %}
+{% for section_id, title, findings in extra_finding_sections %}
 {% if findings %}
 <div class="section" id="{{ section_id }}">
   <div class="section-header">
@@ -720,7 +763,31 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
       <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Evidence</th></tr></thead>
       <tbody>
         {% for f in findings %}
-        <tr>
+        <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}">
+          <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+          <td>{{ f.title or f.name or f.type }}</td>
+          <td><code>{{ f.url or f.matched_url }}</code></td>
+          <td><code>{{ f.evidence | jsonpretty }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+{% for section_id, title, module in active_probe_sections %}
+{% if module.findings %}
+<div class="section" id="{{ section_id }}">
+  <div class="section-header">
+    <div class="section-title">{{ title }} <span class="count-badge">{{ module.findings | length }}</span></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Evidence</th></tr></thead>
+      <tbody>
+        {% for f in module.findings %}
+        <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
           <td>{{ f.title or f.name or f.type }}</td>
           <td><code>{{ f.url or f.matched_url }}</code></td>
@@ -1123,6 +1190,24 @@ function filterCode(blockId, query) {
   }
   const matched = lines.filter(l => l.toLowerCase().includes(q));
   block.textContent = matched.join('\n');
+}
+
+function applyFindingFilters() {
+  const moduleValue = document.getElementById('finding-module-filter')?.value || '';
+  const severityValue = document.getElementById('finding-severity-filter')?.value || '';
+  const minConfidenceRaw = document.getElementById('finding-confidence-filter')?.value || '';
+  const minConfidence = minConfidenceRaw === '' ? 0 : Number(minConfidenceRaw);
+  document.querySelectorAll('.finding-row').forEach(row => {
+    const rowModule = row.dataset.module || '';
+    const rowSeverity = (row.dataset.severity || '').toUpperCase();
+    const rowConfidence = Number(row.dataset.confidence || '0');
+    const hidden = (
+      (moduleValue && rowModule !== moduleValue) ||
+      (severityValue && rowSeverity !== severityValue) ||
+      (minConfidenceRaw !== '' && rowConfidence < minConfidence)
+    );
+    row.classList.toggle('finding-hidden', hidden);
+  });
 }
 
 // Active sidebar link tracking

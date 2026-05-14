@@ -6,6 +6,21 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from modules.finding_registry import normalize_finding as normalize_registered_finding
+from modules.finding_registry import risk_score
+
+
+ACTIVE_FINDING_MODULES = (
+    "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
+    "injection_probe", "http_smuggling", "oauth_probe", "cache_poison",
+    "host_header_injection", "prototype_pollution", "xxe_probe",
+    "deserialization_probe", "graphql_audit", "race_condition",
+    "open_redirect_probe", "api_key_validator", "idor_probe",
+    "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
+    "sourcemap_analyzer",
+    "takeover_checker", "correlator",
+)
+
 
 def generate_json_report(session_dir: Path, target: str, results: dict, elapsed: str = "") -> str:
     """Generate a structured JSON report and return the written path."""
@@ -62,15 +77,15 @@ def generate_json_report(session_dir: Path, target: str, results: dict, elapsed:
             "confidence": cve.get("confidence", 0.75),
         })
 
-    for module_name in (
-        "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
-        "injection_probe", "sourcemap_analyzer", "takeover_checker", "correlator",
-    ):
+    for module_name in ACTIVE_FINDING_MODULES:
         for finding in results.get(module_name, {}).get("findings", []):
             findings.append(_normalize_finding(module_name, finding))
 
     for finding in results.get("recon", {}).get("email_security", {}).get("findings", []):
         findings.append(_normalize_finding("recon", finding))
+
+    findings = [_ensure_risk(item) for item in findings]
+    findings.sort(key=lambda item: item.get("risk_score", 0), reverse=True)
 
     report = {
         "schema_version": "reconx/v2",
@@ -94,18 +109,17 @@ def generate_json_report(session_dir: Path, target: str, results: dict, elapsed:
 
 
 def _normalize_finding(module_name: str, finding: dict) -> dict:
-    return {
-        "source": finding.get("source", module_name),
-        "id": finding.get("id") or finding.get("type", ""),
-        "title": finding.get("title") or finding.get("name", ""),
-        "severity": finding.get("severity", "INFO"),
-        "url": finding.get("url") or finding.get("matched_url", ""),
-        "description": finding.get("description", ""),
-        "evidence": finding.get("evidence", {}),
-        "references": finding.get("references", []),
-        "tags": [module_name, finding.get("type", "")],
-        "confidence": finding.get("confidence", 0.75),
-    }
+    return normalize_registered_finding(module_name, finding)
+
+
+def _ensure_risk(finding: dict) -> dict:
+    if "risk_score" not in finding:
+        finding["risk_score"] = risk_score(
+            finding.get("severity", "INFO"),
+            finding.get("confidence", 0.75),
+            finding.get("exploitability", "candidate"),
+        )
+    return finding
 
 
 def _summary(results: dict) -> dict:
@@ -120,6 +134,17 @@ def _summary(results: dict) -> dict:
     auth = results.get("auth_probe", {})
     secret = results.get("secret_scanner", {})
     injection = results.get("injection_probe", {})
+    active_probe_modules = (
+        "injection_probe", "http_smuggling", "oauth_probe", "cache_poison",
+        "host_header_injection", "prototype_pollution", "xxe_probe",
+        "deserialization_probe", "graphql_audit", "race_condition",
+        "open_redirect_probe", "api_key_validator", "idor_probe",
+        "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
+    )
+    active_probe_findings = sum(
+        results.get(module_name, {}).get("total", len(results.get(module_name, {}).get("findings", [])))
+        for module_name in active_probe_modules
+    )
     sourcemaps = results.get("sourcemap_analyzer", {})
     takeover = results.get("takeover_checker", {})
     openapi = results.get("openapi_parser", {})
@@ -141,6 +166,7 @@ def _summary(results: dict) -> dict:
         "auth_findings": auth.get("total", len(auth.get("findings", []))),
         "secret_findings": secret.get("total", len(secret.get("findings", []))),
         "injection_findings": injection.get("total", len(injection.get("findings", []))),
+        "active_probe_findings": active_probe_findings,
         "sourcemap_findings": sourcemaps.get("total", len(sourcemaps.get("findings", []))),
         "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
         "openapi_specs": openapi.get("total_specs", 0),
@@ -203,10 +229,7 @@ def _port_set(results: dict) -> set[str]:
 
 def _finding_set(results: dict) -> set[str]:
     items = set()
-    for module_name in (
-        "vulnscan", "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
-        "injection_probe", "sourcemap_analyzer", "takeover_checker", "correlator",
-    ):
+    for module_name in ("vulnscan", *ACTIVE_FINDING_MODULES):
         for finding in results.get(module_name, {}).get("findings", []):
             key = (
                 finding.get("template_id")

@@ -82,6 +82,57 @@ class HTMLReportGenerator:
         injection = r.get("injection_probe", {})
         corr = r.get("correlator", {})
         email_security = recon.get("email_security", {}) or {}
+        active_probe_sections = [
+            ("injection-probe", "Injection Probe Findings", r.get("injection_probe", {})),
+            ("http-smuggling", "HTTP Smuggling Findings", r.get("http_smuggling", {})),
+            ("oauth-probe", "OAuth / OIDC Findings", r.get("oauth_probe", {})),
+            ("cache-poison", "Cache Poisoning Findings", r.get("cache_poison", {})),
+            ("host-header-injection", "Host Header Findings", r.get("host_header_injection", {})),
+            ("prototype-pollution", "Prototype Pollution Findings", r.get("prototype_pollution", {})),
+            ("xxe-probe", "XXE Findings", r.get("xxe_probe", {})),
+            ("deserialization-probe", "Deserialization Findings", r.get("deserialization_probe", {})),
+            ("graphql-audit", "GraphQL Audit Findings", r.get("graphql_audit", {})),
+            ("race-condition", "Race Condition Findings", r.get("race_condition", {})),
+            ("open-redirect-probe", "Open Redirect Findings", r.get("open_redirect_probe", {})),
+            ("api-key-validator", "API Key Validation Findings", r.get("api_key_validator", {})),
+            ("idor-probe", "IDOR / BOLA Findings", r.get("idor_probe", {})),
+            ("jwt-audit", "JWT Audit Findings", r.get("jwt_audit", {})),
+            ("websocket-probe", "WebSocket Findings", r.get("websocket_probe", {})),
+            ("api-schema-audit", "OpenAPI Schema Audit Findings", r.get("api_schema_audit", {})),
+            ("js-security-audit", "JavaScript Security Findings", r.get("js_security_audit", {})),
+        ]
+        active_probe_total = sum(
+            module.get("total", len(module.get("findings", [])))
+            for _, _, module in active_probe_sections
+        )
+        extra_finding_sections = [
+            ("secret-scanner", "Git Secret Findings", secret.get("findings", [])),
+            ("fuzzer-findings", "Fuzzer Findings", fuzz.get("findings", [])),
+            ("email-security", "Email DNS Security", email_security.get("findings", [])),
+            ("cors", "CORS Findings", cors.get("findings", [])),
+            ("auth", "Auth Findings", auth.get("findings", [])),
+            ("sourcemaps", "Source Map Findings", sourcemap.get("findings", [])),
+            ("takeover", "Subdomain Takeover Candidates", takeover.get("findings", [])),
+            ("correlator", "Cross-Finding Correlation", corr.get("findings", [])),
+        ]
+        finding_filter_modules = []
+        if vuln.get("findings"):
+            finding_filter_modules.append(("vulnscan", "Nuclei"))
+        finding_filter_modules.extend(
+            (section_id, title)
+            for section_id, title, findings in extra_finding_sections
+            if findings
+        )
+        finding_filter_modules.extend(
+            (section_id, title)
+            for section_id, title, module in active_probe_sections
+            if module.get("findings")
+        )
+        all_findings_count = len(vuln.get("findings", [])) + sum(
+            len(findings) for _, _, findings in extra_finding_sections
+        ) + sum(
+            len(module.get("findings", [])) for _, _, module in active_probe_sections
+        )
 
         # Ensure by_severity exists
         if "by_severity" not in vuln:
@@ -115,6 +166,7 @@ class HTMLReportGenerator:
             "email_findings":  len(email_security.get("findings", [])),
             "secret_findings": secret.get("total", len(secret.get("findings", []))),
             "injection_findings": injection.get("total", len(injection.get("findings", []))),
+            "active_probe_findings": active_probe_total,
             "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
             "parameters":      params.get("total", 0),
             "correlated":      corr.get("total", 0),
@@ -150,6 +202,10 @@ class HTMLReportGenerator:
             "injection":   injection,
             "corr":        corr,
             "email_security": email_security,
+            "extra_finding_sections": extra_finding_sections,
+            "active_probe_sections": active_probe_sections,
+            "finding_filter_modules": finding_filter_modules,
+            "all_findings_count": all_findings_count,
             "diff":        r.get("diff", {}),
             "ai_analysis": ai_html,
             "summary":     summary,

@@ -15,6 +15,28 @@ api_keys:
   github:     ""
   pdcp:       ""
 
+# Optional scan profile override: safe | bug_bounty | deep | intrusive.
+preset: ""
+
+# Optional auth contexts for access-control diffing. Keep real tokens in env/local files.
+auth_profiles:
+  anonymous: {}
+  user_a:
+    token: ""
+    token_type: "Bearer"
+    headers: {}
+    cookies: {}
+  user_b:
+    token: ""
+    token_type: "Bearer"
+    headers: {}
+    cookies: {}
+  admin:
+    token: ""
+    token_type: "Bearer"
+    headers: {}
+    cookies: {}
+
 # ── Telegram Notifications ───────────────────────────────────
 telegram:
   enabled:   true
@@ -153,6 +175,117 @@ scan:
     ssrf: true
     inband_ssrf: false
 
+  http_smuggling:
+    enabled: true
+    max_urls: 40
+    timing_threshold: 4.5
+    connect_timeout: 8
+    read_timeout: 6
+
+  oauth_probe:
+    enabled: true
+    max_hosts: 40
+    timeout: 8
+
+  cache_poison:
+    enabled: true
+    max_urls: 60
+    max_headers: 9
+    timeout: 10
+    confirm_cache: false
+    cache_wait: 1
+
+  host_header_injection:
+    enabled: true
+    max_urls: 80
+    timeout: 10
+
+  prototype_pollution:
+    enabled: true
+    max_targets: 80
+    timeout: 10
+    body_probes: false
+
+  xxe_probe:
+    enabled: true
+    max_targets: 40
+    timeout: 10
+    oob_wait: 5
+
+  deserialization_probe:
+    enabled: true
+    max_urls: 100
+    timeout: 10
+
+  graphql_audit:
+    enabled: true
+    max_endpoints: 30
+    batch_size: 8
+    depth: 12
+    timeout: 10
+
+  race_condition:
+    enabled: true
+    max_targets: 80
+    active_probe: false
+    max_active_targets: 5
+    parallel_requests: 2
+    timeout: 8
+
+  open_redirect_probe:
+    enabled: true
+    max_targets: 120
+    timeout: 8
+
+  api_key_validator:
+    enabled: true
+    max_candidates: 100
+    live_validation: false
+    timeout: 10
+
+  idor_probe:
+    enabled: true
+    max_candidates: 200
+    compare_profiles: false      # set true when auth_profiles.user_a and user_b are configured
+    check_anonymous: false
+    max_compare_requests: 40
+    max_anonymous_requests: 20
+    similarity_threshold: 0.92
+    timeout: 10
+
+  jwt_audit:
+    enabled: true
+    max_tokens: 100
+    collect_from_responses: false
+    max_response_urls: 50
+    max_token_ttl_seconds: 604800 # 7 days
+    max_secret_guesses: 50
+    weak_secrets: []
+    trusted_key_hosts: []
+    timeout: 10
+
+  websocket_probe:
+    enabled: true
+    max_hosts: 30
+    max_endpoints: 50
+    discover_common_paths: true
+    active_handshake: true
+    check_origin: true
+    attacker_origin: "https://attacker.reconx.invalid"
+    message_probe: false         # only runs when scan.allow_write is true
+    timeout: 8
+
+  api_schema_audit:
+    enabled: true
+    max_endpoints: 500
+
+  js_security_audit:
+    enabled: true
+    max_js: 150
+    max_html_hosts: 40
+    max_findings_per_js: 20
+    timeout: 10
+
   takeover_checker:
     enabled: true
     max_hosts: 500
@@ -232,3 +365,6 @@ scope:
 
 legal:
   require_acknowledgment: false
+
+# Optional user-defined overrides layered after built-in presets.
+config_presets: {}

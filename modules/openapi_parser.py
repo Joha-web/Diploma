@@ -46,7 +46,12 @@ class OpenAPIParserModule(BaseModule):
                 data = self._fetch_spec(spec_url, sess)
                 if not data:
                     continue
-                specs.append({"url": spec_url, "title": self._title(data)})
+                specs.append({
+                    "url": spec_url,
+                    "title": self._title(data),
+                    "security_defined": self._security_defined(data),
+                    "security_schemes": sorted(self._security_schemes(data)),
+                })
                 eps, params = self._extract(data, base)
                 endpoints.extend(eps)
                 parameters.extend(params)
@@ -87,20 +92,34 @@ class OpenAPIParserModule(BaseModule):
     def _extract(self, spec: dict, base_url: str) -> tuple[list[dict], list[dict]]:
         endpoints: list[dict] = []
         parameters: list[dict] = []
+        global_security = spec.get("security", [])
+        security_defined = self._security_defined(spec)
         for path, methods in (spec.get("paths", {}) or {}).items():
             if not isinstance(methods, dict):
                 continue
             for method, info in methods.items():
                 if method.lower() not in {"get", "post", "put", "patch", "delete", "head", "options"}:
                     continue
+                info = info if isinstance(info, dict) else {}
                 full_url = urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+                operation_security = info.get("security") if "security" in info else None
+                effective_security = operation_security if operation_security is not None else global_security
+                responses = info.get("responses", {}) or {}
                 endpoints.append({
                     "method": method.upper(),
                     "path": path,
                     "url": full_url,
-                    "summary": (info or {}).get("summary", "") if isinstance(info, dict) else "",
+                    "summary": info.get("summary", ""),
+                    "operation_id": info.get("operationId", ""),
+                    "tags": info.get("tags", []) or [],
+                    "security": operation_security,
+                    "effective_security": effective_security,
+                    "security_defined": security_defined,
+                    "request_schema": self._request_schema(info),
+                    "responses": responses,
+                    "response_headers": self._response_headers(responses),
                 })
-                for param in (info or {}).get("parameters", []) if isinstance(info, dict) else []:
+                for param in info.get("parameters", []) or []:
                     if isinstance(param, dict) and param.get("name"):
                         parameters.append({
                             "url": full_url,
@@ -115,6 +134,53 @@ class OpenAPIParserModule(BaseModule):
     @staticmethod
     def _title(spec: dict) -> str:
         return (spec.get("info", {}) or {}).get("title", "")
+
+    @staticmethod
+    def _security_defined(spec: dict) -> bool:
+        return bool(spec.get("security") or OpenAPIParserModule._security_schemes(spec))
+
+    @staticmethod
+    def _security_schemes(spec: dict) -> set[str]:
+        components = spec.get("components", {}) or {}
+        schemes = components.get("securitySchemes", {}) or {}
+        if isinstance(schemes, dict):
+            return set(schemes.keys())
+        return set()
+
+    @staticmethod
+    def _request_schema(info: dict) -> dict:
+        body = info.get("requestBody", {}) or {}
+        if not isinstance(body, dict):
+            return {}
+        content = body.get("content", {}) or {}
+        if not isinstance(content, dict):
+            return {}
+        preferred = (
+            "application/json",
+            "application/x-www-form-urlencoded",
+            "multipart/form-data",
+        )
+        for content_type in preferred:
+            schema = (content.get(content_type, {}) or {}).get("schema")
+            if isinstance(schema, dict):
+                return schema
+        for details in content.values():
+            if isinstance(details, dict) and isinstance(details.get("schema"), dict):
+                return details["schema"]
+        return {}
+
+    @staticmethod
+    def _response_headers(responses: dict) -> dict:
+        headers: dict[str, list[str]] = {}
+        if not isinstance(responses, dict):
+            return headers
+        for status, details in responses.items():
+            if not isinstance(details, dict):
+                continue
+            response_headers = details.get("headers", {}) or {}
+            if isinstance(response_headers, dict) and response_headers:
+                headers[str(status)] = sorted(response_headers.keys())
+        return headers
 
     @staticmethod
     def _dedupe(items: list[dict], keys: tuple[str, ...]) -> list[dict]:

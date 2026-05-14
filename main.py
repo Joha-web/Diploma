@@ -59,7 +59,23 @@ PIPELINE: list[dict] = [
     {"name": "takeover_checker", "group": 5},
     {"name": "openapi_parser", "group": 5},
     {"name": "parameter_discovery", "group": 6},
-    {"name": "injection_probe", "group": 6},
+    {"name": "injection_probe", "group": 7},
+    {"name": "http_smuggling", "group": 6},
+    {"name": "oauth_probe", "group": 6},
+    {"name": "cache_poison", "group": 6},
+    {"name": "host_header_injection", "group": 6},
+    {"name": "prototype_pollution", "group": 6},
+    {"name": "xxe_probe", "group": 6},
+    {"name": "deserialization_probe", "group": 6},
+    {"name": "graphql_audit", "group": 6},
+    {"name": "race_condition", "group": 6},
+    {"name": "open_redirect_probe", "group": 6},
+    {"name": "api_key_validator", "group": 6},
+    {"name": "jwt_audit", "group": 6},
+    {"name": "websocket_probe", "group": 6},
+    {"name": "api_schema_audit", "group": 6},
+    {"name": "js_security_audit", "group": 6},
+    {"name": "idor_probe", "group": 7},
     {"name": "vulnscan",    "group": 7},
     {"name": "cve_check",   "group": 8},
     {"name": "correlator",  "group": 9},
@@ -83,6 +99,22 @@ CLASS_MAP = {
     "openapi_parser": ("modules.openapi_parser", "OpenAPIParserModule"),
     "parameter_discovery": ("modules.parameter_discovery", "ParameterDiscoveryModule"),
     "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),
+    "http_smuggling": ("modules.http_smuggling", "HTTPSmugglingModule"),
+    "oauth_probe": ("modules.oauth_probe", "OAuthProbeModule"),
+    "cache_poison": ("modules.cache_poison", "CachePoisonModule"),
+    "host_header_injection": ("modules.host_header_injection", "HostHeaderInjectionModule"),
+    "prototype_pollution": ("modules.prototype_pollution", "PrototypePollutionModule"),
+    "xxe_probe": ("modules.xxe_probe", "XXEProbeModule"),
+    "deserialization_probe": ("modules.deserialization_probe", "DeserializationProbeModule"),
+    "graphql_audit": ("modules.graphql_audit", "GraphQLAuditModule"),
+    "race_condition": ("modules.race_condition", "RaceConditionModule"),
+    "open_redirect_probe": ("modules.open_redirect_probe", "OpenRedirectProbeModule"),
+    "api_key_validator": ("modules.api_key_validator", "APIKeyValidatorModule"),
+    "idor_probe": ("modules.idor_probe", "IDORProbeModule"),
+    "jwt_audit": ("modules.jwt_audit", "JWTAuditModule"),
+    "websocket_probe": ("modules.websocket_probe", "WebSocketProbeModule"),
+    "api_schema_audit": ("modules.api_schema_audit", "APISchemaAuditModule"),
+    "js_security_audit": ("modules.js_security_audit", "JSSecurityAuditModule"),
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
     "cve_check":   ("modules.cve_check",    "CVECheckModule"),
     "correlator":  ("modules.correlator",   "CorrelatorModule"),
@@ -107,10 +139,89 @@ MODULE_LABELS = {
     "openapi_parser": "OpenAPI Discovery",
     "parameter_discovery": "Hidden Parameter Discovery",
     "injection_probe": "SSRF / SSTI / XXE Detection",
+    "http_smuggling": "HTTP Request Smuggling",
+    "oauth_probe": "OAuth / OIDC Audit",
+    "cache_poison": "Web Cache Poisoning",
+    "host_header_injection": "Host Header Injection",
+    "prototype_pollution": "Server-Side Prototype Pollution",
+    "xxe_probe": "OOB XXE Detection",
+    "deserialization_probe": "Deserialization Indicators",
+    "graphql_audit": "GraphQL Abuse Audit",
+    "race_condition": "Race Condition Candidates",
+    "open_redirect_probe": "Open Redirect Detection",
+    "api_key_validator": "API Key Leak Validation",
+    "idor_probe": "IDOR / BOLA Candidate Analysis",
+    "jwt_audit": "Deep JWT Security Audit",
+    "websocket_probe": "WebSocket Security Checks",
+    "api_schema_audit": "OpenAPI Security Schema Audit",
+    "js_security_audit": "Static JavaScript Security Audit",
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
     "cve_check":   "CVE & ExploitDB Correlation",
     "correlator":  "Cross-Finding Correlation",
     "ai_report":   "AI Security Analysis",
+}
+
+ACTIVE_PROBE_MODULES = (
+    "injection_probe", "http_smuggling", "oauth_probe", "cache_poison",
+    "host_header_injection", "prototype_pollution", "xxe_probe",
+    "deserialization_probe", "graphql_audit", "race_condition",
+    "open_redirect_probe", "api_key_validator", "idor_probe",
+    "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
+)
+
+CONFIG_PRESETS = {
+    "safe": {
+        "scan": {
+            "allow_write": False,
+            "rate_limit": 25,
+            "global_rate_limit": 25,
+            "idor_probe": {"compare_profiles": False, "check_anonymous": False, "max_candidates": 120},
+            "jwt_audit": {"collect_from_responses": False, "max_tokens": 50},
+            "websocket_probe": {"active_handshake": True, "message_probe": False, "max_endpoints": 30},
+            "api_schema_audit": {"max_endpoints": 300},
+            "js_security_audit": {"max_js": 80},
+            "race_condition": {"active_probe": False},
+            "api_key_validator": {"live_validation": False},
+        },
+    },
+    "bug_bounty": {
+        "scan": {
+            "allow_write": False,
+            "rate_limit": 50,
+            "global_rate_limit": 50,
+            "idor_probe": {"compare_profiles": True, "check_anonymous": False, "max_candidates": 200},
+            "jwt_audit": {"collect_from_responses": False, "max_tokens": 100},
+            "websocket_probe": {"active_handshake": True, "check_origin": True, "message_probe": False},
+            "api_schema_audit": {"max_endpoints": 500},
+            "js_security_audit": {"max_js": 150},
+            "race_condition": {"active_probe": False},
+            "api_key_validator": {"live_validation": False},
+        },
+    },
+    "deep": {
+        "scan": {
+            "allow_write": False,
+            "rate_limit": 35,
+            "global_rate_limit": 35,
+            "idor_probe": {"compare_profiles": True, "check_anonymous": True, "max_candidates": 400},
+            "jwt_audit": {"collect_from_responses": True, "max_tokens": 200, "max_response_urls": 100},
+            "websocket_probe": {"active_handshake": True, "check_origin": True, "max_endpoints": 100},
+            "api_schema_audit": {"max_endpoints": 1000},
+            "js_security_audit": {"max_js": 300},
+            "race_condition": {"active_probe": False},
+        },
+    },
+    "intrusive": {
+        "scan": {
+            "allow_write": True,
+            "rate_limit": 20,
+            "global_rate_limit": 20,
+            "idor_probe": {"compare_profiles": True, "check_anonymous": True, "max_candidates": 500},
+            "websocket_probe": {"active_handshake": True, "check_origin": True, "message_probe": True},
+            "race_condition": {"active_probe": True},
+            "api_key_validator": {"live_validation": True},
+        },
+    },
 }
 
 
@@ -147,7 +258,8 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
     if name == "portscan":
         kwargs["resolved_ips"] = recon.get("scan_ips") or recon.get("resolved_ips", [])
     elif name in ("webdetect", "techstack", "fuzzer", "ssl_checker",
-                  "cors_checker", "auth_probe", "openapi_parser"):
+                  "cors_checker", "auth_probe", "openapi_parser",
+                  "http_smuggling", "oauth_probe", "cache_poison"):
         kwargs["live_hosts"] = live
     elif name == "cmscan":
         kwargs["tech_results"] = all_results.get("techstack", {})
@@ -163,6 +275,45 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["openapi_results"] = all_results.get("openapi_parser", {})
     elif name == "injection_probe":
         kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "host_header_injection":
+        kwargs["live_hosts"] = live
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name in ("prototype_pollution", "xxe_probe"):
+        kwargs["live_hosts"] = live
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+        kwargs["openapi_results"] = all_results.get("openapi_parser", {})
+    elif name == "deserialization_probe":
+        kwargs["live_hosts"] = live
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "graphql_audit":
+        kwargs["live_hosts"] = live
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "race_condition":
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+        kwargs["openapi_results"] = all_results.get("openapi_parser", {})
+    elif name == "open_redirect_probe":
+        kwargs["live_hosts"] = live
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "api_key_validator":
+        kwargs["secret_results"] = all_results.get("secret_scanner", {})
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "idor_probe":
+        kwargs["live_hosts"] = live
+        kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+        kwargs["openapi_results"] = all_results.get("openapi_parser", {})
+    elif name == "jwt_audit":
+        kwargs["live_hosts"] = live
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+        kwargs["auth_results"] = all_results.get("auth_probe", {})
+    elif name == "websocket_probe":
+        kwargs["live_hosts"] = live
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "api_schema_audit":
+        kwargs["openapi_results"] = all_results.get("openapi_parser", {})
+    elif name == "js_security_audit":
+        kwargs["live_hosts"] = live
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
     elif name == "vulnscan":
         kwargs["live_hosts"] = live
@@ -212,7 +363,13 @@ def _module_summary(name: str, result: dict) -> str:
         return f"{result.get('total', 0)} correlated priority item(s)"
     elif name == "cmscan":
         return f"{result.get('total_findings', 0)} findings"
-    elif name in ("cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker"):
+    elif name in (
+        "cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker",
+        "http_smuggling", "oauth_probe", "cache_poison", "host_header_injection",
+        "prototype_pollution", "xxe_probe", "deserialization_probe", "graphql_audit",
+        "race_condition", "open_redirect_probe", "api_key_validator", "idor_probe",
+        "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
+    ):
         return f"{result.get('total', len(result.get('findings', [])))} findings"
     elif name == "vhost_enum":
         return f"{result.get('total', 0)} vhosts"
@@ -479,6 +636,10 @@ def _md_report(
     auth  = results.get("auth_probe", {})
     secret = results.get("secret_scanner", {})
     injection = results.get("injection_probe", {})
+    active_probe_findings = sum(
+        results.get(module_name, {}).get("total", len(results.get(module_name, {}).get("findings", [])))
+        for module_name in ACTIVE_PROBE_MODULES
+    )
     takeover = results.get("takeover_checker", {})
     openapi = results.get("openapi_parser", {})
     params = results.get("parameter_discovery", {})
@@ -502,7 +663,7 @@ def _md_report(
         f"| Git secret findings | {secret.get('total', len(secret.get('findings', [])))} |",
         f"| CORS findings | {cors.get('total', len(cors.get('findings', [])))} |",
         f"| Auth findings | {auth.get('total', len(auth.get('findings', [])))} |",
-        f"| Injection findings | {injection.get('total', len(injection.get('findings', [])))} |",
+        f"| Active probe findings | {active_probe_findings} |",
         f"| Takeover candidates | {takeover.get('total', len(takeover.get('findings', [])))} |",
         f"| OpenAPI endpoints | {openapi.get('total_endpoints', 0)} |",
         f"| Parameters | {params.get('total', 0)} |",
@@ -536,6 +697,22 @@ def _md_report(
         ("cors_checker", "CORS Findings"),
         ("auth_probe", "Auth Findings"),
         ("injection_probe", "Injection Probe Findings"),
+        ("http_smuggling", "HTTP Smuggling Findings"),
+        ("oauth_probe", "OAuth / OIDC Findings"),
+        ("cache_poison", "Cache Poisoning Findings"),
+        ("host_header_injection", "Host Header Findings"),
+        ("prototype_pollution", "Prototype Pollution Findings"),
+        ("xxe_probe", "XXE Findings"),
+        ("deserialization_probe", "Deserialization Findings"),
+        ("graphql_audit", "GraphQL Audit Findings"),
+        ("race_condition", "Race Condition Findings"),
+        ("open_redirect_probe", "Open Redirect Findings"),
+        ("api_key_validator", "API Key Validation Findings"),
+        ("idor_probe", "IDOR / BOLA Findings"),
+        ("jwt_audit", "JWT Audit Findings"),
+        ("websocket_probe", "WebSocket Findings"),
+        ("api_schema_audit", "OpenAPI Schema Audit Findings"),
+        ("js_security_audit", "JavaScript Security Findings"),
         ("sourcemap_analyzer", "Source Map Findings"),
         ("takeover_checker", "Subdomain Takeover Candidates"),
         ("correlator", "Cross-Finding Correlation"),
@@ -570,6 +747,10 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     auth  = results.get("auth_probe", {})
     secret = results.get("secret_scanner", {})
     injection = results.get("injection_probe", {})
+    active_probe_findings = sum(
+        results.get(module_name, {}).get("total", len(results.get(module_name, {}).get("findings", [])))
+        for module_name in ACTIVE_PROBE_MODULES
+    )
     takeover = results.get("takeover_checker", {})
     params = results.get("parameter_discovery", {})
     corr = results.get("correlator", {})
@@ -592,7 +773,7 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     t.add_row("Git secret findings", str(secret.get("total", len(secret.get("findings", [])))))
     t.add_row("CORS findings",       str(cors.get("total", len(cors.get("findings", [])))))
     t.add_row("Auth findings",       str(auth.get("total", len(auth.get("findings", [])))))
-    t.add_row("Injection findings",  str(injection.get("total", len(injection.get("findings", [])))))
+    t.add_row("Active probe findings", str(active_probe_findings))
     t.add_row("Takeover candidates", str(takeover.get("total", len(takeover.get("findings", [])))))
     t.add_row("Parameters",          str(params.get("total", 0)))
     t.add_row("Correlated priorities", str(corr.get("total", 0)))
@@ -614,6 +795,35 @@ def load_config(path: str) -> dict:
 
     with cfg_path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def apply_config_preset(config: dict, preset_name: str) -> dict:
+    """Apply a built-in or config-defined preset over the loaded config."""
+    preset_name = str(preset_name or "").strip()
+    if not preset_name:
+        return config
+
+    built_in = copy.deepcopy(CONFIG_PRESETS.get(preset_name, {}))
+    custom_presets = config.get("config_presets", {}) if isinstance(config, dict) else {}
+    custom = copy.deepcopy(custom_presets.get(preset_name, {})) if isinstance(custom_presets, dict) else {}
+    if not built_in and not custom:
+        console.print(f"[yellow]Unknown preset '{preset_name}' - using config as-is[/yellow]")
+        return config
+
+    merged = copy.deepcopy(config)
+    _deep_update(merged, built_in)
+    _deep_update(merged, custom)
+    merged["active_preset"] = preset_name
+    return merged
+
+
+def _deep_update(target: dict, updates: dict) -> dict:
+    for key, value in (updates or {}).items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update(target[key], value)
+        else:
+            target[key] = copy.deepcopy(value)
+    return target
 
 
 ENV_CONFIG_MAP = {
@@ -689,6 +899,8 @@ Examples:
     p.add_argument("-s", "--skip",    help="Comma-separated modules to skip")
     p.add_argument("-r", "--resume",  action="store_true",
                    help="Reuse cached module results from a previous run")
+    p.add_argument("--preset", choices=sorted(CONFIG_PRESETS),
+                   help="Scan profile: safe, bug_bounty, deep, or intrusive")
     p.add_argument("--diff", help="Compare against previous all_results.json or report.json")
     p.add_argument("--legal-acknowledgment", action="store_true",
                    help="Confirm you are authorized to scan the target")
@@ -717,7 +929,9 @@ Examples:
         active = [m for m in active if m not in skip]
 
     load_env_file(Path(args.config).with_name(".env"))
-    cfg = apply_env_overrides(load_config(args.config))
+    cfg = load_config(args.config)
+    preset_name = args.preset or cfg.get("preset") or cfg.get("scan", {}).get("preset", "")
+    cfg = apply_env_overrides(apply_config_preset(cfg, preset_name))
     previous_results = _load_previous_results(args.diff) if args.diff else None
     legal_cfg = cfg.get("legal", {})
     if legal_cfg.get("require_acknowledgment", False) and not args.legal_acknowledgment:
@@ -726,6 +940,8 @@ Examples:
 
     console.print(f"[bold]Target:[/bold]  [cyan]{args.target}[/cyan]")
     console.print(f"[bold]Modules:[/bold] {', '.join(active)}")
+    if cfg.get("active_preset"):
+        console.print(f"[bold]Preset:[/bold]  {cfg['active_preset']}")
     console.print(f"[bold]Resume:[/bold]  {'yes' if args.resume else 'no'}")
     if args.legal_acknowledgment:
         console.print("[green]Legal acknowledgment:[/green] authorization confirmed\n")
