@@ -45,6 +45,7 @@ BANNER = r"""
 # Modules in the same group run in parallel threads.
 PIPELINE: list[dict] = [
     {"name": "recon",       "group": 1},
+    {"name": "secret_scanner", "group": 1},
     {"name": "portscan",    "group": 2},   # parallel with webdetect
     {"name": "webdetect",   "group": 2},   # parallel with portscan
     {"name": "techstack",   "group": 3},
@@ -58,6 +59,7 @@ PIPELINE: list[dict] = [
     {"name": "takeover_checker", "group": 5},
     {"name": "openapi_parser", "group": 5},
     {"name": "parameter_discovery", "group": 6},
+    {"name": "injection_probe", "group": 6},
     {"name": "vulnscan",    "group": 7},
     {"name": "cve_check",   "group": 8},
     {"name": "correlator",  "group": 9},
@@ -66,6 +68,7 @@ PIPELINE: list[dict] = [
 
 CLASS_MAP = {
     "recon":       ("modules.recon",        "ReconModule"),
+    "secret_scanner": ("modules.secret_scanner", "SecretScannerModule"),
     "portscan":    ("modules.portscan",     "PortScanModule"),
     "webdetect":   ("modules.webdetect",    "WebdetectModule"),
     "techstack":   ("modules.techstack",    "TechStackModule"),
@@ -79,6 +82,7 @@ CLASS_MAP = {
     "takeover_checker": ("modules.takeover_checker", "TakeoverCheckerModule"),
     "openapi_parser": ("modules.openapi_parser", "OpenAPIParserModule"),
     "parameter_discovery": ("modules.parameter_discovery", "ParameterDiscoveryModule"),
+    "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
     "cve_check":   ("modules.cve_check",    "CVECheckModule"),
     "correlator":  ("modules.correlator",   "CorrelatorModule"),
@@ -88,6 +92,7 @@ CLASS_MAP = {
 # Module display names for Telegram and console
 MODULE_LABELS = {
     "recon":       "DNS & Subdomain Enumeration",
+    "secret_scanner": "Git Secret Scanning",
     "portscan":    "Port Scanning",
     "webdetect":   "Web Application Detection",
     "techstack":   "Technology Fingerprinting",
@@ -101,6 +106,7 @@ MODULE_LABELS = {
     "takeover_checker": "Subdomain Takeover Checks",
     "openapi_parser": "OpenAPI Discovery",
     "parameter_discovery": "Hidden Parameter Discovery",
+    "injection_probe": "SSRF / SSTI / XXE Detection",
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
     "cve_check":   "CVE & ExploitDB Correlation",
     "correlator":  "Cross-Finding Correlation",
@@ -155,6 +161,9 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
     elif name == "parameter_discovery":
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
         kwargs["openapi_results"] = all_results.get("openapi_parser", {})
+    elif name == "injection_probe":
+        kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
     elif name == "vulnscan":
         kwargs["live_hosts"] = live
         kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
@@ -180,6 +189,8 @@ def _module_summary(name: str, result: dict) -> str:
         return (f"{result.get('subdomains_total', 0)} subs, "
                 f"{len(result.get('live_http', []))} live, "
                 f"{len(result.get('resolved_ips', []))} IPs")
+    elif name == "secret_scanner":
+        return f"{result.get('total', 0)} git secret finding(s)"
     elif name == "portscan":
         s = result.get("summary", {})
         hr = len(s.get("high_risk", []))
@@ -209,6 +220,8 @@ def _module_summary(name: str, result: dict) -> str:
         return f"{result.get('total_specs', 0)} specs, {result.get('total_endpoints', 0)} endpoints"
     elif name == "parameter_discovery":
         return f"{result.get('total', 0)} parameters"
+    elif name == "injection_probe":
+        return f"{result.get('total', 0)} injection finding(s)"
     elif name == "ssl_checker":
         return (f"{len(result.get('ssl_issues', []))} SSL issues, "
                 f"{result.get('total_missing_headers', 0)} missing headers")
@@ -464,6 +477,8 @@ def _md_report(
     cve   = results.get("cve_check", {})
     cors  = results.get("cors_checker", {})
     auth  = results.get("auth_probe", {})
+    secret = results.get("secret_scanner", {})
+    injection = results.get("injection_probe", {})
     takeover = results.get("takeover_checker", {})
     openapi = results.get("openapi_parser", {})
     params = results.get("parameter_discovery", {})
@@ -484,8 +499,10 @@ def _md_report(
         f"| CVEs | {cve.get('summary', {}).get('total_cves', 0)} |",
         f"| ExploitDB matches | {cve.get('summary', {}).get('with_exploitdb', 0)} |",
         f"| JS Secrets | {fuzz.get('js_secrets_count', 0)} |",
+        f"| Git secret findings | {secret.get('total', len(secret.get('findings', [])))} |",
         f"| CORS findings | {cors.get('total', len(cors.get('findings', [])))} |",
         f"| Auth findings | {auth.get('total', len(auth.get('findings', [])))} |",
+        f"| Injection findings | {injection.get('total', len(injection.get('findings', [])))} |",
         f"| Takeover candidates | {takeover.get('total', len(takeover.get('findings', [])))} |",
         f"| OpenAPI endpoints | {openapi.get('total_endpoints', 0)} |",
         f"| Parameters | {params.get('total', 0)} |",
@@ -514,9 +531,11 @@ def _md_report(
             )
 
     for module_name, title in (
+        ("secret_scanner", "Git Secret Findings"),
         ("fuzzer", "Fuzzer Findings"),
         ("cors_checker", "CORS Findings"),
         ("auth_probe", "Auth Findings"),
+        ("injection_probe", "Injection Probe Findings"),
         ("sourcemap_analyzer", "Source Map Findings"),
         ("takeover_checker", "Subdomain Takeover Candidates"),
         ("correlator", "Cross-Finding Correlation"),
@@ -549,6 +568,8 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     cve   = results.get("cve_check", {})
     cors  = results.get("cors_checker", {})
     auth  = results.get("auth_probe", {})
+    secret = results.get("secret_scanner", {})
+    injection = results.get("injection_probe", {})
     takeover = results.get("takeover_checker", {})
     params = results.get("parameter_discovery", {})
     corr = results.get("correlator", {})
@@ -568,8 +589,10 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     t.add_row("🚨 Vulnerabilities",  f"[{'red' if n_vuln else 'green'}]{n_vuln}[/{'red' if n_vuln else 'green'}]")
     t.add_row("🧨 CVEs",             str(cve.get("summary", {}).get("total_cves", 0)))
     t.add_row("🔑 JS Secrets",       str(fuzz.get("js_secrets_count", 0)))
+    t.add_row("Git secret findings", str(secret.get("total", len(secret.get("findings", [])))))
     t.add_row("CORS findings",       str(cors.get("total", len(cors.get("findings", [])))))
     t.add_row("Auth findings",       str(auth.get("total", len(auth.get("findings", [])))))
+    t.add_row("Injection findings",  str(injection.get("total", len(injection.get("findings", [])))))
     t.add_row("Takeover candidates", str(takeover.get("total", len(takeover.get("findings", [])))))
     t.add_row("Parameters",          str(params.get("total", 0)))
     t.add_row("Correlated priorities", str(corr.get("total", 0)))

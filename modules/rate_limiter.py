@@ -7,23 +7,14 @@ import time
 
 
 class TokenBucket:
-    """Shared token bucket used to keep aggregate request rate bounded."""
+    """Thread-safe token bucket scoped to one module instance."""
 
-    _instance = None
-    _instance_lock = threading.Lock()
-
-    def __new__(cls, rate: float = 100):
-        with cls._instance_lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._lock = threading.Lock()
-                cls._instance.rate = max(float(rate or 0), 0.0)
-                cls._instance.capacity = max(float(rate or 0), 1.0)
-                cls._instance.tokens = cls._instance.capacity
-                cls._instance.last_refill = time.monotonic()
-            elif rate:
-                cls._instance.configure(rate)
-        return cls._instance
+    def __init__(self, rate: float = 100):
+        self._lock = threading.Lock()
+        self.rate = max(float(rate or 0), 0.0)
+        self.capacity = max(float(rate or 0), 1.0)
+        self.tokens = self.capacity
+        self.last_refill = time.monotonic()
 
     def configure(self, rate: float) -> None:
         with self._lock:

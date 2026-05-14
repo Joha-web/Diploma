@@ -128,12 +128,7 @@ class BaseModule:
         self.output_dir = Path(output_dir)
         self.config = config
         self.domain = self._clean_domain(target)
-        rate = (
-            self.config.get("scan", {}).get("global_rate_limit")
-            or self.config.get("scan", {}).get("rate_limit")
-            or 100
-        )
-        self.rate_limiter = TokenBucket(rate=rate)
+        self.rate_limiter = TokenBucket(rate=self._module_rate_limit())
         self.audit = AuditLogger(self.output_dir)
         self.results = {}
         self.interrupted_commands: list[str] = []
@@ -141,6 +136,17 @@ class BaseModule:
         self.end_time = None
         self.module_dir = self.output_dir / self.name
         self.module_dir.mkdir(parents=True, exist_ok=True)
+
+    def _module_rate_limit(self) -> float:
+        scan_cfg = self.config.get("scan", {})
+        module_cfg = scan_cfg.get(self.name, {}) if isinstance(scan_cfg, dict) else {}
+        module_cfg = module_cfg if isinstance(module_cfg, dict) else {}
+        return (
+            module_cfg.get("rate_limit")
+            or scan_cfg.get("global_rate_limit")
+            or scan_cfg.get("rate_limit")
+            or 100
+        )
 
     # ── Tool availability ────────────────────────────────────────
     @staticmethod

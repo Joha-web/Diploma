@@ -63,8 +63,8 @@ def generate_json_report(session_dir: Path, target: str, results: dict, elapsed:
         })
 
     for module_name in (
-        "fuzzer", "cors_checker", "auth_probe", "sourcemap_analyzer",
-        "takeover_checker", "correlator",
+        "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
+        "injection_probe", "sourcemap_analyzer", "takeover_checker", "correlator",
     ):
         for finding in results.get(module_name, {}).get("findings", []):
             findings.append(_normalize_finding(module_name, finding))
@@ -118,6 +118,8 @@ def _summary(results: dict) -> dict:
     cve = results.get("cve_check", {})
     cors = results.get("cors_checker", {})
     auth = results.get("auth_probe", {})
+    secret = results.get("secret_scanner", {})
+    injection = results.get("injection_probe", {})
     sourcemaps = results.get("sourcemap_analyzer", {})
     takeover = results.get("takeover_checker", {})
     openapi = results.get("openapi_parser", {})
@@ -137,6 +139,8 @@ def _summary(results: dict) -> dict:
         "js_secrets": fuzz.get("js_secrets_count", 0),
         "cors_findings": cors.get("total", len(cors.get("findings", []))),
         "auth_findings": auth.get("total", len(auth.get("findings", []))),
+        "secret_findings": secret.get("total", len(secret.get("findings", []))),
+        "injection_findings": injection.get("total", len(injection.get("findings", []))),
         "sourcemap_findings": sourcemaps.get("total", len(sourcemaps.get("findings", []))),
         "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
         "openapi_specs": openapi.get("total_specs", 0),
@@ -200,8 +204,8 @@ def _port_set(results: dict) -> set[str]:
 def _finding_set(results: dict) -> set[str]:
     items = set()
     for module_name in (
-        "vulnscan", "fuzzer", "cors_checker", "auth_probe",
-        "sourcemap_analyzer", "takeover_checker", "correlator",
+        "vulnscan", "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
+        "injection_probe", "sourcemap_analyzer", "takeover_checker", "correlator",
     ):
         for finding in results.get(module_name, {}).get("findings", []):
             key = (

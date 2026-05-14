@@ -79,6 +79,15 @@ scan:
     asn_lookup_delay: 1.0       # seconds between ipinfo lookups
     exclude_cdn_ips: true       # when ASN lookup is enabled, keep CDN/cloud IPs out of portscan
 
+  # GitHub repository secret scanning
+  secret_scanner:
+    enabled: true
+    max_repos: 20
+    github_per_page: 20
+    github_timeout: 15
+    clone_timeout: 120
+    scan_timeout: 120
+
   # Port scanning
   ports:
     mode:         "top-1000"    # top-100 | top-1000 | full (65535)
@@ -132,6 +141,17 @@ scan:
     threads: 10
     delay: 2
     timeout: 1200
+
+  injection_probe:
+    enabled: true
+    max_targets: 50
+    max_ssti_requests: 250
+    max_ssrf_requests: 150
+    timeout: 15
+    ssrf_wait: 5
+    ssti: true
+    ssrf: true
+    inband_ssrf: false
 
   takeover_checker:
     enabled: true

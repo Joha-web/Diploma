@@ -1,4 +1,5 @@
 from modules.base import BaseModule
+from modules.rate_limiter import TokenBucket
 
 
 class MissingToolModule(BaseModule):
@@ -79,3 +80,25 @@ def test_execute_persists_skipped_result_when_required_tools_missing(tmp_path):
     assert result["reason"] == "no_tools"
     assert "elapsed_seconds" in result
     assert results_file.exists()
+
+
+def test_token_bucket_instances_are_independent():
+    first = TokenBucket(rate=1)
+    second = TokenBucket(rate=25)
+
+    assert first is not second
+    assert first.rate == 1
+    assert second.rate == 25
+
+
+def test_base_module_uses_per_module_rate_limit(tmp_path):
+    class CustomRateModule(BaseModule):
+        name = "custom_rate"
+
+    module = CustomRateModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"global_rate_limit": 50, "custom_rate": {"rate_limit": 7}}},
+    )
+
+    assert module.rate_limiter.rate == 7

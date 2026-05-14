@@ -448,6 +448,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 
   <div class="sidebar-section">Infrastructure</div>
   <a href="#subdomains"><span class="dot"></span> Subdomains</a>
+  {% if secret.findings %}<a href="#secret-scanner"><span class="dot"></span> Git Secrets</a>{% endif %}
   <a href="#ports"><span class="dot"></span> Port Scan</a>
   <a href="#tech"><span class="dot"></span> Tech Stack</a>
 
@@ -458,6 +459,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <a href="#secrets"><span class="dot"></span> JS Secrets</a>
   {% if cors.findings %}<a href="#cors"><span class="dot"></span> CORS</a>{% endif %}
   {% if auth.findings %}<a href="#auth"><span class="dot"></span> Auth</a>{% endif %}
+  {% if injection.findings %}<a href="#injection-probe"><span class="dot"></span> Injection Probe</a>{% endif %}
   {% if sourcemap.maps %}<a href="#sourcemaps"><span class="dot"></span> Source Maps</a>{% endif %}
   {% if openapi.specs %}<a href="#openapi"><span class="dot"></span> OpenAPI</a>{% endif %}
   {% if params.parameters %}<a href="#parameters"><span class="dot"></span> Parameters</a>{% endif %}
@@ -558,6 +560,14 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div class="stat-card">
     <div class="val {% if summary.email_findings > 0 %}warn{% endif %}">{{ summary.email_findings }}</div>
     <div class="lbl">Email DNS</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.secret_findings > 0 %}danger{% endif %}">{{ summary.secret_findings }}</div>
+    <div class="lbl">Git Secrets</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.injection_findings > 0 %}danger{% endif %}">{{ summary.injection_findings }}</div>
+    <div class="lbl">Injection</div>
   </div>
   <div class="stat-card">
     <div class="val {% if summary.takeover_findings > 0 %}danger{% endif %}">{{ summary.takeover_findings }}</div>
@@ -689,10 +699,12 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 
 <!-- P2/P3 Findings -->
 {% set extra_modules = [
+  ('secret-scanner', 'Git Secret Findings', secret.findings),
   ('fuzzer-findings', 'Fuzzer Findings', fuzz.findings),
   ('email-security', 'Email DNS Security', email_security.findings),
   ('cors', 'CORS Findings', cors.findings),
   ('auth', 'Auth Findings', auth.findings),
+  ('injection-probe', 'Injection Probe Findings', injection.findings),
   ('sourcemaps', 'Source Map Findings', sourcemap.findings),
   ('takeover', 'Subdomain Takeover Candidates', takeover.findings),
   ('correlator', 'Cross-Finding Correlation', corr.findings)

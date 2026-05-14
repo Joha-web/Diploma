@@ -71,6 +71,14 @@ scan:
     asn_lookup_delay: 1.0
     exclude_cdn_ips: true
 
+  secret_scanner:
+    enabled: true
+    max_repos: 20
+    github_per_page: 20
+    github_timeout: 15
+    clone_timeout: 120
+    scan_timeout: 120
+
   ports:
     mode: "top-1000"
     scanner: "nmap"
@@ -121,6 +129,17 @@ scan:
     threads: 10
     delay: 2
     timeout: 1200
+
+  injection_probe:
+    enabled: true
+    max_targets: 50
+    max_ssti_requests: 250
+    max_ssrf_requests: 150
+    timeout: 15
+    ssrf_wait: 5
+    ssti: true
+    ssrf: true
+    inband_ssrf: false
 
   takeover_checker:
     enabled: true

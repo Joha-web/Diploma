@@ -63,6 +63,7 @@ class HTMLReportGenerator:
 
     def _build_context(self, r: dict, ai_analysis: str) -> dict:
         recon = r.get("recon", {})
+        secret = r.get("secret_scanner", {})
         web   = r.get("webdetect", {})
         ports = r.get("portscan", {})
         tech  = r.get("techstack", {})
@@ -78,6 +79,7 @@ class HTMLReportGenerator:
         takeover = r.get("takeover_checker", {})
         openapi = r.get("openapi_parser", {})
         params = r.get("parameter_discovery", {})
+        injection = r.get("injection_probe", {})
         corr = r.get("correlator", {})
         email_security = recon.get("email_security", {}) or {}
 
@@ -111,6 +113,8 @@ class HTMLReportGenerator:
             "cors_findings":   cors.get("total", len(cors.get("findings", []))),
             "auth_findings":   auth.get("total", len(auth.get("findings", []))),
             "email_findings":  len(email_security.get("findings", [])),
+            "secret_findings": secret.get("total", len(secret.get("findings", []))),
+            "injection_findings": injection.get("total", len(injection.get("findings", []))),
             "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
             "parameters":      params.get("total", 0),
             "correlated":      corr.get("total", 0),
@@ -127,6 +131,7 @@ class HTMLReportGenerator:
             "date":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "duration":    self.duration,
             "recon":       recon,
+            "secret":      secret,
             "web":         web,
             "ports":       ports,
             "tech":        tech,
@@ -142,6 +147,7 @@ class HTMLReportGenerator:
             "takeover":    takeover,
             "openapi":     openapi,
             "params":      params,
+            "injection":   injection,
             "corr":        corr,
             "email_security": email_security,
             "diff":        r.get("diff", {}),
