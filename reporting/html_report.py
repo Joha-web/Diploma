@@ -79,6 +79,7 @@ class HTMLReportGenerator:
         openapi = r.get("openapi_parser", {})
         params = r.get("parameter_discovery", {})
         corr = r.get("correlator", {})
+        email_security = recon.get("email_security", {}) or {}
 
         # Ensure by_severity exists
         if "by_severity" not in vuln:
@@ -109,6 +110,7 @@ class HTMLReportGenerator:
             "js_secrets":      fuzz.get("js_secrets_count", 0),
             "cors_findings":   cors.get("total", len(cors.get("findings", []))),
             "auth_findings":   auth.get("total", len(auth.get("findings", []))),
+            "email_findings":  len(email_security.get("findings", [])),
             "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
             "parameters":      params.get("total", 0),
             "correlated":      corr.get("total", 0),
@@ -141,6 +143,7 @@ class HTMLReportGenerator:
             "openapi":     openapi,
             "params":      params,
             "corr":        corr,
+            "email_security": email_security,
             "diff":        r.get("diff", {}),
             "ai_analysis": ai_html,
             "summary":     summary,

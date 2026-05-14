@@ -1,3 +1,4 @@
+import modules.recon as recon_module
 from modules.recon import ReconModule
 
 
@@ -182,3 +183,32 @@ def test_asn_filter_excludes_cdn_cloud_ips_from_scan_targets(tmp_path):
 
     assert scan_ips == ["198.51.100.20"]
     assert (tmp_path / "recon" / "dns" / "excluded_cdn_ips.json").exists()
+
+
+def test_asn_lookup_spaces_ipinfo_requests(tmp_path, monkeypatch):
+    module = ReconModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"subdomains": {
+            "use_asn_lookup": True,
+            "max_asn_lookups": 2,
+            "asn_lookup_delay": 0.25,
+        }}},
+    )
+    module.resolved_ips = {"192.0.2.10", "198.51.100.20"}
+    sleeps = []
+    urls = []
+
+    monkeypatch.setattr(recon_module.time, "sleep", lambda delay: sleeps.append(delay))
+
+    def fake_request_json(source, url, **kwargs):
+        urls.append(url)
+        return {"org": "AS64500 Example", "country": "ZZ"}
+
+    monkeypatch.setattr(module, "_request_json", fake_request_json)
+
+    result = module._asn_lookup()
+
+    assert len(result) == 2
+    assert len(urls) == 2
+    assert sleeps == [0.25]

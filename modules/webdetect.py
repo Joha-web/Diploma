@@ -227,14 +227,53 @@ class WebdetectModule(BaseModule):
     @staticmethod
     def _match_screenshot(url: str, screenshots: list[dict]) -> dict | None:
         parsed = urlparse(url)
-        host_token = re.sub(r"[^a-z0-9]+", "", (parsed.hostname or "").lower())
+        hostname = (parsed.hostname or "").lower()
+        host_token = WebdetectModule._compact_token(hostname)
         if not host_token:
             return None
+        port = parsed.port
+        default_port = (parsed.scheme == "http" and port == 80) or (parsed.scheme == "https" and port == 443)
+        netloc_token = f"{host_token}{port}" if port and not default_port else host_token
 
-        best = None
+        scored: list[tuple[int, dict]] = []
         for shot in screenshots:
-            file_token = re.sub(r"[^a-z0-9]+", "", shot.get("filename", "").lower())
-            if host_token in file_token:
-                best = shot
-                break
-        return best
+            filename = shot.get("filename", "")
+            file_host_token = WebdetectModule._screenshot_host_token(filename)
+            file_token = WebdetectModule._compact_token(filename)
+            if port is None and WebdetectModule._looks_like_port_variant(file_host_token, host_token):
+                continue
+            if file_host_token == netloc_token:
+                scored.append((0, shot))
+            elif file_host_token == host_token:
+                scored.append((1, shot))
+            elif file_host_token.startswith(netloc_token):
+                scored.append((2, shot))
+            elif file_host_token.startswith(host_token):
+                scored.append((3, shot))
+            elif file_token.startswith((f"http{host_token}", f"https{host_token}")):
+                scored.append((4, shot))
+            elif hostname.count(".") >= 2 and host_token in file_token:
+                scored.append((5, shot))
+
+        if not scored:
+            return None
+        scored.sort(key=lambda item: item[0])
+        return scored[0][1]
+
+    @staticmethod
+    def _compact_token(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+    @staticmethod
+    def _screenshot_host_token(filename: str) -> str:
+        stem = Path(str(filename or "")).stem.lower()
+        stem = re.sub(r"^(?:https?|httpx?)[^a-z0-9]+", "", stem)
+        stem = stem.strip("._- ")
+        return WebdetectModule._compact_token(stem)
+
+    @staticmethod
+    def _looks_like_port_variant(file_host_token: str, host_token: str) -> bool:
+        if not file_host_token.startswith(host_token):
+            return False
+        suffix = file_host_token[len(host_token):]
+        return bool(suffix) and suffix.isdigit()

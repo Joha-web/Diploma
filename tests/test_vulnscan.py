@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import modules.vulnscan as vulnscan_module
 from modules.vulnscan import VulnScanModule
 
 
@@ -55,3 +56,55 @@ def test_interactsh_callback_parser_and_server_derivation(tmp_path):
 
     assert callback == "abc123.oast.pro"
     assert module._server_from_callback(callback) == "https://oast.pro"
+
+
+def test_waf_detection_selects_waf_rate_limit(tmp_path, monkeypatch):
+    module = VulnScanModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"nuclei": {"rate_limit": 100, "waf_rate_limit": 7}}},
+        tech_results={"hosts": [{"waf": ["Cloudflare"], "technologies": []}]},
+    )
+    captured = {}
+    monkeypatch.setattr(module, "exec", lambda cmd, timeout=300: captured.setdefault("cmd", cmd))
+    monkeypatch.setattr(module, "_line_count", lambda path: 1)
+    monkeypatch.setattr(module, "has_tool", lambda tool: False)
+
+    module._run_nuclei(Path("targets.txt"), Path("out.jsonl"))
+
+    rl_index = captured["cmd"].index("-rl")
+    assert captured["cmd"][rl_index + 1] == "7"
+    assert module.nuclei_runtime["rate_limit"] == 7
+    assert module.nuclei_runtime["waf_detected"] is True
+
+
+def test_oob_process_is_kept_out_of_json_runtime(tmp_path, monkeypatch):
+    module = VulnScanModule("example.com", str(tmp_path), {})
+
+    class FakeProcess:
+        pid = 12345
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=0):
+            return 0
+
+        def kill(self):
+            return None
+
+    fake_proc = FakeProcess()
+    monkeypatch.setattr(vulnscan_module.subprocess, "Popen", lambda *args, **kwargs: fake_proc)
+    monkeypatch.setattr(module, "_read_interactsh_callback", lambda proc, timeout=10: "abc123.oast.pro")
+    monkeypatch.setattr(vulnscan_module.os, "killpg", lambda pid, sig: None)
+
+    runtime = module._start_interactsh_client({})
+
+    assert runtime["client_started"] is True
+    assert runtime["callback_url"] == "abc123.oast.pro"
+    assert "_process" not in runtime
+    assert module._oob_process is fake_proc
+
+    module._stop_oob_client(runtime)
+
+    assert module._oob_process is None

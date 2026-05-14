@@ -468,6 +468,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <a href="#ssl"><span class="dot"></span> SSL / Headers</a>
 
   <div class="sidebar-section">Info</div>
+  {% if email_security.findings %}<a href="#email-security"><span class="dot"></span> Email DNS</a>{% endif %}
   {% if recon.dns_records %}<a href="#dns"><span class="dot"></span> DNS Records</a>{% endif %}
   <a href="#whois"><span class="dot"></span> WHOIS</a>
 </nav>
@@ -553,6 +554,10 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div class="stat-card">
     <div class="val {% if summary.auth_findings > 0 %}warn{% endif %}">{{ summary.auth_findings }}</div>
     <div class="lbl">Auth Findings</div>
+  </div>
+  <div class="stat-card">
+    <div class="val {% if summary.email_findings > 0 %}warn{% endif %}">{{ summary.email_findings }}</div>
+    <div class="lbl">Email DNS</div>
   </div>
   <div class="stat-card">
     <div class="val {% if summary.takeover_findings > 0 %}danger{% endif %}">{{ summary.takeover_findings }}</div>
@@ -685,6 +690,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 <!-- P2/P3 Findings -->
 {% set extra_modules = [
   ('fuzzer-findings', 'Fuzzer Findings', fuzz.findings),
+  ('email-security', 'Email DNS Security', email_security.findings),
   ('cors', 'CORS Findings', cors.findings),
   ('auth', 'Auth Findings', auth.findings),
   ('sourcemaps', 'Source Map Findings', sourcemap.findings),

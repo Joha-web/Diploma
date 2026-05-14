@@ -31,6 +31,7 @@ class VulnScanModule(BaseModule):
         self.openapi_results = openapi_results or {}
         self.tech_results = tech_results or {}
         self.nuclei_runtime: dict = {}
+        self._oob_process: subprocess.Popen | None = None
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -268,7 +269,7 @@ class VulnScanModule(BaseModule):
             if os.name != "nt":
                 popen_kwargs["start_new_session"] = True
             proc = subprocess.Popen(cmd, **popen_kwargs)
-            runtime["_process"] = proc
+            self._oob_process = proc
             runtime["client_started"] = True
             runtime["client_pid"] = proc.pid
         except Exception as exc:
@@ -276,7 +277,7 @@ class VulnScanModule(BaseModule):
             return runtime
 
         callback = self._read_interactsh_callback(
-            runtime["_process"],
+            proc,
             timeout=float(oob_cfg.get("registration_timeout", 10)),
         )
         if callback:
@@ -321,7 +322,8 @@ class VulnScanModule(BaseModule):
         return "https://" + ".".join(labels[-2:])
 
     def _stop_oob_client(self, runtime: dict) -> None:
-        proc = runtime.pop("_process", None)
+        proc = self._oob_process
+        self._oob_process = None
         if not proc or proc.poll() is not None:
             return
         try:

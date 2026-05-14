@@ -5,6 +5,7 @@ The correlator consumes completed module outputs and emits manual-review
 priorities when separate weak signals become stronger together.
 """
 
+import re
 from urllib.parse import urlparse
 
 from modules.base import BaseModule
@@ -34,6 +35,9 @@ class CorrelatorModule(BaseModule):
             self._rule_public_cloud_listing,
             self._rule_graphql_mutations,
             self._rule_email_spoofing,
+            self._rule_exposed_datastore,
+            self._rule_docker_api_exposed,
+            self._rule_high_confidence_takeover,
         ):
             result = rule()
             if result:
@@ -138,6 +142,111 @@ class CorrelatorModule(BaseModule):
             confidence=0.9,
         )
 
+    def _rule_exposed_datastore(self) -> dict | None:
+        ports = self._open_ports({6379: "Redis", 9200: "Elasticsearch"})
+        if not ports:
+            return None
+
+        evidence_text = "\n".join(self._evidence_strings()).lower()
+        auth_markers = (
+            "no auth", "no-auth", "no authentication", "without authentication",
+            "unauthenticated", "authentication disabled", "anonymous access",
+        )
+        datastore_markers = ("redis", "elasticsearch", "_cluster", "_cat/indices")
+        port_text = "\n".join(
+            " ".join(str(port.get(key, "")) for key in ("service", "product", "extrainfo"))
+            for port in ports
+        ).lower()
+        has_datastore_marker = any(
+            marker in evidence_text or marker in port_text
+            for marker in datastore_markers
+        )
+        has_no_auth_marker = any(marker in evidence_text for marker in auth_markers)
+        elastic_http_open = any(port.get("port") == 9200 for port in ports) and any(
+            host.get("status") == 200 for host in self._web_hosts_on_port(9200)
+        )
+        if not has_datastore_marker or not (has_no_auth_marker or elastic_http_open):
+            return None
+
+        return self._finding(
+            rule_id="exposed_datastore_no_auth_indicators",
+            severity="HIGH",
+            title="Datastore port exposed with no-auth indicators",
+            description=(
+                "A Redis or Elasticsearch service is exposed and scan evidence suggests "
+                "anonymous or unauthenticated access. Validate access controls immediately."
+            ),
+            evidence={
+                "ports": ports,
+                "web_hosts": self._web_hosts_on_port(9200),
+                "matched_markers": [
+                    marker for marker in auth_markers + datastore_markers
+                    if marker in evidence_text
+                ][:20],
+            },
+            confidence=0.85,
+        )
+
+    def _rule_docker_api_exposed(self) -> dict | None:
+        ports = self._open_ports({2375: "Docker API"})
+        if not ports:
+            return None
+
+        evidence_text = "\n".join(self._evidence_strings()).lower()
+        normalized_text = evidence_text.replace('\\"', '"')
+        docker_marker = '"message":"page not found"'
+        if not (
+            re.search(r'"message"\s*:\s*"page not found"', normalized_text)
+            or "docker api" in normalized_text
+        ):
+            return None
+
+        return self._finding(
+            rule_id="docker_api_exposed",
+            severity="CRITICAL",
+            title="Docker API exposure indicators detected",
+            description=(
+                "TCP/2375 is open and scan evidence matches Docker API behavior. "
+                "Unauthenticated Docker API access can lead to host compromise."
+            ),
+            evidence={
+                "ports": ports,
+                "matched_marker": docker_marker if "page not found" in normalized_text else "docker api",
+            },
+            confidence=0.9,
+        )
+
+    def _rule_high_confidence_takeover(self) -> dict | None:
+        matches = []
+        for finding in self.all_results.get("takeover_checker", {}).get("findings", []) or []:
+            evidence = finding.get("evidence", {}) or {}
+            cnames = evidence.get("cnames", []) or []
+            body = evidence.get("body_fingerprint", "")
+            confidence = float(finding.get("confidence", 0) or 0)
+            if finding.get("severity") == "HIGH" and confidence >= 0.8 and cnames and body:
+                matches.append({
+                    "host": evidence.get("host", finding.get("url", "")),
+                    "url": finding.get("url", ""),
+                    "provider": finding.get("provider", ""),
+                    "cnames": cnames,
+                    "body_fingerprint": body,
+                    "confidence": confidence,
+                })
+        if not matches:
+            return None
+
+        return self._finding(
+            rule_id="high_confidence_subdomain_takeover",
+            severity="CRITICAL",
+            title="High-confidence subdomain takeover candidate",
+            description=(
+                "A takeover checker finding has both third-party CNAME evidence and "
+                "a provider body fingerprint. Treat this as a priority manual validation item."
+            ),
+            evidence={"takeover": matches[:20]},
+            confidence=0.95,
+        )
+
     def _admin_urls(self) -> list[str]:
         classified = self.all_results.get("fuzzer", {}).get("classified", {}) or {}
         urls = []
@@ -153,6 +262,9 @@ class CorrelatorModule(BaseModule):
     def _admin_ports(self) -> list[dict]:
         configured = self.config.get("scan", {}).get("correlator", {}).get("admin_ports")
         admin_port_set = {int(p) for p in (configured or [8080, 8081, 8443, 9000, 9443, 10000])}
+        return self._open_ports({port: "admin" for port in admin_port_set})
+
+    def _open_ports(self, interesting_ports: dict[int, str]) -> list[dict]:
         matches: list[dict] = []
         for host in self.all_results.get("portscan", {}).get("hosts", []) or []:
             ip = str(host.get("ip", ""))
@@ -161,14 +273,58 @@ class CorrelatorModule(BaseModule):
                     port_num = int(port.get("port", 0))
                 except (TypeError, ValueError):
                     continue
-                if port_num in admin_port_set:
+                if port_num in interesting_ports:
                     matches.append({
                         "ip": ip,
                         "port": port_num,
-                        "service": port.get("service", ""),
+                        "service": port.get("service", "") or interesting_ports[port_num],
                         "product": port.get("product", ""),
+                        "version": port.get("version", ""),
+                        "extrainfo": port.get("extrainfo", ""),
                     })
         return matches
+
+    def _web_hosts_on_port(self, port: int) -> list[dict]:
+        matches: list[dict] = []
+        for host in self.all_results.get("webdetect", {}).get("live_hosts", []) or []:
+            url = str(host.get("url", ""))
+            parsed = urlparse(url)
+            if parsed.port == port:
+                matches.append({
+                    "url": url,
+                    "status": host.get("status", 0),
+                    "title": host.get("title", ""),
+                    "server": host.get("server", ""),
+                })
+        return matches
+
+    def _evidence_strings(self) -> list[str]:
+        values: list[str] = []
+        for module_name in (
+            "portscan", "webdetect", "fuzzer", "vulnscan", "cve_check",
+            "takeover_checker", "openapi_parser", "parameter_discovery",
+        ):
+            data = self.all_results.get(module_name, {})
+            if data:
+                values.extend(self._string_values(data))
+        return values
+
+    @classmethod
+    def _string_values(cls, value) -> list[str]:
+        if isinstance(value, dict):
+            result: list[str] = []
+            for key, item in value.items():
+                result.append(str(key))
+                result.extend(cls._string_values(item))
+            return result
+        if isinstance(value, (list, tuple, set)):
+            result: list[str] = []
+            for item in value:
+                result.extend(cls._string_values(item))
+            return result
+        if value is None:
+            return []
+        return [str(value)]
 
     def _wafs(self) -> list[str]:
         wafs: set[str] = set()
@@ -220,7 +376,7 @@ class CorrelatorModule(BaseModule):
 
     @staticmethod
     def _primary_url(evidence: dict) -> str:
-        for key in ("admin_urls", "assets", "graphql"):
+        for key in ("admin_urls", "assets", "graphql", "takeover"):
             values = evidence.get(key, [])
             if not values:
                 continue
@@ -229,6 +385,9 @@ class CorrelatorModule(BaseModule):
                 return first
             if isinstance(first, dict):
                 return first.get("url") or first.get("endpoint") or ""
+        for item in evidence.get("ports", []) or []:
+            if isinstance(item, dict) and item.get("ip") and item.get("port"):
+                return f"{item.get('ip')}:{item.get('port')}"
         for item in evidence.get("cve_context", []) or []:
             url = item.get("url", "") if isinstance(item, dict) else ""
             if url:

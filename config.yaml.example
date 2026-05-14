@@ -68,6 +68,7 @@ scan:
     active_timeout: 900
     use_asn_lookup: false
     max_asn_lookups: 40
+    asn_lookup_delay: 1.0
     exclude_cdn_ips: true
 
   ports:
@@ -87,6 +88,7 @@ scan:
     graphql_introspection: true
     robots_sitemap: true
     cloud_assets: true
+    cloud_listing_threads: 10
     reuse_host_outputs: true
     extensions: [".php", ".asp", ".aspx", ".jsp", ".html", ".js", ".json"]
 

@@ -694,8 +694,16 @@ class ReconModule(BaseModule):
                 continue
             by_net.setdefault(net, ip)
 
+        try:
+            delay = float(cfg.get("asn_lookup_delay", 1.0))
+        except (TypeError, ValueError):
+            delay = 1.0
+        lookup_targets = list(by_net.items())[:max_lookups]
+
         results: list[dict] = []
-        for net, sample_ip in list(by_net.items())[:max_lookups]:
+        for idx, (net, sample_ip) in enumerate(lookup_targets):
+            if idx and delay > 0:
+                time.sleep(delay)
             data = self._request_json(
                 "ipinfo",
                 f"https://ipinfo.io/{sample_ip}/json",

@@ -8,6 +8,7 @@ import json
 import glob
 import time
 import urllib3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from xml.etree import ElementTree
@@ -551,11 +552,14 @@ class FuzzerModule(BaseModule):
             if not isinstance(typ, dict) or typ.get("name") != mutation_type:
                 continue
             fields = typ.get("fields", []) or []
-            return sorted({
-                str(field.get("name", "")).strip()
-                for field in fields
-                if isinstance(field, dict) and field.get("name")
-            })
+            names: set[str] = set()
+            for field in fields:
+                if not isinstance(field, dict):
+                    continue
+                name = str(field.get("name", "")).strip()
+                if name and not name.startswith("__"):
+                    names.add(name)
+            return sorted(names)
         return []
 
     @staticmethod
@@ -589,8 +593,30 @@ class FuzzerModule(BaseModule):
             assets.extend(self._extract_cloud_assets(str(item), source="endpoint"))
 
         deduped = self._dedupe_cloud_assets(assets)
+        if deduped:
+            cfg = self.config.get("scan", {}).get("fuzzing", {})
+            try:
+                configured_workers = int(cfg.get("cloud_listing_threads", 10))
+            except (TypeError, ValueError):
+                configured_workers = 10
+            workers = min(max(1, configured_workers), len(deduped))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(self._check_cloud_listing, asset): asset
+                    for asset in deduped
+                }
+                for future in as_completed(futures):
+                    asset = futures[future]
+                    try:
+                        asset["listing"] = future.result()
+                    except Exception as exc:
+                        asset["listing"] = {
+                            "checked": True,
+                            "public": False,
+                            "error": str(exc),
+                        }
+
         for asset in deduped:
-            asset["listing"] = self._check_cloud_listing(asset)
             if asset["listing"].get("public"):
                 asset["severity"] = "CRITICAL"
                 self.warn(f"  Public cloud listing: {asset['provider']} {asset['bucket']}")
