@@ -10,6 +10,7 @@ from modules.base import BaseModule
 
 
 REDIRECT_PARAMS = ("next", "url", "redirect", "redirect_url", "return", "returnUrl", "continue", "dest", "destination")
+REDIRECT_PARAM_NAMES = {name.lower() for name in REDIRECT_PARAMS}
 
 
 class OpenRedirectProbeModule(BaseModule):
@@ -44,7 +45,7 @@ class OpenRedirectProbeModule(BaseModule):
     def _probe(self, url: str, session: requests.Session, cfg: dict) -> dict | None:
         parsed = urlparse(url)
         params = [key for key, _ in parse_qsl(parsed.query, keep_blank_values=True)]
-        names = [name for name in params if name in REDIRECT_PARAMS]
+        names = [name for name in params if name.lower() in REDIRECT_PARAM_NAMES]
         if not names:
             names = [name for name in REDIRECT_PARAMS if name.lower() in parsed.path.lower()]
         if not names:
@@ -58,7 +59,7 @@ class OpenRedirectProbeModule(BaseModule):
             if resp is None:
                 continue
             location = resp.headers.get("Location", "")
-            if "attacker.reconx.invalid" in location:
+            if self._location_is_attacker(location):
                 return self._finding("open_redirect", "HIGH", probe_url, "Open redirect parameter accepted", {
                     "param": name,
                     "location": location,
@@ -92,6 +93,11 @@ class OpenRedirectProbeModule(BaseModule):
         if not replaced:
             result.append((name, value))
         return urlunparse(parsed._replace(query=urlencode(result)))
+
+    @staticmethod
+    def _location_is_attacker(location: str) -> bool:
+        parsed = urlparse(str(location or ""))
+        return (parsed.hostname or "").lower() == "attacker.reconx.invalid"
 
     @staticmethod
     def _dedup(findings: list[dict]) -> list[dict]:

@@ -21,6 +21,7 @@ class ReconModule(BaseModule):
     name = "recon"
     description = "DNS & Subdomain Enumeration"
     required_tools = ["dig"]
+    TRANSIENT_API_STATUSES = {429, 500, 502, 503, 504}
 
     def __init__(self, target: str, output_dir: str, config: dict):
         super().__init__(target, output_dir, config)
@@ -124,13 +125,36 @@ class ReconModule(BaseModule):
         records: dict = {}
         for rtype in ("A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA"):
             r = self.exec(["dig", "+short", rtype, self.domain], timeout=15)
-            if r.stdout.strip():
-                records[rtype] = [x.strip() for x in r.stdout.splitlines() if x.strip()]
+            lines = self._clean_dns_lines(r.stdout)
+            if lines:
+                records[rtype] = lines
         dmarc = self.exec(["dig", "+short", "TXT", f"_dmarc.{self.domain}"], timeout=15)
-        if dmarc.stdout.strip():
-            records["DMARC_TXT"] = [x.strip() for x in dmarc.stdout.splitlines() if x.strip()]
+        dmarc_lines = self._clean_dns_lines(dmarc.stdout)
+        if dmarc_lines:
+            records["DMARC_TXT"] = dmarc_lines
         self.save_json(records, "dns/dns_records.json")
         return records
+
+    @staticmethod
+    def _clean_dns_lines(output: str) -> list[str]:
+        error_markers = (
+            "timed out",
+            "servfail",
+            "nxdomain",
+            "communications error",
+            "connection refused",
+            "no servers could be reached",
+        )
+        lines: list[str] = []
+        for raw in str(output or "").splitlines():
+            line = raw.strip()
+            lowered = line.lower()
+            if not line or line.startswith(";;"):
+                continue
+            if any(marker in lowered for marker in error_markers):
+                continue
+            lines.append(line)
+        return lines
 
     def _analyze_email_security(self, records: dict) -> dict:
         """Extract SPF/DMARC posture from already-collected DNS records."""
@@ -305,18 +329,101 @@ class ReconModule(BaseModule):
 
     # ── API sources ───────────────────────────────────────────────────────────
 
-    def _get_text(self, source: str, url: str, timeout: int = 20) -> str | None:
-        r = self.http_get(
-            url,
-            enforce_scope=False,
-            timeout=timeout,
-            headers={"User-Agent": "ReconX/2.0"},
-        )
-        if r is None:
-            self.warn(f"  {source}: request failed")
+    def _api_retry_config(self) -> dict:
+        cfg = self.config.get("scan", {}).get("subdomains", {})
+        return {
+            "retries": max(0, int(cfg.get("api_retries", 1))),
+            "delay": max(0.0, float(cfg.get("api_retry_delay", 1.0))),
+            "backoff": max(1.0, float(cfg.get("api_retry_backoff", 2.0))),
+            "max_delay": max(0.0, float(cfg.get("api_retry_max_delay", 10.0))),
+        }
+
+    @staticmethod
+    def _retry_after_delay(response, fallback: float, max_delay: float) -> float:
+        retry_after = str(response.headers.get("Retry-After", "")).strip() if response is not None else ""
+        if retry_after.isdigit():
+            return min(float(retry_after), max_delay)
+        return min(fallback, max_delay)
+
+    def _warn_api_status(self, source: str, status_code: int, auth_note: str = "") -> None:
+        suffix = f" ({auth_note})" if auth_note else ""
+        if status_code == 429:
+            self.warn(f"  {source}: rate limited (HTTP 429)")
+        elif status_code in (401, 403):
+            self.warn(f"  {source}: authentication/access failed (HTTP {status_code}){suffix}")
+        elif status_code in self.TRANSIENT_API_STATUSES:
+            self.warn(f"  {source}: temporary API error (HTTP {status_code})")
+        else:
+            self.warn(f"  {source}: HTTP {status_code}")
+
+    def _api_http_request(
+        self,
+        method: str,
+        source: str,
+        url: str,
+        timeout: int = 20,
+        headers: dict | None = None,
+        params: dict | None = None,
+        auth=None,
+        payload: dict | None = None,
+        auth_note: str = "",
+    ):
+        retry_cfg = self._api_retry_config()
+        attempts = retry_cfg["retries"] + 1
+        delay = retry_cfg["delay"]
+        method = method.upper()
+
+        for attempt in range(1, attempts + 1):
+            if method == "POST":
+                response = self.http_post(
+                    url,
+                    safe_readonly=True,
+                    enforce_scope=False,
+                    timeout=timeout,
+                    headers=headers or {"User-Agent": "ReconX/2.0"},
+                    params=params,
+                    json=payload or {},
+                )
+            else:
+                response = self.http_get(
+                    url,
+                    enforce_scope=False,
+                    timeout=timeout,
+                    headers=headers or {"User-Agent": "ReconX/2.0"},
+                    params=params,
+                    auth=auth,
+                )
+
+            if response is None:
+                if attempt < attempts:
+                    sleep_for = min(delay, retry_cfg["max_delay"])
+                    self.warn(f"  {source}: request failed, retrying in {sleep_for:g}s")
+                    if sleep_for:
+                        time.sleep(sleep_for)
+                    delay *= retry_cfg["backoff"]
+                    continue
+                self.warn(f"  {source}: request failed")
+                return None
+
+            if response.status_code == 200:
+                return response
+
+            if response.status_code in self.TRANSIENT_API_STATUSES and attempt < attempts:
+                sleep_for = self._retry_after_delay(response, delay, retry_cfg["max_delay"])
+                self.warn(f"  {source}: HTTP {response.status_code}, retrying in {sleep_for:g}s")
+                if sleep_for:
+                    time.sleep(sleep_for)
+                delay *= retry_cfg["backoff"]
+                continue
+
+            self._warn_api_status(source, response.status_code, auth_note=auth_note)
             return None
-        if r.status_code != 200:
-            self.warn(f"  {source}: HTTP {r.status_code}")
+
+        return None
+
+    def _get_text(self, source: str, url: str, timeout: int = 20) -> str | None:
+        r = self._api_http_request("GET", source, url, timeout=timeout)
+        if r is None:
             return None
         return r.text or ""
 
@@ -342,23 +449,19 @@ class ReconModule(BaseModule):
         headers: dict | None = None,
         params: dict | None = None,
         auth=None,
+        auth_note: str = "",
     ):
-        r = self.http_get(
+        r = self._api_http_request(
+            "GET",
+            source,
             url,
-            enforce_scope=False,
             timeout=timeout,
-            headers=headers or {"User-Agent": "ReconX/2.0"},
+            headers=headers,
             params=params,
             auth=auth,
+            auth_note=auth_note,
         )
         if r is None:
-            self.warn(f"  {source}: request failed")
-            return None
-        if r.status_code in (401, 403):
-            self.warn(f"  {source}: authentication failed or rate limited (HTTP {r.status_code})")
-            return None
-        if r.status_code != 200:
-            self.warn(f"  {source}: HTTP {r.status_code}")
             return None
         try:
             return r.json()
@@ -374,24 +477,19 @@ class ReconModule(BaseModule):
         timeout: int = 20,
         headers: dict | None = None,
         params: dict | None = None,
+        auth_note: str = "",
     ):
-        r = self.http_post(
+        r = self._api_http_request(
+            "POST",
+            source,
             url,
-            safe_readonly=True,
-            enforce_scope=False,
             timeout=timeout,
-            headers=headers or {"User-Agent": "ReconX/2.0"},
+            headers=headers,
             params=params,
-            json=payload,
+            payload=payload,
+            auth_note=auth_note,
         )
         if r is None:
-            self.warn(f"  {source}: request failed")
-            return None
-        if r.status_code in (401, 403):
-            self.warn(f"  {source}: authentication failed or rate limited (HTTP {r.status_code})")
-            return None
-        if r.status_code != 200:
-            self.warn(f"  {source}: HTTP {r.status_code}")
             return None
         try:
             return r.json()
@@ -496,6 +594,7 @@ class ReconModule(BaseModule):
         if not api_secret:
             return []
         if api_id:
+            auth_note = "using CENSYS_API_ID + CENSYS_API_SECRET legacy credentials"
             data = self._request_json(
                 "censys",
                 "https://search.censys.io/api/v2/hosts/search",
@@ -507,8 +606,13 @@ class ReconModule(BaseModule):
                 },
                 auth=HTTPBasicAuth(api_id, api_secret),
                 timeout=30,
+                auth_note=auth_note,
             )
         else:
+            auth_note = (
+                "using CENSYS_API_SECRET as Platform PAT; if this is a legacy secret, "
+                "set CENSYS_API_ID too"
+            )
             data = self._post_json(
                 "censys",
                 "https://api.platform.censys.io/v3/global/search/query",
@@ -523,6 +627,7 @@ class ReconModule(BaseModule):
                     "User-Agent": "ReconX/2.0",
                 },
                 timeout=30,
+                auth_note=auth_note,
             )
         if not isinstance(data, dict):
             return []
@@ -655,7 +760,12 @@ class ReconModule(BaseModule):
              "-title", "-status-code", "-tech-detect",
              "-follow-redirects", "-threads", "50", "-silent",
              "-o", str(out_file)], timeout=600)
-        self.live_http = self.filter_in_scope_urls(self.load_lines(out_file))
+        urls = []
+        for line in self.load_lines(out_file):
+            match = re.search(r"https?://[^\s\[]+", line)
+            if match:
+                urls.append(match.group(0).strip())
+        self.live_http = self.filter_in_scope_urls(urls)
         self.success(f"Live HTTP hosts: {len(self.live_http)}")
 
     # ── URL collection ────────────────────────────────────────────────────────

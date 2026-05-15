@@ -128,6 +128,8 @@ class InjectionProbeModule(BaseModule):
         requests_sent = 0
 
         for target in targets:
+            baseline = self.http_get(target["url"], timeout=timeout, verify=False)
+            baseline_body = baseline.text or "" if baseline else ""
             for param in target.get("params", []):
                 for payload, expected in self.SSTI_PAYLOADS:
                     if requests_sent >= max_requests:
@@ -138,7 +140,7 @@ class InjectionProbeModule(BaseModule):
                     if resp is None:
                         continue
                     body = resp.text or ""
-                    if expected not in body:
+                    if expected not in body or expected in baseline_body:
                         continue
                     findings.append(self._finding(
                         finding_id="ssti_expression_evaluated",

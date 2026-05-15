@@ -56,6 +56,16 @@ class VulnScanModule(BaseModule):
 
         findings = self._parse_results(out_file)
         by_sev   = self._group_by_severity(findings)
+        target_count = self._line_count(url_file)
+        if len(findings) == 0 and target_count > 0:
+            warning = (
+                "Nuclei returned 0 findings on live targets. Possible WAF blocking, "
+                "template issue, restricted network, or aggressive rate limit. "
+                "Try: nuclei -u <target> -t cves -debug"
+            )
+            self.warn(warning)
+            self.nuclei_runtime["warning"] = warning
+            self.nuclei_runtime["target_count"] = target_count
 
         for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
             count = len(by_sev.get(sev, []))

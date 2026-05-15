@@ -132,21 +132,21 @@ class AuthProbeModule(BaseModule):
                 cookie.load(raw)
             except Exception:
                 continue
-            lower = raw.lower()
-            for name in cookie:
-                if url.startswith("https://") and "secure" not in lower:
+            for name, morsel in cookie.items():
+                if url.startswith("https://") and not morsel["secure"]:
                     findings.append(self._finding(
                         "cookie_missing_secure", "MEDIUM", url,
                         "HTTPS cookie missing Secure flag",
                         {"cookie": name},
                     ))
-                if "httponly" not in lower:
+                if not morsel["httponly"]:
                     findings.append(self._finding(
                         "cookie_missing_httponly", "MEDIUM", url,
                         "Cookie missing HttpOnly flag",
                         {"cookie": name},
                     ))
-                if "samesite" not in lower or "samesite=none" in lower:
+                samesite = str(morsel["samesite"] or "").lower()
+                if not samesite or samesite == "none":
                     findings.append(self._finding(
                         "cookie_weak_samesite", "LOW", url,
                         "Cookie missing strict SameSite protection",

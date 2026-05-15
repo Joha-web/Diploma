@@ -6,6 +6,7 @@ Tools: katana (crawl), feroxbuster (dir brute), ffuf (fuzz), requests (JS)
 import re
 import json
 import glob
+import hashlib
 import time
 import urllib3
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -96,7 +97,7 @@ SECRET_PATTERNS: list[re.Pattern] = [
 class FuzzerModule(BaseModule):
     name = "fuzzer"
     description = "Crawling, Directory Fuzzing & JS Mining"
-    required_tools = ["katana", "feroxbuster", "ffuf"]
+    required_tools: list[str] = []
 
     def __init__(self, target: str, output_dir: str, config: dict,
                  live_hosts: list | None = None):
@@ -334,13 +335,19 @@ class FuzzerModule(BaseModule):
                 cloud_assets.extend(self._extract_cloud_assets(content, source=jsurl))
 
                 # Extract secrets
+                retain_raw = self.config.get("scan", {}).get("fuzzing", {}).get("retain_raw_secrets", False)
                 for pattern in SECRET_PATTERNS:
                     for m in pattern.finditer(content):
+                        raw_match = m.group(0)
+                        raw_context = content[max(0, m.start()-30):m.end()+30]
+                        match_text = raw_match if retain_raw else self._redact_js_secret_match(raw_match)
+                        context_text = raw_context if retain_raw else raw_context.replace(raw_match, match_text)
                         secrets.append({
                             "file":    jsurl,
                             "type":    m.group(1) if m.lastindex else "secret",
-                            "match":   m.group(0)[:200],
-                            "context": content[max(0, m.start()-30):m.end()+30],
+                            "match":   match_text[:200],
+                            "context": context_text,
+                            "fingerprint": self._fingerprint_secret(raw_match),
                         })
 
                 time.sleep(rate_delay)
@@ -859,6 +866,26 @@ class FuzzerModule(BaseModule):
         base = parsed.netloc + parsed.path if parsed.netloc else str(value)
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", base).strip("_")
         return safe[:140] or "target"
+
+    @staticmethod
+    def _redact_js_secret_match(value: str) -> str:
+        text = str(value or "")
+        return re.sub(
+            r"""([:=]\s*["'])([^"']{4,})(["'])""",
+            lambda m: f"{m.group(1)}{FuzzerModule._redact_secret_value(m.group(2))}{m.group(3)}",
+            text,
+            count=1,
+        )
+
+    @staticmethod
+    def _redact_secret_value(value: str) -> str:
+        if len(value) <= 10:
+            return "***"
+        return f"{value[:4]}...{value[-4:]}"
+
+    @staticmethod
+    def _fingerprint_secret(value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:16]
 
     def _backup_wordlist(self) -> str:
         """Return path to a temporary backup/config extensions wordlist."""

@@ -26,28 +26,28 @@ class ParameterDiscoveryModule(BaseModule):
         if not cfg.get("enabled", True):
             return {"parameters": [], "parameterized_targets": [], "total": 0, "status": "disabled"}
 
+        openapi_params = self._openapi_parameters()
         targets = self._select_targets()[: int(cfg.get("max_targets", 150))]
-        if not targets:
+        if not targets and not openapi_params:
             self.warn("No URLs for parameter discovery")
             return {"parameters": [], "parameterized_targets": [], "total": 0}
+
+        params: list[dict] = []
         arjun_cmd = self._arjun_command()
-        if not arjun_cmd:
+        if not arjun_cmd and targets:
             self.warn("Arjun not available in PATH or current Python environment")
-            return {"parameters": [], "parameterized_targets": [], "total": 0,
-                    "status": "dependency_missing"}
+        elif arjun_cmd and targets:
+            url_file = self.module_dir / "arjun_targets.txt"
+            out_file = self.module_dir / "arjun_results.json"
+            self.save_text(targets, "arjun_targets.txt")
+            self.exec(
+                [*arjun_cmd, "-i", str(url_file), "-oJ", str(out_file),
+                 "-t", str(cfg.get("threads", 10)), "-d", str(cfg.get("delay", 2)),
+                 "--stable"],
+                timeout=int(cfg.get("timeout", 1200)),
+            )
+            params = self._parse_arjun(self.load_json(out_file))
 
-        url_file = self.module_dir / "arjun_targets.txt"
-        out_file = self.module_dir / "arjun_results.json"
-        self.save_text(targets, "arjun_targets.txt")
-        self.exec(
-            [*arjun_cmd, "-i", str(url_file), "-oJ", str(out_file),
-             "-t", str(cfg.get("threads", 10)), "-d", str(cfg.get("delay", 2)),
-             "--stable"],
-            timeout=int(cfg.get("timeout", 1200)),
-        )
-
-        params = self._parse_arjun(self.load_json(out_file))
-        openapi_params = self._openapi_parameters()
         params.extend(openapi_params)
         params = self._dedupe_params(params)
         parameterized_targets = [self._with_param(p["url"], p["param"]) for p in params]
@@ -58,6 +58,7 @@ class ParameterDiscoveryModule(BaseModule):
             "parameters": params,
             "parameterized_targets": parameterized_targets,
             "total": len(params),
+            "missing_tools": [] if arjun_cmd else ["arjun"],
         }
 
     def _select_targets(self) -> list[str]:

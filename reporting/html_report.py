@@ -101,10 +101,6 @@ class HTMLReportGenerator:
             ("api-schema-audit", "OpenAPI Schema Audit Findings", r.get("api_schema_audit", {})),
             ("js-security-audit", "JavaScript Security Findings", r.get("js_security_audit", {})),
         ]
-        active_probe_total = sum(
-            module.get("total", len(module.get("findings", [])))
-            for _, _, module in active_probe_sections
-        )
         extra_finding_sections = [
             ("secret-scanner", "Git Secret Findings", secret.get("findings", [])),
             ("fuzzer-findings", "Fuzzer Findings", fuzz.get("findings", [])),
@@ -132,6 +128,17 @@ class HTMLReportGenerator:
             len(findings) for _, _, findings in extra_finding_sections
         ) + sum(
             len(module.get("findings", [])) for _, _, module in active_probe_sections
+        )
+        severity_counts = self._all_finding_severity_counts(
+            vuln,
+            cms,
+            cve,
+            extra_finding_sections,
+            active_probe_sections,
+        )
+        active_probe_total = sum(
+            module.get("total", len(module.get("findings", [])))
+            for _, _, module in active_probe_sections
         )
 
         # Ensure by_severity exists
@@ -171,6 +178,8 @@ class HTMLReportGenerator:
             "parameters":      params.get("total", 0),
             "correlated":      corr.get("total", 0),
             "screenshots":     len(web.get("screenshots", [])),
+            "finding_severity": severity_counts,
+            "risk_level":      self._risk_level(severity_counts),
         }
 
         # Render AI analysis from Markdown to HTML
@@ -210,6 +219,57 @@ class HTMLReportGenerator:
             "ai_analysis": ai_html,
             "summary":     summary,
         }
+
+    @staticmethod
+    def _all_finding_severity_counts(
+        vuln: dict,
+        cms: dict,
+        cve: dict,
+        extra_finding_sections: list,
+        active_probe_sections: list,
+    ) -> dict:
+        counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
+
+        def add_finding(finding: dict) -> None:
+            sev = str(finding.get("severity", "INFO") or "INFO").upper()
+            if sev not in counts:
+                sev = "INFO"
+            counts[sev] += 1
+
+        for finding in vuln.get("findings", []) or []:
+            add_finding(finding)
+        if not vuln.get("findings"):
+            for sev, count in (vuln.get("by_severity", {}) or {}).items():
+                sev = str(sev or "INFO").upper()
+                if sev in counts:
+                    counts[sev] += int(count or 0)
+
+        for _, _, findings in extra_finding_sections:
+            for finding in findings or []:
+                add_finding(finding)
+
+        for _, _, module in active_probe_sections:
+            for finding in module.get("findings", []) or []:
+                add_finding(finding)
+
+        for scan in cms.get("scans", []) or []:
+            for finding in scan.get("findings", []) or []:
+                add_finding(finding)
+
+        for finding in cve.get("cves", []) or []:
+            add_finding(finding)
+
+        return counts
+
+    @staticmethod
+    def _risk_level(severity_counts: dict) -> str:
+        if severity_counts.get("CRITICAL", 0) > 0:
+            return "CRITICAL"
+        if severity_counts.get("HIGH", 0) > 0:
+            return "HIGH"
+        if severity_counts.get("MEDIUM", 0) > 0:
+            return "MEDIUM"
+        return "LOW"
 
     @staticmethod
     def _render_markdown(text: str) -> str:

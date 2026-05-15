@@ -33,6 +33,22 @@ def test_extract_urls_filters_out_of_scope(tmp_path):
     assert module._extract_urls() == ["https://api.example.com", "https://example.com"]
 
 
+def test_fuzzer_execute_runs_without_external_tools_for_builtin_checks(tmp_path, monkeypatch):
+    module = FuzzerModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"fuzzing": {"graphql_probe": False, "cloud_assets": False}}},
+        live_hosts=["https://example.com"],
+    )
+    monkeypatch.setattr(module, "has_tool", lambda name: False)
+    monkeypatch.setattr(module, "_robots_sitemap", lambda urls: ["https://example.com/robots-only"])
+
+    result = module.execute()
+
+    assert result["status"] == "completed"
+    assert "https://example.com/robots-only" in result["all_endpoints"]
+
+
 def test_extract_js_routes_handles_framework_manifests(tmp_path):
     module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
     content = """
@@ -166,3 +182,12 @@ def test_public_cloud_listing_becomes_critical_finding(tmp_path):
 
     assert findings[0]["id"] == "public_cloud_storage_listing"
     assert findings[0]["severity"] == "CRITICAL"
+
+
+def test_js_secret_match_is_redacted_by_default(tmp_path):
+    raw = 'api_key = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"'
+
+    redacted = FuzzerModule._redact_js_secret_match(raw)
+
+    assert "ghp_abcdefghijklmnopqrstuvwxyz1234567890" not in redacted
+    assert "ghp_..." in redacted

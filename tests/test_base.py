@@ -11,6 +11,14 @@ class MissingToolModule(BaseModule):
         raise AssertionError("run should not be called when required tools are absent")
 
 
+class DisabledStatusModule(BaseModule):
+    name = "disabled_status"
+    description = "Status preservation test"
+
+    def run(self):
+        return {"status": "disabled", "reason": "unit_test"}
+
+
 def test_exec_returns_interrupted_for_sigint_exit(tmp_path):
     module = BaseModule("example.com", str(tmp_path), {})
 
@@ -70,6 +78,15 @@ def test_subprocess_env_includes_configured_cli_tokens(tmp_path, monkeypatch):
     assert env["BINARYEDGE_API_KEY"] == "be-token"
 
 
+def test_subprocess_env_prepends_reconx_tool_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("RECONX_TOOL_PATH", str(tmp_path / "tools"))
+    module = BaseModule("example.com", str(tmp_path), {})
+
+    env = module._subprocess_env()
+
+    assert env["PATH"].split(":")[0] == str(tmp_path / "tools")
+
+
 def test_execute_persists_skipped_result_when_required_tools_missing(tmp_path):
     module = MissingToolModule("example.com", str(tmp_path), {})
 
@@ -80,6 +97,16 @@ def test_execute_persists_skipped_result_when_required_tools_missing(tmp_path):
     assert result["reason"] == "no_tools"
     assert "elapsed_seconds" in result
     assert results_file.exists()
+
+
+def test_execute_preserves_module_returned_status(tmp_path):
+    module = DisabledStatusModule("example.com", str(tmp_path), {})
+
+    result = module.execute()
+
+    assert result["status"] == "disabled"
+    assert result["reason"] == "unit_test"
+    assert "elapsed_seconds" in result
 
 
 def test_token_bucket_instances_are_independent():

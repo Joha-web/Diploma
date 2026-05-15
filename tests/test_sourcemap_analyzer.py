@@ -27,3 +27,6 @@ def test_sourcemap_analyzer_reports_secret_in_sources_content(tmp_path):
 
     assert any(f["type"] == "sourcemap_secret" for f in findings)
     assert any(f["type"] == "sourcemap_interesting_path" for f in findings)
+    secret = next(f for f in findings if f["type"] == "sourcemap_secret")
+    assert "abcdef123456" not in secret["evidence"]["match"]
+    assert secret["evidence"]["fingerprint"]

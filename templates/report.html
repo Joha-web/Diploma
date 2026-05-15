@@ -453,6 +453,9 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   {% if ai_analysis %}
   <div class="sidebar-section">Analysis</div>
   <a href="#ai">🤖 AI Report</a>
+  {% else %}
+  <div class="sidebar-section">Analysis</div>
+  <a href="#ai">🤖 AI Status</a>
   {% endif %}
 
   {% if vuln.findings %}
@@ -512,11 +515,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
       </div>
     </div>
     <div>
-      {% set total_vulns = vuln.total | default(0) %}
-      {% set risk = 'CRITICAL' if vuln.by_severity.get('CRITICAL',0) > 0
-                    else 'HIGH'   if vuln.by_severity.get('HIGH',0) > 0
-                    else 'MEDIUM' if total_vulns > 0
-                    else 'LOW' %}
+      {% set risk = summary.risk_level | default('LOW') %}
       <span class="risk-badge risk-{{ risk }}">⚠ {{ risk }} RISK</span>
     </div>
   </div>
@@ -613,6 +612,16 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
     <div class="section-title">🤖 AI Security Analysis</div>
   </div>
   <div class="ai-body">{{ ai_analysis | safe }}</div>
+</div>
+{% else %}
+<div class="section" id="ai" style="border-color:rgba(90,112,144,.2)">
+  <div class="section-header">
+    <div class="section-title" style="color:var(--muted)">🤖 AI Analysis — not available</div>
+  </div>
+  <p style="color:var(--muted);font-size:.85em">
+    Ollama is not running or the model is not loaded.<br>
+    Run: <code>ollama serve &amp;&amp; ollama pull deepseek-r1:7b</code>
+  </p>
 </div>
 {% endif %}
 

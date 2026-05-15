@@ -108,3 +108,20 @@ def test_oob_process_is_kept_out_of_json_runtime(tmp_path, monkeypatch):
     module._stop_oob_client(runtime)
 
     assert module._oob_process is None
+
+
+def test_nuclei_zero_findings_on_live_targets_records_warning(tmp_path, monkeypatch):
+    module = VulnScanModule("example.com", str(tmp_path), {})
+    warnings = []
+
+    monkeypatch.setattr(module, "_extract_urls", lambda: ["https://example.com"])
+    monkeypatch.setattr(module, "_update_templates", lambda: None)
+    monkeypatch.setattr(module, "_run_nuclei", lambda url_file, out_file: None)
+    monkeypatch.setattr(module, "warn", lambda msg: warnings.append(msg))
+
+    result = module.run()
+
+    assert result["total"] == 0
+    assert "warning" in result["runtime"]
+    assert "Nuclei returned 0 findings" in result["runtime"]["warning"]
+    assert warnings

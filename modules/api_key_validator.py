@@ -17,6 +17,15 @@ KEY_PATTERNS = [
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
 ]
 
+REDACTED_KEY_HINTS = [
+    ("github_token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_\.\.\.[A-Za-z0-9_-]*\b", re.I)),
+    ("slack_token", re.compile(r"\bxox[baprs]\.\.\.[A-Za-z0-9-]*\b", re.I)),
+    ("stripe_secret", re.compile(r"\bsk_[lt]\.\.\.[A-Za-z0-9_-]*\b", re.I)),
+    ("openai_key", re.compile(r"\bsk-[A-Za-z0-9_-]?\.\.\.[A-Za-z0-9_-]*\b", re.I)),
+    ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)\.\.\.[A-Z0-9]*\b", re.I)),
+    ("google_api_key", re.compile(r"\bAIza\.\.\.[A-Za-z0-9_-]*\b", re.I)),
+]
+
 
 class APIKeyValidatorModule(BaseModule):
     name = "api_key_validator"
@@ -48,7 +57,7 @@ class APIKeyValidatorModule(BaseModule):
             findings.append(self._finding("api_key_leak", severity, candidate, validation))
 
         findings = self._dedup(findings)
-        self.save_json(candidates, "api_key_candidates.json")
+        self.save_json([self._safe_candidate(candidate) for candidate in candidates], "api_key_candidates.json")
         self.save_json(findings, "api_key_findings.json")
         return {"findings": findings, "total": len(findings), "validated": sum(1 for f in findings if f["evidence"].get("validation", {}).get("valid"))}
 
@@ -57,20 +66,55 @@ class APIKeyValidatorModule(BaseModule):
         for finding in self.secret_results.get("findings", []) or []:
             evidence = finding.get("evidence", {}) if isinstance(finding, dict) else {}
             raw = evidence.get("raw", {}) if isinstance(evidence, dict) else {}
-            for key in ("Secret", "Match", "Redacted", "secret", "match"):
-                if isinstance(raw, dict) and raw.get(key):
-                    texts.append({"source": "secret_scanner", "text": str(raw[key]), "location": evidence.get("file", "")})
-            texts.append({"source": "secret_scanner", "text": str(evidence), "location": evidence.get("file", "") if isinstance(evidence, dict) else ""})
+            rule = evidence.get("rule", finding.get("id", "")) if isinstance(evidence, dict) else finding.get("id", "")
+            raw_added = False
+            if isinstance(raw, dict):
+                for key in ("Secret", "secret", "Redacted", "Match", "match"):
+                    if not raw.get(key):
+                        continue
+                    texts.append({
+                        "source": "secret_scanner",
+                        "text": str(raw[key]),
+                        "redacted": str(raw[key]),
+                        "fingerprint": raw.get(f"{key}_sha256") or evidence.get("fingerprint", ""),
+                        "type_hint": rule,
+                        "location": evidence.get("file", ""),
+                    })
+                    raw_added = True
+                    break
+            if not raw_added:
+                texts.append({
+                    "source": "secret_scanner",
+                    "text": str(evidence),
+                    "fingerprint": evidence.get("fingerprint", "") if isinstance(evidence, dict) else "",
+                    "type_hint": rule,
+                    "location": evidence.get("file", "") if isinstance(evidence, dict) else "",
+                })
 
         for secret in self.fuzzer_results.get("classified", {}).get("js_secrets", []) or []:
             if isinstance(secret, dict):
-                texts.append({"source": "fuzzer", "text": " ".join(str(secret.get(k, "")) for k in ("match", "context")), "location": secret.get("file", "")})
+                texts.append({
+                    "source": "fuzzer",
+                    "text": " ".join(str(secret.get(k, "")) for k in ("match", "context")),
+                    "redacted": str(secret.get("match", "")),
+                    "fingerprint": secret.get("fingerprint", ""),
+                    "type_hint": secret.get("type", ""),
+                    "location": secret.get("file", ""),
+                })
         for secret in self.fuzzer_results.get("js_secrets", []) or []:
             if isinstance(secret, dict):
-                texts.append({"source": "fuzzer", "text": " ".join(str(secret.get(k, "")) for k in ("match", "context")), "location": secret.get("file", "")})
+                texts.append({
+                    "source": "fuzzer",
+                    "text": " ".join(str(secret.get(k, "")) for k in ("match", "context")),
+                    "redacted": str(secret.get("match", "")),
+                    "fingerprint": secret.get("fingerprint", ""),
+                    "type_hint": secret.get("type", ""),
+                    "location": secret.get("file", ""),
+                })
 
         candidates: list[dict] = []
         for item in texts:
+            before = len(candidates)
             for key_type, pattern in KEY_PATTERNS:
                 for match in pattern.finditer(item["text"]):
                     secret = match.group(0)
@@ -81,11 +125,18 @@ class APIKeyValidatorModule(BaseModule):
                         "fingerprint": self._fingerprint(secret),
                         "source": item["source"],
                         "location": item.get("location", ""),
+                        "has_raw_secret": True,
                     })
+            if len(candidates) == before:
+                metadata_candidate = self._metadata_candidate(item)
+                if metadata_candidate:
+                    candidates.append(metadata_candidate)
         return self._dedup_candidates(candidates)
 
     def _validate(self, candidate: dict, cfg: dict) -> dict:
         secret = candidate.get("secret", "")
+        if not secret:
+            return {"status": "not_validated", "valid": False, "reason": "raw_secret_unavailable"}
         key_type = candidate.get("type", "")
         timeout = float(cfg.get("timeout", 10))
         if key_type == "github_token":
@@ -166,6 +217,66 @@ class APIKeyValidatorModule(BaseModule):
                 seen.add(fp)
                 result.append(finding)
         return result
+
+    @staticmethod
+    def _safe_candidate(candidate: dict) -> dict:
+        safe = dict(candidate)
+        safe.pop("secret", None)
+        return safe
+
+    @classmethod
+    def _metadata_candidate(cls, item: dict) -> dict | None:
+        text = str(item.get("text", "") or "")
+        key_type = cls._infer_key_type(text) or cls._type_from_hint(str(item.get("type_hint", "") or ""))
+        if not key_type:
+            return None
+        redacted = str(item.get("redacted") or cls._redacted_excerpt(text) or key_type)
+        fingerprint = str(item.get("fingerprint") or "").strip()
+        if not fingerprint:
+            fingerprint = cls._fingerprint(f"{key_type}:{redacted}:{item.get('location', '')}")
+        return {
+            "type": key_type,
+            "redacted": redacted[:200],
+            "fingerprint": fingerprint,
+            "source": item.get("source", ""),
+            "location": item.get("location", ""),
+            "has_raw_secret": False,
+        }
+
+    @staticmethod
+    def _infer_key_type(text: str) -> str:
+        for key_type, pattern in REDACTED_KEY_HINTS:
+            if pattern.search(text):
+                return key_type
+        return ""
+
+    @staticmethod
+    def _type_from_hint(hint: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "_", str(hint or "").lower()).strip("_")
+        if normalized in {key_type for key_type, _ in KEY_PATTERNS}:
+            return normalized
+        if "github" in normalized or "ghp" in normalized:
+            return "github_token"
+        if "slack" in normalized or "xox" in normalized:
+            return "slack_token"
+        if "stripe" in normalized:
+            return "stripe_secret"
+        if "openai" in normalized:
+            return "openai_key"
+        if "aws" in normalized:
+            return "aws_access_key"
+        if "google" in normalized:
+            return "google_api_key"
+        if "api" in normalized and "key" in normalized:
+            return "api_key"
+        if "secret" in normalized or "token" in normalized:
+            return "secret"
+        return ""
+
+    @staticmethod
+    def _redacted_excerpt(text: str) -> str:
+        match = re.search(r"\b[A-Za-z0-9_-]{2,12}\.\.\.[A-Za-z0-9_-]{0,12}\b", str(text or ""))
+        return match.group(0) if match else ""
 
     def _finding(self, finding_id: str, severity: str, candidate: dict, validation: dict) -> dict:
         title = f"Potential live API key leak: {candidate.get('type', 'api_key')}"

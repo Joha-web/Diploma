@@ -1,5 +1,6 @@
 import subprocess
 
+from modules.api_key_validator import APIKeyValidatorModule
 from modules.secret_scanner import SecretScannerModule
 
 
@@ -56,6 +57,8 @@ def test_secret_scanner_normalizes_gitleaks_findings(tmp_path, monkeypatch):
                 "File": "config/settings.py",
                 "StartLine": 12,
                 "Fingerprint": "abc",
+                "Secret": "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+                "Match": "token=ghp_abcdefghijklmnopqrstuvwxyz1234567890",
             }
         ], report_path.replace(str(module.module_dir) + "/", ""))
         return subprocess.CompletedProcess(cmd, 1, "", "")
@@ -68,3 +71,32 @@ def test_secret_scanner_normalizes_gitleaks_findings(tmp_path, monkeypatch):
     assert findings[0]["id"] == "generic-api-key"
     assert findings[0]["url"] == "https://github.com/example/app.git"
     assert findings[0]["evidence"]["file"] == "config/settings.py"
+    assert "ghp_abcdefghijklmnopqrstuvwxyz1234567890" not in str(findings[0]["evidence"]["raw"])
+    assert findings[0]["evidence"]["raw"]["Secret"].startswith("ghp_...")
+
+
+def test_api_validator_uses_one_redacted_gitleaks_candidate(tmp_path):
+    secret = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+    scanner = SecretScannerModule("example.com", str(tmp_path), {})
+    finding = scanner._normalize_secret(
+        {
+            "RuleID": "generic-api-key",
+            "File": "config/settings.py",
+            "Fingerprint": "abc",
+            "Secret": secret,
+            "Match": f"token={secret}",
+        },
+        "https://github.com/example/app.git",
+    )
+    validator = APIKeyValidatorModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"api_key_validator": {"live_validation": True}}},
+        secret_results={"findings": [finding]},
+    )
+
+    result = validator.run()
+
+    assert len(result["findings"]) == 1
+    assert result["findings"][0]["type"] == "github_token"
+    assert result["findings"][0]["evidence"]["validation"]["reason"] == "raw_secret_unavailable"

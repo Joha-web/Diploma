@@ -6,7 +6,7 @@ api_keys:
   virustotal: ""
   wpscan: ""       # or env WPSCAN_API_TOKEN
   censys_api_id: ""            # optional; only needed for Legacy Search API
-  censys_api_secret: ""        # Platform PAT, or Legacy secret when censys_api_id is set
+  censys_api_secret: ""        # env CENSYS_API_SECRET/CENSYS_PAT; Platform PAT, or Legacy secret when censys_api_id is set
   securitytrails: ""
   binaryedge: ""
   github: ""
@@ -77,6 +77,10 @@ scan:
     use_github: true
     use_securitytrails: false
     use_binaryedge: false
+    api_retries: 1
+    api_retry_delay: 1.0
+    api_retry_backoff: 2.0
+    api_retry_max_delay: 10.0
     wayback_timeout: 15
     wayback_limit: 1000
     github_per_page: 30

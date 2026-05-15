@@ -44,6 +44,7 @@ class WebSocketProbeModule(ActiveProbeBase):
         super().__init__(target, output_dir, config)
         self.live_hosts = live_hosts or []
         self.fuzzer_results = fuzzer_results or {}
+        self._explicit_ws_endpoints: set[str] = set()
 
     def run(self) -> dict:
         if not self.active_enabled():
@@ -52,11 +53,11 @@ class WebSocketProbeModule(ActiveProbeBase):
         endpoints = self.limit(self._endpoints(), "max_endpoints", 50)
         findings: list[dict] = []
         for endpoint in endpoints:
-            if endpoint.startswith("ws://"):
+            if endpoint.startswith("ws://") and endpoint in self._explicit_ws_endpoints:
                 findings.append(self.make_finding(
                     "websocket_insecure_scheme",
                     endpoint,
-                    evidence={"endpoint": endpoint},
+                    evidence={"endpoint": endpoint, "source": "explicit_url"},
                 ))
 
         if self.module_config().get("active_handshake", True):
@@ -70,12 +71,14 @@ class WebSocketProbeModule(ActiveProbeBase):
 
     def _endpoints(self) -> list[str]:
         endpoints: set[str] = set()
+        self._explicit_ws_endpoints = set()
 
         def add(value: str) -> None:
             for match in WS_URL_RE.findall(str(value or "")):
                 cleaned = match.rstrip(".,;]")
                 if self._ws_in_scope(cleaned):
                     endpoints.add(cleaned)
+                    self._explicit_ws_endpoints.add(cleaned)
             if str(value).startswith(("http://", "https://")) and WS_HINT_RE.search(str(value)):
                 converted = self._http_to_ws(str(value))
                 if self._ws_in_scope(converted):
@@ -105,6 +108,12 @@ class WebSocketProbeModule(ActiveProbeBase):
         timeout = self.request_timeout()
         normal = self._handshake(endpoint, origin=self._origin_for(endpoint), timeout=timeout)
         if normal.get("status") == 101:
+            if endpoint.startswith("ws://"):
+                findings.append(self.make_finding(
+                    "websocket_insecure_scheme",
+                    endpoint,
+                    evidence={"endpoint": endpoint, "source": "confirmed_handshake"},
+                ))
             findings.append(self.make_finding(
                 "websocket_unauthenticated_connect",
                 endpoint,

@@ -127,8 +127,13 @@ class APISchemaAuditModule(ActiveProbeBase):
             return endpoint.get("security_defined") is False
         if security in ("", "none", "None"):
             return True
-        if isinstance(security, (list, tuple, dict, set)):
+        if isinstance(security, dict):
             return len(security) == 0
+        if isinstance(security, (list, tuple, set)):
+            requirements = list(security)
+            if not requirements:
+                return True
+            return any(isinstance(requirement, dict) and len(requirement) == 0 for requirement in requirements)
         return False
 
     @staticmethod

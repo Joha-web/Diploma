@@ -220,6 +220,9 @@ CONFIG_PRESETS = {
             "websocket_probe": {"active_handshake": True, "check_origin": True, "message_probe": True},
             "race_condition": {"active_probe": True},
             "api_key_validator": {"live_validation": True},
+            "fuzzing": {"retain_raw_secrets": True},
+            "secret_scanner": {"retain_raw_secrets": True},
+            "sourcemap_analyzer": {"retain_raw_secrets": True},
         },
     },
 }
@@ -229,6 +232,32 @@ def _load_cls(name: str):
     mod_path, cls_name = CLASS_MAP[name]
     mod = importlib.import_module(mod_path)
     return getattr(mod, cls_name)
+
+
+def _select_active_modules(modules_arg: str | None, skip_arg: str | None) -> list[str]:
+    all_names = [s["name"] for s in PIPELINE]
+
+    if modules_arg:
+        requested = [m.strip() for m in modules_arg.split(",") if m.strip()]
+    else:
+        requested = list(all_names)
+
+    unknown = [name for name in requested if name not in all_names]
+    if unknown:
+        raise ValueError(f"Unknown module(s): {', '.join(unknown)}")
+
+    active = [m for m in requested if m in all_names]
+    if skip_arg:
+        skip = {m.strip() for m in skip_arg.split(",") if m.strip()}
+        unknown_skip = sorted(name for name in skip if name not in all_names)
+        if unknown_skip:
+            raise ValueError(f"Unknown module(s) in --skip: {', '.join(unknown_skip)}")
+        active = [m for m in active if m not in skip]
+
+    if not active:
+        raise ValueError("No modules selected after applying --modules/--skip")
+
+    return active
 
 
 def _live_urls(all_results: dict) -> list[str]:
@@ -837,6 +866,7 @@ ENV_CONFIG_MAP = {
     "WPSCAN_API_TOKEN": ("api_keys", "wpscan"),
     "CENSYS_API_ID": ("api_keys", "censys_api_id"),
     "CENSYS_API_SECRET": ("api_keys", "censys_api_secret"),
+    "CENSYS_PAT": ("api_keys", "censys_api_secret"),
     "SECURITYTRAILS_API_KEY": ("api_keys", "securitytrails"),
     "BINARYEDGE_API_KEY": ("api_keys", "binaryedge"),
     "GITHUB_TOKEN": ("api_keys", "github"),
@@ -921,12 +951,12 @@ Examples:
         p.print_help()
         sys.exit(1)
 
-    all_names = [s["name"] for s in PIPELINE]
-    active = [m.strip() for m in args.modules.split(",")] if args.modules else list(all_names)
-    active = [m for m in active if m in all_names]
-    if args.skip:
-        skip = {m.strip() for m in args.skip.split(",")}
-        active = [m for m in active if m not in skip]
+    try:
+        active = _select_active_modules(args.modules, args.skip)
+    except ValueError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        console.print("Use --list-modules to see valid module names.")
+        sys.exit(1)
 
     load_env_file(Path(args.config).with_name(".env"))
     cfg = load_config(args.config)

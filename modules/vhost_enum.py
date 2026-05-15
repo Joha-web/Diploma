@@ -20,6 +20,7 @@ class VHostEnumModule(BaseModule):
         super().__init__(target, output_dir, config)
         self.live_hosts = live_hosts or []
         self.resolved_ips = resolved_ips or []
+        self._vhost_baseline_redirect = False
 
     def run(self) -> dict:
         cfg = self.config.get("scan", {}).get("vhost_enum", {})
@@ -35,18 +36,21 @@ class VHostEnumModule(BaseModule):
         found: list[dict] = []
         rate = str(cfg.get("rate", 50))
         for ip in ips:
+            self._vhost_baseline_redirect = False
             baseline = self._baseline_size(ip)
             out = self.module_dir / f"vhost_{ip.replace('.', '_')}.json"
             cmd = [
                 "ffuf", "-u", f"http://{ip}/",
                 "-H", f"Host: FUZZ.{self.domain}",
                 "-w", wordlist,
-                "-mc", "200,201,204,301,302,307,401,403",
+                "-mc", "200,201,204,401,403",
                 "-t", "30", "-rate", rate,
                 "-of", "json", "-o", str(out), "-s",
             ]
             if baseline != "0":
                 cmd.extend(["-fs", baseline])
+            if self._vhost_baseline_redirect:
+                cmd.extend(["-fc", "301,302,307,308"])
             self.exec(cmd, timeout=int(cfg.get("timeout", 600)), label=f"ffuf vhost {ip}")
 
             data = self.load_json(out)
@@ -81,7 +85,10 @@ class VHostEnumModule(BaseModule):
             headers={"Host": f"nxvhost-{random.randint(10000, 99999)}.{self.domain}"},
             timeout=8,
             verify=False,
+            allow_redirects=False,
         )
+        if resp is not None and resp.status_code in (301, 302, 307, 308):
+            self._vhost_baseline_redirect = True
         return str(len(resp.content)) if resp is not None else "0"
 
     def _wordlist(self, filename: str) -> str:

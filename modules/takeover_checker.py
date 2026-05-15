@@ -236,6 +236,7 @@ class TakeoverCheckerModule(BaseModule):
                 body_match = self._body_fingerprint(host, finding["provider"])
                 finding["evidence"]["body_fingerprint"] = body_match
                 finding["confidence"] = 0.85 if body_match else 0.65
+                finding["severity"] = "HIGH" if body_match else "MEDIUM"
                 findings.append(finding)
 
         self.save_json(findings, "takeover_findings.json")
@@ -251,14 +252,14 @@ class TakeoverCheckerModule(BaseModule):
     def _match_cname(self, host: str, cnames: list[str]) -> dict | None:
         for cname in cnames:
             for provider, fp in FINGERPRINTS.items():
-                if any(marker in cname for marker in fp["cname"]):
+                if any(self._cname_matches_marker(cname, marker) for marker in fp["cname"]):
                     return {
                         "source": self.name,
                         "id": "potential_subdomain_takeover",
                         "type": "potential_subdomain_takeover",
                         "name": "Potential subdomain takeover candidate",
                         "title": "Potential subdomain takeover candidate",
-                        "severity": "HIGH",
+                        "severity": "MEDIUM",
                         "url": f"https://{host}",
                         "matched_url": f"https://{host}",
                         "provider": provider,
@@ -270,6 +271,12 @@ class TakeoverCheckerModule(BaseModule):
                         "confidence": 0.65,
                     }
         return None
+
+    @staticmethod
+    def _cname_matches_marker(cname: str, marker: str) -> bool:
+        cname = str(cname or "").strip(".").lower()
+        marker = str(marker or "").strip(".").lower()
+        return bool(marker) and (cname == marker or cname.endswith(f".{marker}"))
 
     def _body_fingerprint(self, host: str, provider: str) -> str:
         markers = FINGERPRINTS.get(provider, {}).get("body", [])

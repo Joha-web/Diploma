@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 from modules.base import BaseModule
-from modules.fuzzer import SECRET_PATTERNS
+from modules.fuzzer import FuzzerModule, SECRET_PATTERNS
 
 
 INTERESTING_PATH = re.compile(r"(\.env|config|credential|secret|internal|private)", re.I)
@@ -109,10 +109,16 @@ class SourceMapAnalyzerModule(BaseModule):
                 self._write_reconstructed(js_url, src, contents[idx])
                 for pattern in SECRET_PATTERNS:
                     for match in pattern.finditer(contents[idx]):
+                        raw_match = match.group(0)
+                        retain_raw = self.config.get("scan", {}).get("sourcemap_analyzer", {}).get("retain_raw_secrets", False)
                         findings.append(self._finding(
                             "sourcemap_secret", "HIGH", js_url,
                             "Potential secret found in source map content",
-                            {"source_path": src, "match": match.group(0)[:200]},
+                            {
+                                "source_path": src,
+                                "match": (raw_match if retain_raw else FuzzerModule._redact_js_secret_match(raw_match))[:200],
+                                "fingerprint": FuzzerModule._fingerprint_secret(raw_match),
+                            },
                         ))
 
         return {

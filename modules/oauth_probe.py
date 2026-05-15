@@ -2,7 +2,7 @@
 ReconX - Module: OAuth 2.0 / OpenID Connect security audit.
 """
 
-from urllib.parse import urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 import requests
 
@@ -148,14 +148,19 @@ class OAuthProbeModule(BaseModule):
             )
             if resp is None:
                 continue
-            location = resp.headers.get("Location", "")
-            if "attacker.reconx.invalid" in location:
+            location = self._absolute_location(auth_ep, resp.headers.get("Location", ""))
+            if self._location_is_attacker(location):
                 return [self._finding("oauth_open_redirect", "HIGH", auth_ep, "OAuth redirect_uri appears unvalidated", {
                     "payload": payload,
                     "location": location,
                     "status_code": resp.status_code,
                 })]
         return []
+
+    @staticmethod
+    def _location_is_attacker(location: str) -> bool:
+        host = (urlparse(str(location or "")).hostname or "").lower()
+        return host == "attacker.reconx.invalid" or host.endswith(".attacker.reconx.invalid")
 
     def _check_state_required(self, auth_ep: str, session: requests.Session, cfg: dict) -> list[dict]:
         test_url = auth_ep + "?" + urlencode({
@@ -167,9 +172,8 @@ class OAuthProbeModule(BaseModule):
         resp = self.http_get(test_url, session=session, allow_redirects=False, timeout=float(cfg.get("timeout", 8)), verify=False)
         if resp is None or resp.status_code not in (200, 302, 303):
             return []
-        body = (resp.text or "").lower()
-        location = resp.headers.get("Location", "")
-        if "state=" not in location.lower() and "state" not in body:
+        location = self._absolute_location(auth_ep, resp.headers.get("Location", ""))
+        if self._location_points_to_callback(location) and not self._location_has_param(location, "state"):
             return [self._finding("oauth_missing_state", "MEDIUM", auth_ep, "OAuth request accepted without state parameter", {
                 "status_code": resp.status_code,
                 "location": location[:200],
@@ -186,11 +190,12 @@ class OAuthProbeModule(BaseModule):
         resp = self.http_get(test_url, session=session, allow_redirects=False, timeout=float(cfg.get("timeout", 8)), verify=False)
         if resp is None or resp.status_code not in (200, 302, 303):
             return []
-        combined = ((resp.text or "") + resp.headers.get("Location", "")).lower()
-        if "unsupported_response_type" not in combined:
+        location = self._absolute_location(auth_ep, resp.headers.get("Location", ""))
+        combined = ((resp.text or "") + location).lower()
+        if "access_token" in combined and "unsupported_response_type" not in combined:
             return [self._finding("oauth_implicit_flow_supported", "MEDIUM", auth_ep, "OAuth implicit flow appears supported", {
                 "status_code": resp.status_code,
-                "location": resp.headers.get("Location", "")[:200],
+                "location": location[:200],
             })]
         return []
 
@@ -205,12 +210,32 @@ class OAuthProbeModule(BaseModule):
         resp = self.http_get(test_url, session=session, allow_redirects=False, timeout=float(cfg.get("timeout", 8)), verify=False)
         if resp is None or resp.status_code not in (200, 302, 303):
             return []
-        combined = ((resp.text or "") + resp.headers.get("Location", "")).lower()
-        if "code_challenge" not in combined and "invalid_request" not in combined:
+        location = self._absolute_location(auth_ep, resp.headers.get("Location", ""))
+        combined = ((resp.text or "") + location).lower()
+        if self._location_points_to_callback(location) and "code_challenge" not in combined and "invalid_request" not in combined:
             return [self._finding("oauth_pkce_not_required", "MEDIUM", auth_ep, "OAuth authorization endpoint may not require PKCE", {
                 "status_code": resp.status_code,
             })]
         return []
+
+    def _location_points_to_callback(self, location: str) -> bool:
+        parsed = urlparse(str(location or ""))
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+        return host == self.domain or host.endswith(f".{self.domain}")
+
+    @staticmethod
+    def _absolute_location(base_url: str, location: str) -> str:
+        location = str(location or "").strip()
+        return urljoin(base_url, location) if location else ""
+
+    @staticmethod
+    def _location_has_param(location: str, name: str) -> bool:
+        parsed = urlparse(str(location or ""))
+        values = parse_qs(parsed.query, keep_blank_values=True)
+        values.update(parse_qs(parsed.fragment, keep_blank_values=True))
+        return name in values
 
     def _check_token_endpoint(self, token_ep: str, session: requests.Session, cfg: dict) -> list[dict]:
         findings: list[dict] = []

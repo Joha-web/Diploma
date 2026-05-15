@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from difflib import SequenceMatcher
 from urllib.parse import urlparse
 
 from modules.active_probe_base import ActiveProbeBase
@@ -299,45 +300,59 @@ class IDORProbeModule(ActiveProbeBase):
     def _response_similarity(resp_a, resp_b) -> float:
         body_a = resp_a.text or ""
         body_b = resp_b.text or ""
+        json_similarity = IDORProbeModule._json_response_similarity(resp_a, resp_b)
+        if json_similarity is not None:
+            return json_similarity
         if not body_a and not body_b:
             return 1.0
         if IDORProbeModule._body_hash(body_a) == IDORProbeModule._body_hash(body_b):
             return 1.0
-        json_similarity = IDORProbeModule._json_key_similarity(resp_a, resp_b)
-        if json_similarity is not None:
-            return json_similarity
         larger = max(len(body_a), len(body_b), 1)
         smaller = min(len(body_a), len(body_b))
         return smaller / larger
 
     @staticmethod
-    def _json_key_similarity(resp_a, resp_b) -> float | None:
+    def _json_response_similarity(resp_a, resp_b) -> float | None:
         try:
             data_a = resp_a.json()
             data_b = resp_b.json()
         except Exception:
             return None
-        keys_a = IDORProbeModule._flatten_keys(data_a)
-        keys_b = IDORProbeModule._flatten_keys(data_b)
-        if not keys_a and not keys_b:
+
+        scalars_a = IDORProbeModule._flatten_scalar_values(data_a)
+        scalars_b = IDORProbeModule._flatten_scalar_values(data_b)
+        if not scalars_a and not scalars_b:
             return 1.0
-        if not keys_a or not keys_b:
+        if not scalars_a or not scalars_b:
             return 0.0
-        overlap = len(keys_a & keys_b)
-        return overlap / max(len(keys_a | keys_b), 1)
+
+        exact_overlap = len(scalars_a & scalars_b) / max(len(scalars_a | scalars_b), 1)
+        canonical_a = IDORProbeModule._canonical_json(data_a)
+        canonical_b = IDORProbeModule._canonical_json(data_b)
+        text_similarity = SequenceMatcher(None, canonical_a, canonical_b).ratio()
+        return (exact_overlap * 0.70) + (text_similarity * 0.30)
 
     @staticmethod
-    def _flatten_keys(value, prefix: str = "") -> set[str]:
-        keys: set[str] = set()
+    def _flatten_scalar_values(value, prefix: str = "") -> set[str]:
+        values: set[str] = set()
         if isinstance(value, dict):
             for key, child in value.items():
                 name = f"{prefix}.{key}" if prefix else str(key)
-                keys.add(name)
-                keys.update(IDORProbeModule._flatten_keys(child, name))
+                values.update(IDORProbeModule._flatten_scalar_values(child, name))
         elif isinstance(value, list):
-            for child in value[:5]:
-                keys.update(IDORProbeModule._flatten_keys(child, prefix))
-        return keys
+            for idx, child in enumerate(value[:5]):
+                name = f"{prefix}[{idx}]" if prefix else f"[{idx}]"
+                values.update(IDORProbeModule._flatten_scalar_values(child, name))
+        else:
+            values.add(f"{prefix}={json.dumps(value, sort_keys=True, default=str)}")
+        return values
+
+    @staticmethod
+    def _canonical_json(value) -> str:
+        try:
+            return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+        except TypeError:
+            return str(value)
 
     @staticmethod
     def _body_hash(body: str) -> str:

@@ -2,6 +2,19 @@ import modules.recon as recon_module
 from modules.recon import ReconModule
 
 
+class FakeResponse:
+    def __init__(self, status_code=200, text="", json_data=None, headers=None):
+        self.status_code = status_code
+        self.text = text
+        self._json_data = json_data
+        self.headers = headers or {}
+
+    def json(self):
+        if self._json_data is None:
+            raise ValueError("no json")
+        return self._json_data
+
+
 def test_merge_subdomains_rejects_boundary_bypass(tmp_path):
     module = ReconModule("example.com", str(tmp_path), {})
 
@@ -21,6 +34,25 @@ def test_get_json_uses_standard_json_parser(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "_get_text", lambda *args, **kwargs: '{"ok": true}')
 
     assert module._get_json("unit", "https://example.com") == {"ok": True}
+
+
+def test_passive_api_retries_rate_limits_before_json_parse(tmp_path, monkeypatch):
+    module = ReconModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"subdomains": {"api_retries": 1, "api_retry_delay": 0}}},
+    )
+    responses = [
+        FakeResponse(429, headers={"Retry-After": "0"}),
+        FakeResponse(200, text='{"ok": true}'),
+    ]
+    warnings = []
+
+    monkeypatch.setattr(module, "http_get", lambda *args, **kwargs: responses.pop(0))
+    monkeypatch.setattr(module, "warn", lambda message: warnings.append(message))
+
+    assert module._get_json("alienvault", "https://example.test") == {"ok": True}
+    assert any("HTTP 429, retrying" in message for message in warnings)
 
 
 def test_shodan_api_extracts_domain_subdomains(tmp_path, monkeypatch):
@@ -65,6 +97,24 @@ def test_censys_uses_legacy_auth_when_api_id_is_present(tmp_path, monkeypatch):
     })
 
     assert module._api_censys() == ["legacy.example.com"]
+
+
+def test_censys_platform_auth_failure_mentions_token_mode(tmp_path, monkeypatch):
+    module = ReconModule(
+        "example.com",
+        str(tmp_path),
+        {
+            "api_keys": {"censys_api_secret": "secret"},
+            "scan": {"subdomains": {"api_retries": 0}},
+        },
+    )
+    warnings = []
+
+    monkeypatch.setattr(module, "http_post", lambda *args, **kwargs: FakeResponse(403, json_data={}))
+    monkeypatch.setattr(module, "warn", lambda message: warnings.append(message))
+
+    assert module._api_censys() == []
+    assert any("Platform PAT" in message and "CENSYS_API_ID" in message for message in warnings)
 
 
 def test_github_api_extracts_subdomains(tmp_path, monkeypatch):
@@ -166,6 +216,39 @@ def test_email_security_generates_requested_findings(tmp_path):
     names = {finding["name"] for finding in result["findings"]}
     assert "Email spoofing possible" in names
     assert "Phishing risk" in names
+
+
+def test_dns_record_cleaner_drops_dig_resolver_errors(tmp_path):
+    module = ReconModule("example.com", str(tmp_path), {})
+
+    lines = module._clean_dns_lines(
+        ";; communications error to 192.168.122.1#53: timed out\n"
+        "SERVFAIL\n"
+        "198.51.100.10\n"
+        "mail.example.com.\n"
+        ";; no servers could be reached\n"
+    )
+
+    assert lines == ["198.51.100.10", "mail.example.com."]
+
+
+def test_http_probe_saves_clean_urls_from_httpx_plain_output(tmp_path, monkeypatch):
+    module = ReconModule("example.com", str(tmp_path), {})
+    module.subdomains = {"www.example.com"}
+
+    monkeypatch.setattr(module, "has_tool", lambda tool: tool == "httpx")
+
+    def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        module.save_text("https://www.example.com [200] [Welcome]\n", "subdomains/httpx_live.txt")
+        class Result:
+            stdout = ""
+        return Result()
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+
+    module._http_probe()
+
+    assert module.live_http == ["https://www.example.com"]
 
 
 def test_asn_filter_excludes_cdn_cloud_ips_from_scan_targets(tmp_path):

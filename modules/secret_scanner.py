@@ -3,6 +3,7 @@ ReconX - Module: public Git repository secret scanning with Gitleaks.
 """
 
 import json
+import hashlib
 import re
 import shutil
 import tempfile
@@ -129,9 +130,11 @@ class SecretScannerModule(BaseModule):
         return findings
 
     def _normalize_secret(self, item: dict, repo_url: str) -> dict:
+        cfg = self.config.get("scan", {}).get("secret_scanner", {})
         rule = item.get("RuleID") or item.get("rule_id") or item.get("Description") or "secret"
         file_path = item.get("File") or item.get("file") or ""
         line = item.get("StartLine") or item.get("Line") or item.get("line") or ""
+        raw = item if cfg.get("retain_raw_secrets", False) else self._sanitize_raw_item(item)
         title = f"Potential secret detected: {rule}"
         return {
             "source": self.name,
@@ -149,12 +152,33 @@ class SecretScannerModule(BaseModule):
                 "line": line,
                 "rule": rule,
                 "fingerprint": item.get("Fingerprint", ""),
-                "raw": item,
+                "raw": raw,
             },
             "confidence": 0.9,
         }
+
+    @classmethod
+    def _sanitize_raw_item(cls, item: dict) -> dict:
+        sanitized: dict = {}
+        for key, value in item.items():
+            if str(key).lower() in {"secret", "match"}:
+                sanitized[key] = cls._redact_secret(str(value))
+                sanitized[f"{key}_sha256"] = cls._fingerprint_secret(str(value))
+            else:
+                sanitized[key] = value
+        return sanitized
 
     @staticmethod
     def _safe_name(value: str) -> str:
         safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(value or "").strip())
         return safe.strip("._")[:120] or "repo"
+
+    @staticmethod
+    def _redact_secret(value: str) -> str:
+        if len(value) <= 10:
+            return "***"
+        return f"{value[:4]}...{value[-4:]}"
+
+    @staticmethod
+    def _fingerprint_secret(value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:16]

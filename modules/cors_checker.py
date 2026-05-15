@@ -45,6 +45,7 @@ class CORSCheckerModule(BaseModule):
         findings: list[dict] = []
         for url in urls:
             findings.extend(self._check_url(url, sess))
+        findings = self._dedup(findings)
 
         self.save_json(findings, "cors_findings.json")
         if findings:
@@ -78,7 +79,7 @@ class CORSCheckerModule(BaseModule):
             actual_severity = severity
             if acao == "*":
                 finding_type = "cors_wildcard_origin"
-                actual_severity = "CRITICAL" if acac == "true" else "MEDIUM"
+                actual_severity = "MEDIUM"
             elif origin == "null" and acao == "null":
                 finding_type = "cors_null_origin"
             elif acao == origin:
@@ -86,7 +87,7 @@ class CORSCheckerModule(BaseModule):
 
             if not finding_type:
                 continue
-            if acac == "true" and actual_severity != "CRITICAL":
+            if acao != "*" and acac == "true" and actual_severity != "CRITICAL":
                 actual_severity = "CRITICAL"
 
             findings.append({
@@ -106,20 +107,43 @@ class CORSCheckerModule(BaseModule):
                     "origin_sent": origin,
                     "access_control_allow_origin": acao,
                     "access_control_allow_credentials": acac,
+                    "browser_note": (
+                        "Browsers reject credentialed CORS reads when ACAO is '*'."
+                        if acao == "*" and acac == "true" else ""
+                    ),
                 },
                 "poc": self._poc(url, origin, acac == "true"),
                 "confidence": 0.95,
             })
 
-        return findings
+        return self._dedup(findings)
 
     @staticmethod
     def _poc(url: str, origin: str, credentialed: bool) -> str:
         creds = "credentials: 'include', " if credentialed else ""
         return (
-            f"fetch('{url}', {{{creds}headers: {{Origin: '{origin}'}}}})"
+            f"// Host this page on {origin}; the browser will set the Origin header.\n"
+            f"fetch('{url}', {{{creds}}})"
             ".then(r => r.text()).then(console.log)"
         )
+
+    @staticmethod
+    def _dedup(findings: list[dict]) -> list[dict]:
+        seen: set[tuple[str, str, str, str]] = set()
+        result: list[dict] = []
+        for finding in findings:
+            evidence = finding.get("evidence", {}) or {}
+            key = (
+                finding.get("id", ""),
+                finding.get("url", ""),
+                evidence.get("access_control_allow_origin", ""),
+                evidence.get("access_control_allow_credentials", ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(finding)
+        return result
 
     def _extract_urls(self) -> list[str]:
         urls: set[str] = set()

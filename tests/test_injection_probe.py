@@ -49,6 +49,20 @@ def test_injection_probe_detects_ssti_response_marker(tmp_path, monkeypatch):
     assert finding["evidence"]["payload"] == "{{7*7}}"
 
 
+def test_injection_probe_ignores_ssti_marker_already_in_baseline(tmp_path, monkeypatch):
+    module = InjectionProbeModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"injection_probe": {"ssrf": False, "ssti": True}}},
+        parameter_results={"parameters": [{"url": "https://example.com/search", "param": "q"}]},
+    )
+    monkeypatch.setattr(module, "http_get", lambda url, **kwargs: Response("page already says 49"))
+
+    result = module.run()
+
+    assert result["findings"] == []
+
+
 def test_injection_probe_detects_ssrf_oob_interaction(tmp_path, monkeypatch):
     module = InjectionProbeModule(
         "example.com",

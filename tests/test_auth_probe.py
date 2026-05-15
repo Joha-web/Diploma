@@ -27,3 +27,11 @@ def test_auth_probe_cookie_flags(tmp_path):
     assert "cookie_missing_secure" in types
     assert "cookie_missing_httponly" in types
     assert "cookie_weak_samesite" in types
+
+
+def test_auth_probe_cookie_value_does_not_mask_missing_secure_flag(tmp_path):
+    module = AuthProbeModule("example.com", str(tmp_path), {}, live_hosts=[])
+
+    findings = module._audit_cookies("https://example.com", ["sid=contains-secure-word; Path=/; HttpOnly; SameSite=Lax"])
+
+    assert any(f["type"] == "cookie_missing_secure" for f in findings)

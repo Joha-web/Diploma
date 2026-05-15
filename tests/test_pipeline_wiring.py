@@ -1,4 +1,6 @@
-from main import CLASS_MAP, MODULE_LABELS, PIPELINE, _build_kwargs, _module_summary
+import pytest
+
+from main import CLASS_MAP, MODULE_LABELS, PIPELINE, _build_kwargs, _module_summary, _select_active_modules
 
 
 def test_new_modules_are_wired_into_pipeline():
@@ -70,3 +72,13 @@ def test_new_module_summaries():
     assert _module_summary("injection_probe", {"status": "completed", "total": 3}) == "3 injection finding(s)"
     assert _module_summary("http_smuggling", {"status": "completed", "total": 1}) == "1 findings"
     assert _module_summary("idor_probe", {"status": "completed", "total": 2}) == "2 findings"
+
+
+def test_select_active_modules_rejects_unknown_module():
+    with pytest.raises(ValueError, match="unknown_module"):
+        _select_active_modules("recon,unknown_module", "")
+
+
+def test_select_active_modules_rejects_empty_selection():
+    with pytest.raises(ValueError, match="No modules selected"):
+        _select_active_modules("recon", "recon")

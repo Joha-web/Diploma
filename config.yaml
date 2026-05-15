@@ -7,9 +7,9 @@
 api_keys:
   shodan:     ""
   virustotal: ""
-  wpscan:     ""          # or env WPSCAN_API_TOKEN; free at https://wpscan.com/register
-  censys_api_id: ""            # optional; only needed for Legacy Search API
-  censys_api_secret: ""        # Platform PAT, or Legacy secret when censys_api_id is set
+  wpscan:     ""
+  censys_api_id: ""
+  censys_api_secret: ""
   securitytrails: ""
   binaryedge:  ""
   github:     ""
@@ -40,8 +40,8 @@ auth_profiles:
 # ── Telegram Notifications ───────────────────────────────────
 telegram:
   enabled:   true
-  bot_token: ""           # Use env TELEGRAM_BOT_TOKEN
-  chat_id:   ""           # Use env TELEGRAM_CHAT_ID
+  bot_token: ""
+  chat_id:   ""
   notify_on:
     - start
     - module_complete
@@ -87,6 +87,10 @@ scan:
     use_github:       true
     use_securitytrails: false  # disabled by default to avoid free-tier quota burn
     use_binaryedge:   false    # disabled by default to avoid free-tier quota burn
+    api_retries:      1         # retry passive API 429/5xx/request failures
+    api_retry_delay:  1.0       # initial retry delay in seconds
+    api_retry_backoff: 2.0      # delay multiplier after each retry
+    api_retry_max_delay: 10.0   # cap Retry-After/backoff delays
     wayback_timeout:  15        # seconds; CDX often stalls on large domains
     wayback_limit:    1000      # lower is faster and less likely to time out
     github_per_page:  30        # GitHub code search results to inspect

@@ -27,6 +27,7 @@ from modules.audit import AuditLogger
 from modules.rate_limiter import TokenBucket
 
 console = Console()
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _CTRL_C_SKIP_WINDOW = 2.0
 _COMMAND_POLL_INTERVAL = 0.2
@@ -151,7 +152,7 @@ class BaseModule:
     # ── Tool availability ────────────────────────────────────────
     @staticmethod
     def has_tool(name: str) -> bool:
-        return shutil.which(name) is not None
+        return shutil.which(name, path=BaseModule._tool_search_path()) is not None
 
     def check_tools(self) -> dict:
         status = {}
@@ -283,6 +284,7 @@ class BaseModule:
     def _subprocess_env(self) -> dict:
         """Pass configured API tokens to external tools without printing them."""
         env = os.environ.copy()
+        env["PATH"] = self._tool_search_path(env.get("PATH"))
         keys = self.config.get("api_keys", {})
         mapping = {
             "pdcp": "PDCP_API_KEY",
@@ -299,7 +301,22 @@ class BaseModule:
             value = str(keys.get(config_key, "")).strip()
             if value and not env.get(env_key):
                 env[env_key] = value
+        censys_secret = str(keys.get("censys_api_secret", "")).strip()
+        if censys_secret and not env.get("CENSYS_PAT"):
+            env["CENSYS_PAT"] = censys_secret
         return env
+
+    @staticmethod
+    def _tool_search_path(base_path: str | None = None) -> str:
+        parts: list[str] = []
+        configured = os.getenv("RECONX_TOOL_PATH", "")
+        if configured:
+            parts.extend(p for p in configured.split(os.pathsep) if p)
+        local_bin = REPO_ROOT / ".tools" / "bin"
+        if local_bin.exists():
+            parts.append(str(local_bin))
+        parts.append(base_path if base_path is not None else os.getenv("PATH", ""))
+        return os.pathsep.join(p for p in parts if p)
 
     # ── HTTP helpers: scope, rate limiting, audit ─────────────────────────
     def http_request(
@@ -538,7 +555,7 @@ class BaseModule:
             self.results = self.run()
             if self.interrupted_commands:
                 self.results["interrupted_commands"] = self.interrupted_commands
-            self.results["status"] = "completed"
+            self.results.setdefault("status", "completed")
         except KeyboardInterrupt:
             if scan_abort_requested():
                 raise
