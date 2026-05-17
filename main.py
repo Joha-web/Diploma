@@ -75,6 +75,8 @@ PIPELINE: list[dict] = [
     {"name": "websocket_probe", "group": 6},
     {"name": "api_schema_audit", "group": 6},
     {"name": "js_security_audit", "group": 6},
+    {"name": "xss", "group": 7},
+    {"name": "sql_injection", "group": 7},
     {"name": "idor_probe", "group": 7},
     {"name": "vulnscan",    "group": 7},
     {"name": "cve_check",   "group": 8},
@@ -115,6 +117,8 @@ CLASS_MAP = {
     "websocket_probe": ("modules.websocket_probe", "WebSocketProbeModule"),
     "api_schema_audit": ("modules.api_schema_audit", "APISchemaAuditModule"),
     "js_security_audit": ("modules.js_security_audit", "JSSecurityAuditModule"),
+    "xss": ("modules.xss", "XSSModule"),
+    "sql_injection": ("modules.sql_injection", "SQLInjectionModule"),
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
     "cve_check":   ("modules.cve_check",    "CVECheckModule"),
     "correlator":  ("modules.correlator",   "CorrelatorModule"),
@@ -155,6 +159,8 @@ MODULE_LABELS = {
     "websocket_probe": "WebSocket Security Checks",
     "api_schema_audit": "OpenAPI Security Schema Audit",
     "js_security_audit": "Static JavaScript Security Audit",
+    "xss": "Cross-Site Scripting Testing",
+    "sql_injection": "SQL Injection Testing (sqlmap)",
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
     "cve_check":   "CVE & ExploitDB Correlation",
     "correlator":  "Cross-Finding Correlation",
@@ -167,6 +173,7 @@ ACTIVE_PROBE_MODULES = (
     "deserialization_probe", "graphql_audit", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe",
     "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
+    "xss", "sql_injection",
 )
 
 CONFIG_PRESETS = {
@@ -180,6 +187,7 @@ CONFIG_PRESETS = {
             "websocket_probe": {"active_handshake": True, "message_probe": False, "max_endpoints": 30},
             "api_schema_audit": {"max_endpoints": 300},
             "js_security_audit": {"max_js": 80},
+            "xss": {"max_targets": 40, "max_requests": 120, "max_payloads": 2, "use_dalfox": False},
             "race_condition": {"active_probe": False},
             "api_key_validator": {"live_validation": False},
         },
@@ -194,6 +202,7 @@ CONFIG_PRESETS = {
             "websocket_probe": {"active_handshake": True, "check_origin": True, "message_probe": False},
             "api_schema_audit": {"max_endpoints": 500},
             "js_security_audit": {"max_js": 150},
+            "xss": {"max_targets": 120, "max_requests": 300, "max_payloads": 4, "use_dalfox": True},
             "race_condition": {"active_probe": False},
             "api_key_validator": {"live_validation": False},
         },
@@ -208,6 +217,7 @@ CONFIG_PRESETS = {
             "websocket_probe": {"active_handshake": True, "check_origin": True, "max_endpoints": 100},
             "api_schema_audit": {"max_endpoints": 1000},
             "js_security_audit": {"max_js": 300},
+            "xss": {"max_targets": 250, "max_requests": 700, "max_payloads": 5, "use_dalfox": True},
             "race_condition": {"active_probe": False},
         },
     },
@@ -218,6 +228,7 @@ CONFIG_PRESETS = {
             "global_rate_limit": 20,
             "idor_probe": {"compare_profiles": True, "check_anonymous": True, "max_candidates": 500},
             "websocket_probe": {"active_handshake": True, "check_origin": True, "message_probe": True},
+            "xss": {"max_targets": 300, "max_requests": 900, "max_payloads": 5, "use_dalfox": True},
             "race_condition": {"active_probe": True},
             "api_key_validator": {"live_validation": True},
             "fuzzing": {"retain_raw_secrets": True},
@@ -303,6 +314,12 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
         kwargs["openapi_results"] = all_results.get("openapi_parser", {})
     elif name == "injection_probe":
+        kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "sql_injection":
+        kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "xss":
         kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
     elif name == "host_header_injection":
@@ -398,6 +415,7 @@ def _module_summary(name: str, result: dict) -> str:
         "prototype_pollution", "xxe_probe", "deserialization_probe", "graphql_audit",
         "race_condition", "open_redirect_probe", "api_key_validator", "idor_probe",
         "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
+        "xss", "sql_injection",
     ):
         return f"{result.get('total', len(result.get('findings', [])))} findings"
     elif name == "vhost_enum":
@@ -726,6 +744,8 @@ def _md_report(
         ("cors_checker", "CORS Findings"),
         ("auth_probe", "Auth Findings"),
         ("injection_probe", "Injection Probe Findings"),
+        ("xss", "XSS Findings"),
+        ("sql_injection", "SQL Injection Findings"),
         ("http_smuggling", "HTTP Smuggling Findings"),
         ("oauth_probe", "OAuth / OIDC Findings"),
         ("cache_poison", "Cache Poisoning Findings"),

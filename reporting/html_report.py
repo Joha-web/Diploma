@@ -84,6 +84,8 @@ class HTMLReportGenerator:
         email_security = recon.get("email_security", {}) or {}
         active_probe_sections = [
             ("injection-probe", "Injection Probe Findings", r.get("injection_probe", {})),
+            ("xss", "XSS Findings", r.get("xss", {})),
+            ("sql-injection", "SQL Injection Findings", r.get("sql_injection", {})),
             ("http-smuggling", "HTTP Smuggling Findings", r.get("http_smuggling", {})),
             ("oauth-probe", "OAuth / OIDC Findings", r.get("oauth_probe", {})),
             ("cache-poison", "Cache Poisoning Findings", r.get("cache_poison", {})),

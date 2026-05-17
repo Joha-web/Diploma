@@ -24,6 +24,8 @@ def test_new_modules_are_wired_into_pipeline():
     }
     post_parameter_modules = {
         "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),
+        "xss": ("modules.xss", "XSSModule"),
+        "sql_injection": ("modules.sql_injection", "SQLInjectionModule"),
         "idor_probe": ("modules.idor_probe", "IDORProbeModule"),
     }
 
@@ -31,6 +33,10 @@ def test_new_modules_are_wired_into_pipeline():
     assert CLASS_MAP["secret_scanner"] == ("modules.secret_scanner", "SecretScannerModule")
     assert CLASS_MAP["injection_probe"] == ("modules.injection_probe", "InjectionProbeModule")
     assert MODULE_LABELS["injection_probe"] == "SSRF / SSTI / XXE Detection"
+    assert CLASS_MAP["xss"] == ("modules.xss", "XSSModule")
+    assert MODULE_LABELS["xss"] == "Cross-Site Scripting Testing"
+    assert CLASS_MAP["sql_injection"] == ("modules.sql_injection", "SQLInjectionModule")
+    assert MODULE_LABELS["sql_injection"] == "SQL Injection Testing (sqlmap)"
     for module_name, class_ref in active_modules.items():
         assert groups[module_name] == 6
         assert CLASS_MAP[module_name] == class_ref
@@ -46,6 +52,30 @@ def test_injection_probe_kwargs_use_parameter_and_fuzzer_results():
     }
 
     kwargs = _build_kwargs("injection_probe", all_results)
+
+    assert kwargs["parameter_results"] is all_results["parameter_discovery"]
+    assert kwargs["fuzzer_results"] is all_results["fuzzer"]
+
+
+def test_sql_injection_kwargs_use_parameter_and_fuzzer_results():
+    all_results = {
+        "parameter_discovery": {"parameters": [{"url": "https://example.com", "param": "id"}]},
+        "fuzzer": {"classified": {"with_params": ["https://example.com/?id=1"]}},
+    }
+
+    kwargs = _build_kwargs("sql_injection", all_results)
+
+    assert kwargs["parameter_results"] is all_results["parameter_discovery"]
+    assert kwargs["fuzzer_results"] is all_results["fuzzer"]
+
+
+def test_xss_kwargs_use_parameter_and_fuzzer_results():
+    all_results = {
+        "parameter_discovery": {"parameters": [{"url": "https://example.com", "param": "q"}]},
+        "fuzzer": {"classified": {"with_params": ["https://example.com/?q=x"]}},
+    }
+
+    kwargs = _build_kwargs("xss", all_results)
 
     assert kwargs["parameter_results"] is all_results["parameter_discovery"]
     assert kwargs["fuzzer_results"] is all_results["fuzzer"]
@@ -70,6 +100,8 @@ def test_active_probe_kwargs_use_prior_results():
 def test_new_module_summaries():
     assert _module_summary("secret_scanner", {"status": "completed", "total": 2}) == "2 git secret finding(s)"
     assert _module_summary("injection_probe", {"status": "completed", "total": 3}) == "3 injection finding(s)"
+    assert _module_summary("xss", {"status": "completed", "total": 2}) == "2 findings"
+    assert _module_summary("sql_injection", {"status": "completed", "total": 1}) == "1 findings"
     assert _module_summary("http_smuggling", {"status": "completed", "total": 1}) == "1 findings"
     assert _module_summary("idor_probe", {"status": "completed", "total": 2}) == "2 findings"
 

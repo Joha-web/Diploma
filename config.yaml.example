@@ -165,6 +165,35 @@ scan:
     ssrf: true
     inband_ssrf: false
 
+  sql_injection:
+    enabled: true
+    max_targets: 10
+    timeout: 900
+    level: 1
+    risk: 1
+    threads: 1
+    request_timeout: 10
+    retries: 1
+    smart: true
+    random_agent: true
+    forms: false
+    crawl: 0
+    tamper: ""
+    extra_args: []
+
+  xss:
+    enabled: true
+    max_targets: 25
+    timeout: 600
+    use_dalfox: true
+    fallback_reflection: true
+    max_requests: 150
+    max_payloads: 2
+    request_timeout: 10
+    workers: 1
+    dalfox_timeout: 600
+    dalfox_extra_args: []
+
   http_smuggling:
     enabled: true
     max_urls: 40

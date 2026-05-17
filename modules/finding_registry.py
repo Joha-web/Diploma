@@ -62,6 +62,10 @@ REFERENCE_SETS = {
         "https://portswigger.net/web-security/cross-site-scripting/dom-based",
         "https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html",
     ),
+    "xss": (
+        "https://portswigger.net/web-security/cross-site-scripting",
+        "https://owasp.org/www-community/attacks/xss/",
+    ),
 }
 
 
@@ -329,6 +333,50 @@ FINDING_DEFINITIONS: dict[str, FindingDefinition] = {
         REFERENCE_SETS["javascript"],
         "passive",
         ("javascript", "redirect"),
+    ),
+    "xss_html_injection_candidate": FindingDefinition(
+        "xss_html_injection_candidate",
+        "Reflected HTML injection indicates XSS risk",
+        "HIGH",
+        0.82,
+        "xss",
+        "A reflected payload was returned as raw HTML, indicating likely reflected XSS exposure.",
+        REFERENCE_SETS["xss"],
+        "active",
+        ("xss", "reflected", "html-injection"),
+    ),
+    "xss_script_context_reflection": FindingDefinition(
+        "xss_script_context_reflection",
+        "Reflected input in script context",
+        "HIGH",
+        0.78,
+        "xss",
+        "A marker was reflected inside a script block, where escaping mistakes can become executable XSS.",
+        REFERENCE_SETS["xss"],
+        "active",
+        ("xss", "reflected", "script-context"),
+    ),
+    "xss_attribute_context_reflection": FindingDefinition(
+        "xss_attribute_context_reflection",
+        "Reflected input in HTML attribute context",
+        "MEDIUM",
+        0.74,
+        "xss",
+        "A marker was reflected inside an HTML tag or attribute context.",
+        REFERENCE_SETS["xss"],
+        "active",
+        ("xss", "reflected", "attribute-context"),
+    ),
+    "xss_reflected_input": FindingDefinition(
+        "xss_reflected_input",
+        "Reflected input observed",
+        "LOW",
+        0.62,
+        "xss",
+        "A marker was reflected by the application, but the observed context did not prove executable XSS.",
+        REFERENCE_SETS["xss"],
+        "candidate",
+        ("xss", "reflected"),
     ),
 }
 
