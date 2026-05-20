@@ -28,6 +28,21 @@ CLASSIFY_PATTERNS: dict[str, str] = {
     "sensitive_files":r"\.(env|git|bak|backup|old|sql|db|sqlite|dump|log|config|cfg|conf|ini|key|pem|p12|pfx|zip|tar|gz)(\?|$)",
     "admin_panels":   r"/(admin|administrator|dashboard|console|panel|manage|management|debug|test|dev|staging|internal|actuator|monitor|metrics)",
     "with_params":    r"\?.*=",
+    # Folders/directories that often contain leftover artifacts, credentials,
+    # or unintended exposure. Matches a path segment, not a substring.
+    "interesting_directories": (
+        r"/(backup|backups|bak|old|legacy|archive|archives|trash|deleted|"
+        r"dev|devel|test|tests|staging|stage|internal|private|hidden|"
+        r"tmp|temp|cache|caches|uploads?|files?|storage|store|"
+        r"data|database|db|logs?|server-status|server-info|"
+        r"\.well-known|\.git|\.svn|\.hg|\.env|\.aws|\.ssh|\.docker|"
+        r"config|configs|configuration|conf|etc|secrets?)(/|\?|$)"
+    ),
+    # Concrete API-like resource paths (e.g. /api/users, /v1/orders/123).
+    # Distinguished from the broader "api" bucket by requiring a resource segment.
+    "interesting_endpoints": (
+        r"/(api|rest|rpc|graphql|v[0-9]+(?:\.[0-9]+)?)/[a-zA-Z][a-zA-Z0-9_.-]*"
+    ),
 }
 
 # Static asset extensions — never classify these as admin panels

@@ -11,6 +11,7 @@ import json
 import ipaddress
 import requests
 from requests.auth import HTTPBasicAuth
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .base import BaseModule
 
@@ -32,6 +33,7 @@ class ReconModule(BaseModule):
         self.resolved_ips: set[str] = set()
         self.live_http: list[str] = []
         self.pingable_hosts: list[str] = []
+        self.live_subdomains: list[dict] = []
         self.wildcard_ips: set[str] = set()
         for sub in ("subdomains", "dns", "urls", "passive"):
             (self.module_dir / sub).mkdir(exist_ok=True)
@@ -55,6 +57,7 @@ class ReconModule(BaseModule):
         self._resolve_subdomains()
         self._ping_check()
         self._http_probe()
+        self._classify_live_subdomains()
         urls   = self._collect_urls()
         asn_info = self._asn_lookup()
         scan_ips = self._scan_target_ips(asn_info)
@@ -72,6 +75,8 @@ class ReconModule(BaseModule):
             "resolved_ips": sorted(self.resolved_ips),
             "scan_ips": scan_ips,
             "live_http": self.live_http, "urls": urls,
+            "live_subdomains": self.live_subdomains,
+            "live_subdomains_total": sum(1 for s in self.live_subdomains if s["live"]),
             "asn": asn_info,
         }
 
@@ -797,6 +802,65 @@ class ReconModule(BaseModule):
                 urls.append(match.group(0).strip())
         self.live_http = self.filter_in_scope_urls(urls)
         self.success(f"Live HTTP hosts: {len(self.live_http)}")
+
+    # ── Live-subdomain aggregation ────────────────────────────────────────────
+
+    def _classify_live_subdomains(self) -> None:
+        """Combine DNS / ICMP / HTTP signals into a single per-subdomain verdict.
+
+        A subdomain is considered 'live' if at least one signal fired. Each entry
+        records which signals matched so consumers can prioritize follow-up.
+        """
+        if not self.subdomains:
+            return
+
+        resolved_set: set[str] = set()
+        ips_by_host: dict[str, list[str]] = {}
+        for entry in self.resolved_hosts:
+            host = entry.split(" ", 1)[0].strip()
+            if not host:
+                continue
+            resolved_set.add(host)
+            ips = re.findall(r"\[(\d+\.\d+\.\d+\.\d+)\]", entry)
+            if ips:
+                ips_by_host.setdefault(host, []).extend(ips)
+
+        pingable_set = set(self.pingable_hosts)
+        http_by_host: dict[str, list[str]] = {}
+        for url in self.live_http:
+            host = (urlparse(url).hostname or "").lower()
+            if host:
+                http_by_host.setdefault(host, []).append(url)
+
+        records: list[dict] = []
+        for sub in sorted(self.subdomains):
+            host = sub.lower()
+            reasons: list[str] = []
+            if sub in resolved_set or host in resolved_set:
+                reasons.append("dns")
+            if sub in pingable_set or host in pingable_set:
+                reasons.append("ping")
+            urls = http_by_host.get(host, [])
+            if urls:
+                reasons.append("http")
+            records.append({
+                "subdomain": sub,
+                "live": bool(reasons),
+                "reasons": reasons,
+                "ips": sorted(set(ips_by_host.get(sub, []) + ips_by_host.get(host, []))),
+                "urls": sorted(set(urls)),
+            })
+
+        self.live_subdomains = records
+        live_only = [r for r in records if r["live"]]
+        self.save_json(records, "subdomains/live_subdomains.json")
+        self.save_text([r["subdomain"] for r in live_only], "subdomains/live_subdomains.txt")
+        self.success(
+            f"Live subdomains: {len(live_only)} / {len(records)} "
+            f"(dns={sum('dns' in r['reasons'] for r in live_only)}, "
+            f"ping={sum('ping' in r['reasons'] for r in live_only)}, "
+            f"http={sum('http' in r['reasons'] for r in live_only)})"
+        )
 
     # ── URL collection ────────────────────────────────────────────────────────
 

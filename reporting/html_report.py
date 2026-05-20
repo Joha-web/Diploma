@@ -82,6 +82,7 @@ class HTMLReportGenerator:
         params = r.get("parameter_discovery", {})
         injection = r.get("injection_probe", {})
         corr = r.get("correlator", {})
+        asset_risk = r.get("asset_risk", {})
         email_security = recon.get("email_security", {}) or {}
         active_probe_sections = [
             ("injection-probe", "Injection Probe Findings", r.get("injection_probe", {})),
@@ -139,6 +140,13 @@ class HTMLReportGenerator:
             extra_finding_sections,
             active_probe_sections,
         )
+        verdict_counts = self._all_finding_verdict_counts(
+            vuln,
+            cms,
+            cve,
+            extra_finding_sections,
+            active_probe_sections,
+        )
         active_probe_total = sum(
             module.get("total", len(module.get("findings", [])))
             for _, _, module in active_probe_sections
@@ -182,6 +190,7 @@ class HTMLReportGenerator:
             "correlated":      corr.get("total", 0),
             "screenshots":     len(web.get("screenshots", [])),
             "finding_severity": severity_counts,
+            "verdict_counts":  verdict_counts,
             "risk_level":      self._risk_level(severity_counts),
         }
 
@@ -224,6 +233,7 @@ class HTMLReportGenerator:
             "params":      params,
             "injection":   injection,
             "corr":        corr,
+            "asset_risk":  asset_risk,
             "email_security": email_security,
             "extra_finding_sections": extra_finding_sections,
             "active_probe_sections": active_probe_sections,
@@ -276,6 +286,45 @@ class HTMLReportGenerator:
         for finding in cve.get("cves", []) or []:
             add_finding(finding)
 
+        return counts
+
+    @staticmethod
+    def _all_finding_verdict_counts(
+        vuln: dict,
+        cms: dict,
+        cve: dict,
+        extra_finding_sections: list,
+        active_probe_sections: list,
+    ) -> dict:
+        from modules.finding_registry import (
+            VERDICT_CONFIRMED, VERDICT_CANDIDATE, VERDICT_REVIEW, verdict_for,
+        )
+
+        counts = {VERDICT_CONFIRMED: 0, VERDICT_CANDIDATE: 0, VERDICT_REVIEW: 0}
+
+        def add(finding: dict) -> None:
+            v = finding.get("verdict")
+            if v not in counts:
+                v = verdict_for(
+                    finding.get("exploitability", "candidate"),
+                    finding.get("evidence", {}),
+                    finding.get("confidence", 0.75),
+                )
+            counts[v] = counts.get(v, 0) + 1
+
+        for finding in vuln.get("findings", []) or []:
+            add(finding)
+        for _, _, findings in extra_finding_sections:
+            for f in findings or []:
+                add(f)
+        for _, _, module in active_probe_sections:
+            for f in module.get("findings", []) or []:
+                add(f)
+        for scan in cms.get("scans", []) or []:
+            for f in scan.get("findings", []) or []:
+                add(f)
+        for f in cve.get("cves", []) or []:
+            add(f)
         return counts
 
     @staticmethod
@@ -340,21 +389,29 @@ class HTMLReportGenerator:
 
     @staticmethod
     def _build_finding_descriptions(r: dict) -> dict:
-        """Build human-readable descriptions for common finding types."""
+        """Build human-readable descriptions for common finding types.
+
+        Each entry has four fields:
+          * title       — human label
+          * impact      — what an attacker can do with the issue
+          * detection   — how ReconX evaluates / detects the issue and how
+                          confidence and severity are assigned
+          * remediation — what to do about it
+        """
         return {
-            "xss": {"title": "Cross-Site Scripting (XSS)", "impact": "Attackers can inject malicious scripts into web pages viewed by other users, potentially stealing session cookies, credentials, or performing actions on behalf of the victim.", "remediation": "Encode all user-controlled output. Use Content-Security-Policy headers. Validate and sanitize input."},
-            "sql_injection": {"title": "SQL Injection", "impact": "Attackers can manipulate database queries to read, modify, or delete data. May lead to full database compromise, authentication bypass, or remote code execution.", "remediation": "Use parameterized queries/prepared statements. Apply input validation. Use least-privilege database accounts."},
-            "injection_probe": {"title": "Server-Side Injection (SSTI/SSRF)", "impact": "Attackers can execute arbitrary code on the server (SSTI) or make the server send requests to internal services (SSRF), potentially accessing internal networks.", "remediation": "Sanitize template inputs. Restrict outbound network access. Use allowlists for URL parameters."},
-            "cors_checker": {"title": "CORS Misconfiguration", "impact": "Overly permissive CORS policies can allow malicious websites to make authenticated requests to the application, stealing sensitive data.", "remediation": "Restrict Access-Control-Allow-Origin to trusted domains. Avoid wildcard origins with credentials."},
-            "auth_probe": {"title": "Authentication/Authorization Issues", "impact": "Weak authentication configurations can allow unauthorized access, session hijacking, or privilege escalation.", "remediation": "Implement secure session management. Use HttpOnly and Secure cookie flags. Enforce strong password policies."},
-            "ssl_checker": {"title": "SSL/TLS & Security Headers", "impact": "Weak SSL configurations or missing security headers can expose users to man-in-the-middle attacks, clickjacking, and XSS.", "remediation": "Use TLS 1.2+. Add HSTS, CSP, X-Frame-Options, X-Content-Type-Options headers."},
-            "prototype_pollution": {"title": "Prototype Pollution", "impact": "Attackers can modify JavaScript object prototypes, potentially leading to property injection, denial of service, or remote code execution.", "remediation": "Use Object.create(null) for maps. Validate and sanitize user input. Use __proto__ pollution prevention libraries."},
-            "http_smuggling": {"title": "HTTP Request Smuggling", "impact": "Attackers can bypass security controls, access unauthorized content, or poison web caches by exploiting discrepancies in HTTP request parsing.", "remediation": "Use HTTP/2 end-to-end. Normalize Transfer-Encoding handling. Ensure consistent parsing across proxy layers."},
-            "open_redirect_probe": {"title": "Open Redirect", "impact": "Attackers can redirect users to malicious websites for phishing or malware delivery while the URL appears legitimate.", "remediation": "Validate redirect URLs against an allowlist. Avoid using user input directly in redirects."},
-            "jwt_audit": {"title": "JWT Security Issues", "impact": "Weak JWT configurations can allow token forgery, authentication bypass, or privilege escalation.", "remediation": "Use strong signing algorithms (RS256/ES256). Validate all claims. Set appropriate expiration times."},
-            "idor_probe": {"title": "Insecure Direct Object Reference (IDOR)", "impact": "Attackers can access or modify resources belonging to other users by manipulating object identifiers in API requests.", "remediation": "Implement proper authorization checks. Use indirect references. Validate user permissions server-side."},
-            "secret_scanner": {"title": "Exposed Secrets in Git Repositories", "impact": "API keys, passwords, and tokens leaked in source code can provide direct access to backend services and cloud infrastructure.", "remediation": "Rotate all exposed credentials immediately. Use environment variables or secret managers. Add .gitignore rules."},
-            "takeover_checker": {"title": "Subdomain Takeover", "impact": "Unclaimed subdomains pointing to expired services can be taken over by attackers to host malicious content under the organization's domain.", "remediation": "Remove stale DNS records. Monitor subdomain health. Claim or decommission unused services."},
+            "xss": {"title": "Cross-Site Scripting (XSS)", "impact": "Attackers can inject malicious scripts into web pages viewed by other users, potentially stealing session cookies, credentials, or performing actions on behalf of the victim.", "detection": "Reflection probes inject context-aware markers into each discovered parameter and re-render the response. When dalfox confirms an executable payload the finding is upgraded to HIGH with confidence 0.90; pure reflections without a working sink stay LOW.", "remediation": "Encode all user-controlled output. Use Content-Security-Policy headers. Validate and sanitize input."},
+            "sql_injection": {"title": "SQL Injection", "impact": "Attackers can manipulate database queries to read, modify, or delete data. May lead to full database compromise, authentication bypass, or remote code execution.", "detection": "sqlmap is run in --batch mode against parameters surfaced by parameter_discovery and fuzzer. A finding is emitted only when sqlmap prints an explicit injection point, so severity is fixed at HIGH with confidence 0.9.", "remediation": "Use parameterized queries/prepared statements. Apply input validation. Use least-privilege database accounts."},
+            "injection_probe": {"title": "Server-Side Injection (SSTI/SSRF)", "impact": "Attackers can execute arbitrary code on the server (SSTI) or make the server send requests to internal services (SSRF), potentially accessing internal networks.", "detection": "Out-of-band markers and template tokens are sent through each parameter. SSTI is confirmed when an arithmetic payload renders the computed value; SSRF requires either an OOB callback or a known-private IP echo before being raised above LOW.", "remediation": "Sanitize template inputs. Restrict outbound network access. Use allowlists for URL parameters."},
+            "cors_checker": {"title": "CORS Misconfiguration", "impact": "Overly permissive CORS policies can allow malicious websites to make authenticated requests to the application, stealing sensitive data.", "detection": "Each live URL is probed with five untrusted Origin headers. Reflection of the attacker origin with Access-Control-Allow-Credentials: true is CRITICAL; plain reflections or null-origin acceptance are HIGH; wildcard ACAO without credentials is MEDIUM.", "remediation": "Restrict Access-Control-Allow-Origin to trusted domains. Avoid wildcard origins with credentials."},
+            "auth_probe": {"title": "Authentication/Authorization Issues", "impact": "Weak authentication configurations can allow unauthorized access, session hijacking, or privilege escalation.", "detection": "Session cookies are inspected for HttpOnly / Secure / SameSite flags and login forms are checked for CSRF token presence. Severity scales with how directly the flag relates to session theft (missing HttpOnly + Secure on a session cookie → HIGH).", "remediation": "Implement secure session management. Use HttpOnly and Secure cookie flags. Enforce strong password policies."},
+            "ssl_checker": {"title": "SSL/TLS & Security Headers", "impact": "Weak SSL configurations or missing security headers can expose users to man-in-the-middle attacks, clickjacking, and XSS.", "detection": "testssl.sh (or its built-in fallback) is parsed for protocol/cipher weaknesses and HSTS/CSP/X-Frame-Options presence. Severity follows the canonical mapping (e.g. SSLv3/weak ciphers → HIGH, missing HSTS → MEDIUM).", "remediation": "Use TLS 1.2+. Add HSTS, CSP, X-Frame-Options, X-Content-Type-Options headers."},
+            "prototype_pollution": {"title": "Prototype Pollution", "impact": "Attackers can modify JavaScript object prototypes, potentially leading to property injection, denial of service, or remote code execution.", "detection": "Query and JSON payloads add __proto__/constructor.prototype keys; the response is then inspected for the injected marker on the global Object. A confirmed reflection promotes the finding to HIGH; otherwise it stays an INFO candidate.", "remediation": "Use Object.create(null) for maps. Validate and sanitize user input. Use __proto__ pollution prevention libraries."},
+            "http_smuggling": {"title": "HTTP Request Smuggling", "impact": "Attackers can bypass security controls, access unauthorized content, or poison web caches by exploiting discrepancies in HTTP request parsing.", "detection": "Raw sockets send CL.TE / TE.CL / TE.TE payloads and compare response times against a configured threshold. A measurable timing delta on a smuggling variant raises a HIGH finding with timing evidence attached.", "remediation": "Use HTTP/2 end-to-end. Normalize Transfer-Encoding handling. Ensure consistent parsing across proxy layers."},
+            "open_redirect_probe": {"title": "Open Redirect", "impact": "Attackers can redirect users to malicious websites for phishing or malware delivery while the URL appears legitimate.", "detection": "Redirect parameters are replaced with attacker-controlled URLs; a 30x Location header pointing to the attacker origin is required before a finding is emitted (MEDIUM by default).", "remediation": "Validate redirect URLs against an allowlist. Avoid using user input directly in redirects."},
+            "jwt_audit": {"title": "JWT Security Issues", "impact": "Weak JWT configurations can allow token forgery, authentication bypass, or privilege escalation.", "detection": "Discovered JWTs are decoded; a wordlist-based HMAC crack is attempted and `alg: none`/`alg: HS256` confusion is checked. A successful crack or none-algorithm acceptance is CRITICAL; missing exp/aud claims are MEDIUM.", "remediation": "Use strong signing algorithms (RS256/ES256). Validate all claims. Set appropriate expiration times."},
+            "idor_probe": {"title": "Insecure Direct Object Reference (IDOR)", "impact": "Attackers can access or modify resources belonging to other users by manipulating object identifiers in API requests.", "detection": "Numeric/UUID identifiers in endpoints are swapped between configured auth profiles. A 200 response with different content for the other tenant's ID confirms IDOR and produces a HIGH finding.", "remediation": "Implement proper authorization checks. Use indirect references. Validate user permissions server-side."},
+            "secret_scanner": {"title": "Exposed Secrets in Git Repositories", "impact": "API keys, passwords, and tokens leaked in source code can provide direct access to backend services and cloud infrastructure.", "detection": "trufflehog/gitleaks scan the repository plus dependency manifests; high-entropy strings matching well-known token shapes (AWS, GitHub, Stripe, …) are flagged. Confidence inherits from the upstream tool's verifier (verified secrets → HIGH).", "remediation": "Rotate all exposed credentials immediately. Use environment variables or secret managers. Add .gitignore rules."},
+            "takeover_checker": {"title": "Subdomain Takeover", "impact": "Unclaimed subdomains pointing to expired services can be taken over by attackers to host malicious content under the organization's domain.", "detection": "CNAMEs are matched against a provider fingerprint list; the target page body is compared to the provider's 'not configured' banner. CNAME + body fingerprint match → HIGH; CNAME-only is LOW.", "remediation": "Remove stale DNS records. Monitor subdomain health. Claim or decommission unused services."},
         }
 
     @staticmethod

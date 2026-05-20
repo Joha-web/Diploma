@@ -63,3 +63,48 @@ def test_webdetect_default_host_does_not_steal_port_screenshot(tmp_path):
     )
 
     assert shot is None
+
+
+def test_collect_favicons_attaches_hash_fields(tmp_path, monkeypatch):
+    module = WebdetectModule("example.com", str(tmp_path), {})
+
+    favicon_bytes = b"\x00\x00\x01\x00" + b"ABCDE" * 30
+
+    class FakeResponse:
+        def __init__(self, status_code, content):
+            self.status_code = status_code
+            self.content = content
+
+    def fake_http_get(url, **kwargs):
+        if url.endswith("/favicon.ico"):
+            return FakeResponse(200, favicon_bytes)
+        return FakeResponse(404, b"")
+
+    monkeypatch.setattr(module, "http_get", fake_http_get)
+
+    live = [
+        {"url": "https://app.example.com"},
+        {"url": "https://api.example.com"},
+        {"url": ""},  # ignored
+    ]
+    module._collect_favicons(live)
+
+    assert "favicon_sha256" in live[0]
+    assert live[0]["favicon_size"] == len(favicon_bytes)
+    assert "favicon_sha256" in live[1]
+    assert "favicon_sha256" not in live[2]
+
+
+def test_collect_favicons_skips_non_200(tmp_path, monkeypatch):
+    module = WebdetectModule("example.com", str(tmp_path), {})
+
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+            self.content = b""
+
+    monkeypatch.setattr(module, "http_get", lambda *a, **kw: FakeResponse(404))
+
+    live = [{"url": "https://nofav.example.com"}]
+    module._collect_favicons(live)
+    assert "favicon_sha256" not in live[0]

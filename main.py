@@ -87,7 +87,8 @@ PIPELINE: list[dict] = [
     {"name": "vulnscan",    "group": 11},
     {"name": "cve_check",   "group": 12},
     {"name": "correlator",  "group": 13},
-    {"name": "ai_report",   "group": 14},
+    {"name": "asset_risk",  "group": 14},
+    {"name": "ai_report",   "group": 15},
 ]
 
 CLASS_MAP = {
@@ -128,6 +129,7 @@ CLASS_MAP = {
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
     "cve_check":   ("modules.cve_check",    "CVECheckModule"),
     "correlator":  ("modules.correlator",   "CorrelatorModule"),
+    "asset_risk":  ("modules.asset_risk",   "AssetRiskModule"),
     "ai_report":   ("modules.ai_report",    "AIReportModule"),
 }
 
@@ -170,6 +172,7 @@ MODULE_LABELS = {
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
     "cve_check":   "CVE & ExploitDB Correlation",
     "correlator":  "Cross-Finding Correlation",
+    "asset_risk":  "Per-Asset Risk Ranking",
     "ai_report":   "AI Security Analysis",
 }
 
@@ -377,7 +380,7 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["tech_results"] = all_results.get("techstack", {})
         kwargs["vuln_results"] = all_results.get("vulnscan", {})
         kwargs["all_results"] = all_results
-    elif name in ("correlator", "ai_report"):
+    elif name in ("correlator", "asset_risk", "ai_report"):
         kwargs["all_results"] = all_results
     return kwargs
 
@@ -413,6 +416,10 @@ def _module_summary(name: str, result: dict) -> str:
                 f"{summary.get('with_exploitdb', 0)} ExploitDB match(es)")
     elif name == "correlator":
         return f"{result.get('total', 0)} correlated priority item(s)"
+    elif name == "asset_risk":
+        tier = result.get("tier_summary", {})
+        return (f"{result.get('total_assets', 0)} assets, "
+                f"crit={tier.get('critical', 0)}, high={tier.get('high', 0)}")
     elif name == "cmscan":
         return f"{result.get('total_findings', 0)} findings"
     elif name in (

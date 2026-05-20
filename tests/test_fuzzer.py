@@ -25,6 +25,36 @@ def test_classify_patterns(tmp_path):
     assert classified.get("sensitive_files_unverified", 0) >= 1
 
 
+def test_classify_surfaces_interesting_directories_and_endpoints(tmp_path):
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+
+    classified = module._classify([
+        "https://example.com/backup/",
+        "https://example.com/old/data.zip",
+        "https://example.com/uploads/photo.png",
+        "https://example.com/.git/config",
+        "https://example.com/api/users",
+        "https://example.com/api/v1/orders/123",
+        "https://example.com/v2/products",
+        "https://example.com/graphql/schema",
+        "https://example.com/static/app.js",
+    ])
+
+    interesting_dirs = classified.get("interesting_directories", [])
+    assert any("/backup" in u for u in interesting_dirs)
+    assert any("/old" in u for u in interesting_dirs)
+    assert any("/uploads" in u for u in interesting_dirs)
+    assert any("/.git" in u for u in interesting_dirs)
+    assert not any("/static/" in u for u in interesting_dirs)
+
+    interesting_endpoints = classified.get("interesting_endpoints", [])
+    assert "https://example.com/api/users" in interesting_endpoints
+    assert "https://example.com/api/v1/orders/123" in interesting_endpoints
+    assert "https://example.com/v2/products" in interesting_endpoints
+    assert "https://example.com/graphql/schema" in interesting_endpoints
+    assert "https://example.com/static/app.js" not in interesting_endpoints
+
+
 def test_extract_urls_filters_out_of_scope(tmp_path):
     live_hosts = [
         {"url": "https://example.com"},

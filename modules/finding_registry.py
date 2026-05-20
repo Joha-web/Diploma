@@ -27,6 +27,81 @@ EXPLOITABILITY_WEIGHTS = {
     "confirmed": 0.90,
 }
 
+# Verdict triage. Drives a 'confirmed vs candidate' split in the report so
+# manual review effort can be focused where evidence is strongest.
+VERDICT_CONFIRMED = "confirmed"
+VERDICT_CANDIDATE = "candidate"
+VERDICT_REVIEW = "manual_review"
+
+# CWE / CVSS mapping by finding_type. Vectors are deliberately coarse — they
+# describe the worst-case shape of the bug class, not the per-instance impact.
+# Lookups fall back to None when a category is unknown, so additions are safe.
+CWE_BY_TYPE: dict[str, str] = {
+    "xss": "CWE-79",
+    "sql_injection": "CWE-89",
+    "idor": "CWE-639",
+    "jwt": "CWE-345",
+    "ssrf": "CWE-918",
+    "ssti": "CWE-1336",
+    "xxe": "CWE-611",
+    "open_redirect": "CWE-601",
+    "host_header_injection": "CWE-444",
+    "http_smuggling": "CWE-444",
+    "cache_poison": "CWE-444",
+    "cors_misconfiguration": "CWE-942",
+    "cors_wildcard_origin": "CWE-942",
+    "cors_reflected_origin": "CWE-942",
+    "cors_null_origin": "CWE-942",
+    "prototype_pollution": "CWE-1321",
+    "deserialization": "CWE-502",
+    "graphql_introspection": "CWE-200",
+    "secrets_exposed": "CWE-798",
+    "secret_scanner": "CWE-798",
+    "subdomain_takeover": "CWE-1390",
+    "takeover_checker": "CWE-1390",
+    "auth": "CWE-287",
+    "session_cookie_flags": "CWE-614",
+    "session_management": "CWE-384",
+    "race_condition": "CWE-362",
+    "websocket": "CWE-346",
+    "javascript": "CWE-79",
+    "openapi": "CWE-200",
+    "api_key_validator": "CWE-798",
+    "injection_probe": "CWE-94",
+}
+
+CVSS_BY_TYPE: dict[str, str] = {
+    "xss": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+    "sql_injection": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "idor": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:L/A:N",
+    "jwt": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+    "ssrf": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:L/A:N",
+    "ssti": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "xxe": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:L",
+    "open_redirect": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N",
+    "host_header_injection": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+    "http_smuggling": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:N",
+    "cache_poison": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:L/I:H/A:N",
+    "cors_misconfiguration": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:N/A:N",
+    "cors_wildcard_origin": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N",
+    "cors_reflected_origin": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:N/A:N",
+    "cors_null_origin": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:N/A:N",
+    "prototype_pollution": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "deserialization": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "graphql_introspection": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+    "secrets_exposed": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+    "secret_scanner": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+    "subdomain_takeover": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N",
+    "takeover_checker": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N",
+    "auth": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N",
+    "session_cookie_flags": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N",
+    "race_condition": "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:L/I:H/A:N",
+    "websocket": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+    "javascript": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+    "openapi": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+    "injection_probe": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+}
+
 
 @dataclass(frozen=True)
 class FindingDefinition:
@@ -445,14 +520,19 @@ def build_finding(
         "risk_score": score,
         "exploitability": exp,
         "tags": item_tags,
+        "cwe": cwe_for(item_type, finding_id),
+        "cvss_vector": cvss_for(item_type, finding_id),
+        "verdict": verdict_for(exp, evidence or {}, conf),
     }
 
 
 def normalize_finding(module_name: str, finding: dict[str, Any]) -> dict[str, Any]:
     finding_id = finding.get("id") or finding.get("type", "")
+    finding_type = finding.get("type") or finding_id
     severity = normalize_severity(finding.get("severity", "INFO"))
     confidence = clamp(finding.get("confidence", 0.75))
     exploitability = finding.get("exploitability", "candidate")
+    evidence = finding.get("evidence", {})
     return {
         "source": finding.get("source", module_name),
         "id": finding_id,
@@ -460,7 +540,7 @@ def normalize_finding(module_name: str, finding: dict[str, Any]) -> dict[str, An
         "severity": severity,
         "url": finding.get("url") or finding.get("matched_url", ""),
         "description": finding.get("description", ""),
-        "evidence": finding.get("evidence", {}),
+        "evidence": evidence,
         "references": finding.get("references", []),
         "tags": finding.get("tags", [module_name, finding.get("type", "")]),
         "confidence": confidence,
@@ -469,6 +549,9 @@ def normalize_finding(module_name: str, finding: dict[str, Any]) -> dict[str, An
             risk_score(severity, confidence, exploitability, finding.get("asset_criticality")),
         ),
         "exploitability": exploitability,
+        "cwe": finding.get("cwe") or cwe_for(finding_type, finding_id),
+        "cvss_vector": finding.get("cvss_vector") or cvss_for(finding_type, finding_id),
+        "verdict": finding.get("verdict") or verdict_for(exploitability, evidence, confidence),
     }
 
 
@@ -502,3 +585,63 @@ def _exploitability_weight(value: str | float) -> float:
     if isinstance(value, (int, float)):
         return clamp(value)
     return EXPLOITABILITY_WEIGHTS.get(str(value or "").lower(), 0.35)
+
+
+def cwe_for(finding_type: str, finding_id: str = "") -> str | None:
+    """Best-effort CWE lookup. Returns None when no rule matches.
+
+    Tries the exact finding_type first, then falls back to substring matching
+    so e.g. `xss_dalfox_confirmed` resolves to CWE-79 via the `xss` prefix.
+    """
+    finding_type = (finding_type or "").lower()
+    finding_id = (finding_id or "").lower()
+    if finding_type in CWE_BY_TYPE:
+        return CWE_BY_TYPE[finding_type]
+    for key, cwe in CWE_BY_TYPE.items():
+        if key and (key in finding_type or key in finding_id):
+            return cwe
+    return None
+
+
+def cvss_for(finding_type: str, finding_id: str = "") -> str | None:
+    """Best-effort CVSS:3.1 vector lookup. Returns None when unknown."""
+    finding_type = (finding_type or "").lower()
+    finding_id = (finding_id or "").lower()
+    if finding_type in CVSS_BY_TYPE:
+        return CVSS_BY_TYPE[finding_type]
+    for key, vec in CVSS_BY_TYPE.items():
+        if key and (key in finding_type or key in finding_id):
+            return vec
+    return None
+
+
+def verdict_for(
+    exploitability: str | float,
+    evidence: dict[str, Any] | None = None,
+    confidence: float = 0.75,
+) -> str:
+    """Triage a finding into confirmed / candidate / manual_review.
+
+    A finding is `confirmed` when the probe captured concrete proof
+    (exploitability=='confirmed' or active+strong confidence, with non-empty
+    evidence). It is a `candidate` when heuristic evidence exists but
+    exploitation wasn't demonstrated. It is `manual_review` when both signal
+    and evidence are weak — the human should look before any action.
+    """
+    evidence = evidence or {}
+    has_evidence = bool(evidence)
+    conf = clamp(confidence)
+
+    if isinstance(exploitability, (int, float)):
+        weight = clamp(exploitability)
+    else:
+        weight = EXPLOITABILITY_WEIGHTS.get(str(exploitability or "").lower(), 0.35)
+
+    label = str(exploitability or "").lower() if isinstance(exploitability, str) else ""
+    if label == "confirmed" and has_evidence:
+        return VERDICT_CONFIRMED
+    if weight >= 0.65 and has_evidence and conf >= 0.80:
+        return VERDICT_CONFIRMED
+    if weight >= 0.35 and has_evidence:
+        return VERDICT_CANDIDATE
+    return VERDICT_REVIEW

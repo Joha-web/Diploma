@@ -295,3 +295,35 @@ def test_asn_lookup_spaces_ipinfo_requests(tmp_path, monkeypatch):
     assert len(result) == 2
     assert len(urls) == 2
     assert sleeps == [0.25]
+
+
+def test_classify_live_subdomains_aggregates_signals(tmp_path):
+    module = ReconModule("example.com", str(tmp_path), {})
+    module.subdomains = {"www.example.com", "api.example.com", "dead.example.com", "ping.example.com"}
+    module.resolved_hosts = [
+        "www.example.com [A] [192.0.2.1]",
+        "api.example.com [A] [192.0.2.2]",
+        "ping.example.com [A] [192.0.2.3]",
+    ]
+    module.pingable_hosts = ["ping.example.com"]
+    module.live_http = ["https://www.example.com", "http://api.example.com:8080/v1"]
+
+    module._classify_live_subdomains()
+
+    by_host = {r["subdomain"]: r for r in module.live_subdomains}
+    assert by_host["www.example.com"]["live"] is True
+    assert set(by_host["www.example.com"]["reasons"]) == {"dns", "http"}
+    assert by_host["www.example.com"]["ips"] == ["192.0.2.1"]
+    assert by_host["www.example.com"]["urls"] == ["https://www.example.com"]
+    assert set(by_host["api.example.com"]["reasons"]) == {"dns", "http"}
+    assert set(by_host["ping.example.com"]["reasons"]) == {"dns", "ping"}
+    assert by_host["dead.example.com"]["live"] is False
+    assert by_host["dead.example.com"]["reasons"] == []
+    assert (tmp_path / "recon" / "subdomains" / "live_subdomains.json").exists()
+    assert (tmp_path / "recon" / "subdomains" / "live_subdomains.txt").exists()
+
+
+def test_classify_live_subdomains_noop_without_subdomains(tmp_path):
+    module = ReconModule("example.com", str(tmp_path), {})
+    module._classify_live_subdomains()
+    assert module.live_subdomains == []

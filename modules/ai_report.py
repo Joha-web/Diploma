@@ -88,6 +88,7 @@ class AIReportModule(BaseModule):
         cve    = r.get("cve_check", {})
         ssl    = r.get("ssl_checker", {})
         corr   = r.get("correlator", {})
+        asset_risk = r.get("asset_risk", {})
 
         blocks: list[str] = []
 
@@ -96,6 +97,29 @@ class AIReportModule(BaseModule):
         blocks.append(f"Subdomains: {recon.get('subdomains_total', 0)}")
         blocks.append(f"Live HTTP hosts: {len(web.get('live_urls') or recon.get('live_http', []))}")
         blocks.append(f"Unique IPs: {len(recon.get('resolved_ips', []))}")
+
+        # ── Asset risk ranking (highest-leverage triage list for the LLM)
+        ranked = asset_risk.get("ranked_assets", []) or []
+        if ranked:
+            tier_summary = asset_risk.get("tier_summary", {}) or {}
+            blocks.append(
+                f"\nTOP RISK ASSETS ({len(ranked)} ranked; "
+                f"crit={tier_summary.get('critical', 0)}, high={tier_summary.get('high', 0)}):"
+            )
+            for a in ranked[:10]:
+                s = a.get("signals", {}) or {}
+                bits = [
+                    f"score={a.get('score', 0)}",
+                    f"tier={a.get('tier', '?')}",
+                    f"ports={s.get('open_ports', 0)}",
+                    f"cves={s.get('cve_hits', 0)}",
+                    f"confirmed={s.get('findings_confirmed', 0)}",
+                ]
+                if s.get("exposed_admin"):
+                    bits.append("admin_exposed")
+                if s.get("takeover_candidate"):
+                    bits.append("takeover")
+                blocks.append(f"  [{a.get('tier', '?').upper()}] {a.get('asset', '?')} — " + ", ".join(bits))
 
         # ── Open ports
         ps = ports.get("summary", {})

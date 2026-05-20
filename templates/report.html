@@ -576,6 +576,24 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
     <div class="lbl">CORS Findings</div>
   </div>
   <div class="stat-card">
+    <div class="val {% if summary.verdict_counts and summary.verdict_counts.confirmed > 0 %}danger{% endif %}">
+      {{ (summary.verdict_counts and summary.verdict_counts.confirmed) or 0 }}
+    </div>
+    <div class="lbl" title="Findings with concrete proof captured by a probe">Confirmed</div>
+  </div>
+  <div class="stat-card">
+    <div class="val">
+      {{ (summary.verdict_counts and summary.verdict_counts.candidate) or 0 }}
+    </div>
+    <div class="lbl" title="Heuristic findings — verify before acting">Candidates</div>
+  </div>
+  <div class="stat-card">
+    <div class="val">
+      {{ (summary.verdict_counts and summary.verdict_counts.manual_review) or 0 }}
+    </div>
+    <div class="lbl" title="Weak signal — needs human review before triage">Review</div>
+  </div>
+  <div class="stat-card">
     <div class="val {% if summary.auth_findings > 0 %}warn{% endif %}">{{ summary.auth_findings }}</div>
     <div class="lbl">Auth Findings</div>
   </div>
@@ -604,6 +622,69 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
     <div class="lbl">Correlated</div>
   </div>
 </div>
+
+<!-- Asset Risk Ranking -->
+{% if asset_risk and asset_risk.ranked_assets %}
+<div class="section" id="asset-risk">
+  <div class="section-header">
+    <div class="section-title">🎯 Top Risk Assets
+      <span class="count-badge">{{ asset_risk.total_assets }}</span>
+    </div>
+  </div>
+  {% if asset_risk.tier_summary %}
+  <div style="margin-bottom:12px;font-size:.85em;color:var(--muted)">
+    Tiers — critical: <strong style="color:var(--red)">{{ asset_risk.tier_summary.critical }}</strong>,
+    high: <strong style="color:var(--amber)">{{ asset_risk.tier_summary.high }}</strong>,
+    medium: <strong>{{ asset_risk.tier_summary.medium }}</strong>,
+    low: <strong>{{ asset_risk.tier_summary.low }}</strong>
+  </div>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Tier</th><th>Score</th><th>Asset</th><th>Live</th>
+          <th>Ports</th><th>CVE / EDB</th><th>Findings (C/c)</th>
+          <th>Exposure</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in asset_risk.ranked_assets[:50] %}
+        <tr>
+          <td><span class="badge badge-{{ 'CRITICAL' if a.tier == 'critical' else ('HIGH' if a.tier == 'high' else ('MEDIUM' if a.tier == 'medium' else 'LOW')) }}">{{ a.tier | upper }}</span></td>
+          <td><strong>{{ a.score }}</strong></td>
+          <td><code>{{ a.asset }}</code></td>
+          <td>{{ '✓' if a.signals.live else '—' }}</td>
+          <td>
+            {{ a.signals.open_ports }}
+            {% if a.signals.high_risk_ports %}
+              <span style="color:var(--amber)">⚠ {{ a.signals.high_risk_ports | join(',') }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {{ a.signals.cve_hits }}
+            {% if a.signals.exploitdb_hits %}
+              / <span style="color:var(--red)">{{ a.signals.exploitdb_hits }} EDB</span>
+            {% endif %}
+          </td>
+          <td>
+            {{ a.signals.findings_total }}
+            <span style="color:var(--muted);font-size:.8em">
+              ({{ a.signals.findings_confirmed }}/{{ a.signals.findings_candidate }})
+            </span>
+          </td>
+          <td style="font-size:.82em;color:var(--muted)">
+            {% if a.signals.exposed_admin %}🎯 admin{% endif %}
+            {% if a.signals.sensitive_files %} · 📂 {{ a.signals.sensitive_files }} sens{% endif %}
+            {% if a.signals.takeover_candidate %} · 🪤 takeover{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 
 <!-- AI Analysis -->
 {% if ai_analysis %}
@@ -790,16 +871,21 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div style="margin-bottom:12px;padding:10px 14px;background:var(--surface);border-radius:8px;font-size:.84em;border-left:3px solid var(--accent)">
     <strong>{{ finding_descriptions[section_id].title }}:</strong>
     {{ finding_descriptions[section_id].impact }}<br>
+    {% if finding_descriptions[section_id].detection %}
+    <span style="color:var(--muted)">⚙ How evaluated: {{ finding_descriptions[section_id].detection }}</span><br>
+    {% endif %}
     <span style="color:var(--green)">→ {{ finding_descriptions[section_id].remediation }}</span>
   </div>
   {% endif %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Verdict</th><th>CWE</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>
       <tbody>
         {% for f in findings %}
-        <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}">
+        <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}" data-verdict="{{ f.verdict | default('candidate') }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+          <td><span style="font-size:.78em;text-transform:uppercase;color:var(--muted)" title="{{ f.cvss_vector or '' }}">{{ (f.verdict or 'candidate').replace('_',' ') }}</span></td>
+          <td><code style="font-size:.78em">{{ f.cwe or '—' }}</code></td>
           <td>{{ f.title or f.name or f.type }}</td>
           <td><code>{{ f.url or f.matched_url }}</code></td>
           <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
@@ -822,16 +908,21 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div style="margin-bottom:12px;padding:10px 14px;background:var(--surface);border-radius:8px;font-size:.84em;border-left:3px solid var(--accent)">
     <strong>{{ desc.title }}:</strong>
     {{ desc.impact }}<br>
+    {% if desc.detection %}
+    <span style="color:var(--muted)">⚙ How evaluated: {{ desc.detection }}</span><br>
+    {% endif %}
     <span style="color:var(--green)">→ {{ desc.remediation }}</span>
   </div>
   {% endif %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Verdict</th><th>CWE</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>
       <tbody>
         {% for f in module.findings %}
-        <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}">
+        <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}" data-verdict="{{ f.verdict | default('candidate') }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+          <td><span style="font-size:.78em;text-transform:uppercase;color:var(--muted)" title="{{ f.cvss_vector or '' }}">{{ (f.verdict or 'candidate').replace('_',' ') }}</span></td>
+          <td><code style="font-size:.78em">{{ f.cwe or '—' }}</code></td>
           <td>{{ f.title or f.name or f.type }}</td>
           <td><code>{{ f.url or f.matched_url }}</code></td>
           <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
@@ -1078,17 +1169,19 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
     </div>
   </div>
   {% set cats = [
-    ('api',            '🔌 API Endpoints'),
-    ('graphql',        'GraphQL Endpoints'),
-    ('auth',           '🔐 Auth Endpoints'),
-    ('sensitive_files','⚠ Sensitive Files'),
-    ('admin_panels',   '🎯 Admin Panels'),
-    ('with_params',    '🔗 URLs with Params'),
+    ('api',                     '🔌 API Endpoints'),
+    ('graphql',                 'GraphQL Endpoints'),
+    ('auth',                    '🔐 Auth Endpoints'),
+    ('sensitive_files',         '⚠ Sensitive Files'),
+    ('admin_panels',            '🎯 Admin Panels'),
+    ('interesting_directories', '📂 Interesting Directories'),
+    ('interesting_endpoints',   '🧭 Interesting Endpoints'),
+    ('with_params',             '🔗 URLs with Params'),
   ] %}
   {% for key, label in cats %}
   {% set items = fuzz.classified.get(key, []) %}
   {% if items %}
-  <details {% if key in ('sensitive_files', 'admin_panels') %}open{% endif %}>
+  <details {% if key in ('sensitive_files', 'admin_panels', 'interesting_directories', 'interesting_endpoints') %}open{% endif %}>
     <summary>{{ label }} <span class="count-badge">{{ items | length }}</span></summary>
     <div class="detail-body">
       <div class="code-block">{% for url in items[:200] %}{{ url }}

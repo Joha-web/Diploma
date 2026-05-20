@@ -5,12 +5,21 @@ Input:  subdomains list + port scan HTTP ports
 Output: live_hosts list used by all downstream modules
 """
 
-import re
+import base64
+import hashlib
 import json
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
 
 from modules.base import BaseModule
+
+try:
+    import mmh3  # type: ignore
+    _HAS_MMH3 = True
+except ImportError:  # mmh3 is optional; SHA256 hash is still emitted.
+    _HAS_MMH3 = False
 
 
 class WebdetectModule(BaseModule):
@@ -36,6 +45,10 @@ class WebdetectModule(BaseModule):
 
         # Run httpx
         live = self._run_httpx(candidates_file)
+
+        # Collect favicon hashes for pivoting on Shodan/FOFA/etc.
+        if self.config.get("scan", {}).get("webdetect", {}).get("favicon_hash", True):
+            self._collect_favicons(live)
 
         counts = {
             "total":          len(live),
@@ -185,6 +198,80 @@ class WebdetectModule(BaseModule):
             except Exception:
                 pass
         return live
+
+    # ── favicon hashing ───────────────────────────────────────────────────────
+
+    def _collect_favicons(self, live: list[dict]) -> None:
+        """Fetch /favicon.ico for each live host and attach hash fields in-place.
+
+        Adds three fields to each host record:
+          * favicon_sha256 — content hash (always emitted on success)
+          * favicon_mmh3   — Shodan-compatible mmh3 hash of base64-encoded body,
+                             only when mmh3 is importable
+          * favicon_size   — bytes
+        Hosts without a usable favicon are left untouched.
+        """
+        targets = [h for h in live if h.get("url", "").startswith(("http://", "https://"))]
+        if not targets:
+            return
+
+        cfg = self.config.get("scan", {}).get("webdetect", {})
+        timeout = float(cfg.get("favicon_timeout", 6))
+        max_workers = int(cfg.get("favicon_threads", 30))
+
+        results: dict[str, dict] = {}
+
+        def fetch(host: dict) -> tuple[str, dict | None]:
+            base = host.get("url") or ""
+            origin = self._origin_for(base)
+            if not origin:
+                return base, None
+            resp = self.http_get(
+                f"{origin}/favicon.ico",
+                enforce_scope=False,
+                timeout=timeout,
+                verify=False,
+                allow_redirects=True,
+            )
+            if resp is None or resp.status_code != 200:
+                return base, None
+            body = resp.content or b""
+            if len(body) < 8 or len(body) > 1_048_576:  # 1MB cap
+                return base, None
+            data = {
+                "favicon_sha256": hashlib.sha256(body).hexdigest(),
+                "favicon_size": len(body),
+            }
+            if _HAS_MMH3:
+                b64 = base64.encodebytes(body).decode("ascii")
+                data["favicon_mmh3"] = mmh3.hash(b64)
+            return base, data
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(fetch, host): host for host in targets}
+            for fut in as_completed(futures):
+                try:
+                    base, data = fut.result()
+                except Exception:
+                    continue
+                if data:
+                    results[base] = data
+
+        for host in live:
+            data = results.get(host.get("url", ""))
+            if data:
+                host.update(data)
+
+        if results:
+            self.info(f"Favicon hashes collected for {len(results)} host(s)"
+                      + ("" if _HAS_MMH3 else " (sha256 only; install mmh3 for Shodan-compatible hash)"))
+
+    @staticmethod
+    def _origin_for(url: str) -> str:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+        return f"{parsed.scheme}://{parsed.netloc}"
 
     # ── gowitness ─────────────────────────────────────────────────────────────
 
