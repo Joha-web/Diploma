@@ -167,7 +167,8 @@ class HTTPSmugglingModule(BaseModule):
                 elapsed = time.monotonic() - start
                 sock.close()
             return elapsed
-        except (OSError, ssl.SSLError):
+        except (ConnectionRefusedError, OSError, ssl.SSLError) as exc:
+            self.info(f"  {host}:{port} — connection failed ({exc.__class__.__name__})")
             return None
 
     def _extract_urls(self) -> list[str]:

@@ -29,6 +29,18 @@ from modules.rate_limiter import TokenBucket
 console = Console()
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# ── Global rate-limiter singleton (shared across parallel modules) ────────────
+_GLOBAL_BUCKET_LOCK = threading.Lock()
+_GLOBAL_BUCKETS: dict[str, "TokenBucket"] = {}
+
+
+def _get_global_bucket(session_key: str, rate: float) -> "TokenBucket":
+    """Return (or create) the single global TokenBucket for a scan session."""
+    with _GLOBAL_BUCKET_LOCK:
+        if session_key not in _GLOBAL_BUCKETS:
+            _GLOBAL_BUCKETS[session_key] = TokenBucket(rate=rate)
+        return _GLOBAL_BUCKETS[session_key]
+
 _CTRL_C_SKIP_WINDOW = 2.0
 _COMMAND_POLL_INTERVAL = 0.2
 _INTERRUPT_LOCK = threading.RLock()
@@ -130,6 +142,10 @@ class BaseModule:
         self.config = config
         self.domain = self._clean_domain(target)
         self.rate_limiter = TokenBucket(rate=self._module_rate_limit())
+        # Global rate limiter — one shared bucket per scan session
+        global_rate = config.get("scan", {}).get("global_rate_limit", 100)
+        session_key = str(self.output_dir)
+        self._global_limiter = _get_global_bucket(session_key, global_rate)
         self.audit = AuditLogger(self.output_dir)
         self.results = {}
         self.interrupted_commands: list[str] = []
@@ -346,6 +362,7 @@ class BaseModule:
                                        error="write_method_blocked")
                 return None
 
+        self._global_limiter.acquire()
         self.rate_limiter.acquire()
         start = time.monotonic()
         requester = session if session is not None else requests

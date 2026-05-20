@@ -59,6 +59,9 @@ class VHostEnumModule(BaseModule):
                 if not fuzz:
                     continue
                 vhost = f"{fuzz}.{self.domain}"
+                if not self._verify_vhost(vhost, ip):
+                    self.info(f"VHost {vhost} failed HTTP verification — skipped")
+                    continue
                 found.append({
                     "ip": ip,
                     "vhost": vhost,
@@ -90,6 +93,21 @@ class VHostEnumModule(BaseModule):
         if resp is not None and resp.status_code in (301, 302, 307, 308):
             self._vhost_baseline_redirect = True
         return str(len(resp.content)) if resp is not None else "0"
+
+    def _verify_vhost(self, vhost: str, ip: str) -> bool:
+        """Verify that a discovered vhost serves meaningful content."""
+        resp = self.http_get(
+            f"http://{ip}/",
+            enforce_scope=False,
+            headers={"Host": vhost},
+            timeout=6,
+            verify=False,
+            allow_redirects=False,
+        )
+        if not resp or resp.status_code not in (200, 201, 204, 401, 403):
+            return False
+        # Minimum content size — not an empty/error page
+        return len(resp.content) > 200
 
     def _wordlist(self, filename: str) -> str:
         paths = self.config.get("wordlists", {}).get("search_paths", [])

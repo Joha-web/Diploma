@@ -31,6 +31,7 @@ class ReconModule(BaseModule):
         self.resolved_hosts: list[str] = []
         self.resolved_ips: set[str] = set()
         self.live_http: list[str] = []
+        self.pingable_hosts: list[str] = []
         self.wildcard_ips: set[str] = set()
         for sub in ("subdomains", "dns", "urls", "passive"):
             (self.module_dir / sub).mkdir(exist_ok=True)
@@ -52,6 +53,7 @@ class ReconModule(BaseModule):
         zone   = self._zone_transfer()
         self._enumerate_subdomains()
         self._resolve_subdomains()
+        self._ping_check()
         self._http_probe()
         urls   = self._collect_urls()
         asn_info = self._asn_lookup()
@@ -65,6 +67,7 @@ class ReconModule(BaseModule):
             "email_security": email_security,
             "subdomains_total": len(self.subdomains),
             "subdomains": sorted(self.subdomains),
+            "pingable_hosts": sorted(self.pingable_hosts),
             "resolved_hosts": self.resolved_hosts,
             "resolved_ips": sorted(self.resolved_ips),
             "scan_ips": scan_ips,
@@ -746,6 +749,33 @@ class ReconModule(BaseModule):
         self.save_text(sorted(self.resolved_ips), "dns/resolved_ips.txt")
         self.success(f"Resolved: {len(self.resolved_hosts)} hosts | "
                      f"{len(self.resolved_ips)} unique IPs")
+
+    # ── ICMP Ping check ───────────────────────────────────────────────────────
+
+    def _ping_check(self) -> None:
+        if not self.subdomains:
+            return
+        self.info(f"ICMP Ping check ({len(self.subdomains)} hosts)")
+        
+        def ping_host(host: str) -> str | None:
+            try:
+                # -c 1 (one packet), -W 1 (wait 1 second)
+                r = self.exec(["ping", "-c", "1", "-W", "1", host], timeout=2)
+                if r.returncode == 0:
+                    return host
+            except Exception:
+                pass
+            return None
+
+        with ThreadPoolExecutor(max_workers=50) as pool:
+            futures = {pool.submit(ping_host, host): host for host in self.subdomains}
+            for fut in as_completed(futures):
+                result = fut.result()
+                if result:
+                    self.pingable_hosts.append(result)
+
+        self.save_text(sorted(self.pingable_hosts), "subdomains/pingable_hosts.txt")
+        self.success(f"Pingable hosts: {len(self.pingable_hosts)}")
 
     # ── HTTP probe ────────────────────────────────────────────────────────────
 

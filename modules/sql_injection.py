@@ -130,6 +130,9 @@ class SQLInjectionModule(BaseModule):
             "--threads", str(self._bounded_int(cfg.get("threads", 1), 1, 10)),
             "--timeout", str(self._bounded_int(cfg.get("request_timeout", 10), 1, 120)),
             "--retries", str(self._bounded_int(cfg.get("retries", 1), 0, 10)),
+            "--technique", str(cfg.get("technique", "BEUST")),
+            "--no-cast",
+            "--no-escape",
         ]
         params = [param for param in target.get("params", []) if param]
         if params:

@@ -693,7 +693,7 @@ class FuzzerModule(BaseModule):
                 continue
 
         if verified:
-            self.warn(f"  Verified admin panels: {len(verified)} / {len(raw_admin)} candidates")
+            self.warn(f"  Verified admin panels: {len(verified)} / {len(urls)} candidates")
         else:
             self.info(f"  No verified admin panels (all {len(urls)} were false positives)")
         return sorted(set(verified))

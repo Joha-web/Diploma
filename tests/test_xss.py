@@ -118,7 +118,7 @@ def test_xss_dalfox_mode_runs_and_parses_findings(tmp_path, monkeypatch):
     assert executed["cmd"][-2:] == ["-p", "q"]
     assert result["total"] == 1
     finding = result["findings"][0]
-    assert finding["id"] == "xss_dalfox_1_1"
+    assert finding["id"] == "xss_dalfox_confirmed"
     assert finding["severity"] == "HIGH"
     assert finding["evidence"]["tool"] == "dalfox"
     assert finding["evidence"]["param"] == "q"

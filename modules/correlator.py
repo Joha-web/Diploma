@@ -38,6 +38,8 @@ class CorrelatorModule(BaseModule):
             self._rule_exposed_datastore,
             self._rule_docker_api_exposed,
             self._rule_high_confidence_takeover,
+            self._rule_cors_with_auth,
+            self._rule_xss_with_auth,
         ):
             result = rule()
             if result:
@@ -247,6 +249,62 @@ class CorrelatorModule(BaseModule):
             confidence=0.95,
         )
 
+    def _rule_cors_with_auth(self) -> dict | None:
+        """CORS CRITICAL + auth findings on same host = very high risk."""
+        cors_crits = [
+            f for f in self.all_results.get("cors_checker", {}).get("findings", []) or []
+            if f.get("severity") == "CRITICAL"
+        ]
+        auth_findings = self.all_results.get("auth_probe", {}).get("findings", []) or []
+        if not cors_crits or not auth_findings:
+            return None
+
+        cors_hosts = {urlparse(f.get("url", "")).hostname for f in cors_crits} - {None}
+        auth_hosts = {urlparse(f.get("url", "")).hostname for f in auth_findings} - {None}
+        overlap = cors_hosts & auth_hosts
+        if not overlap:
+            return None
+
+        return self._finding(
+            rule_id="cors_critical_with_session_cookies",
+            severity="CRITICAL",
+            title="Critical CORS + session cookies on same host",
+            description=(
+                "A host with critical CORS misconfiguration (reflects arbitrary origin "
+                "with credentials=true) also sets session cookies. An attacker can read "
+                "authenticated API responses from any website."
+            ),
+            evidence={
+                "cors_findings": [f.get("url") for f in cors_crits[:5]],
+                "auth_findings": [f.get("url") for f in auth_findings[:5]],
+                "affected_hosts": sorted(overlap),
+            },
+            confidence=0.95,
+        )
+
+    def _rule_xss_with_auth(self) -> dict | None:
+        """XSS + application with sessions = account takeover risk."""
+        xss_findings = [
+            f for f in self.all_results.get("xss", {}).get("findings", []) or []
+            if f.get("severity") in ("CRITICAL", "HIGH")
+        ]
+        if not xss_findings:
+            return None
+        auth_exists = bool(self.all_results.get("auth_probe", {}).get("findings"))
+        if not auth_exists:
+            return None
+        return self._finding(
+            rule_id="xss_with_active_sessions",
+            severity="CRITICAL",
+            title="Reflected XSS in authenticated application",
+            description=(
+                "XSS findings combined with active session management indicate "
+                "account takeover risk."
+            ),
+            evidence={"xss_urls": [f.get("url") for f in xss_findings[:5]]},
+            confidence=0.88,
+        )
+
     def _admin_urls(self) -> list[str]:
         classified = self.all_results.get("fuzzer", {}).get("classified", {}) or {}
         urls = []
@@ -303,6 +361,11 @@ class CorrelatorModule(BaseModule):
         for module_name in (
             "portscan", "webdetect", "fuzzer", "vulnscan", "cve_check",
             "takeover_checker", "openapi_parser", "parameter_discovery",
+            "cors_checker", "auth_probe", "xss", "sql_injection",
+            "host_header_injection", "idor_probe", "jwt_audit",
+            "oauth_probe", "http_smuggling", "cache_poison",
+            "prototype_pollution", "xxe_probe", "graphql_audit",
+            "injection_probe", "api_key_validator",
         ):
             data = self.all_results.get(module_name, {})
             if data:

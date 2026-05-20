@@ -102,7 +102,7 @@ class AIReportModule(BaseModule):
         if ps:
             blocks.append(f"\nOPEN PORTS ({ps.get('total_open_ports', 0)} total):")
             for hr in ps.get("high_risk", [])[:20]:
-                blocks.append(f"  [HIGH RISK] {hr['ip']}:{hr['port']} ({hr['service']})")
+                blocks.append(f"  [HIGH RISK] {hr.get('ip', '?')}:{hr.get('port', '?')} ({hr.get('service', '?')})")
 
         # ── Technology stack
         ts = tech.get("technologies_summary", {})
@@ -113,13 +113,12 @@ class AIReportModule(BaseModule):
 
         # ── CMS findings
         for scan in cms.get("scans", []):
-            if scan["findings_count"]:
-                blocks.append(f"\nCMS {scan['cms']} @ {scan['url']}:")
+            if scan.get("findings_count"):
+                blocks.append(f"\nCMS {scan.get('cms', '?')} @ {scan.get('url', '?')}:")
                 for f in scan.get("findings", [])[:10]:
                     blocks.append(
                         f"  [{f.get('severity','?')}] {f.get('type','')}: "
-                        f"{f.get('title', f.get('detail', f.get('name','')))}"
-                    )
+                        f"{f.get('title', f.get('detail', f.get('name','')))}")
 
         # ── Nuclei findings
         vf = vuln.get("findings", [])
@@ -127,7 +126,7 @@ class AIReportModule(BaseModule):
             blocks.append(f"\nVULNERABILITIES ({len(vf)}):")
             for f in vf[:30]:
                 blocks.append(
-                    f"  [{f['severity']}] {f['name']} → {f['matched_url']}"
+                    f"  [{f.get('severity', '?')}] {f.get('name', '')} → {f.get('matched_url', '')}"
                 )
 
         cves = cve.get("cves", [])
@@ -176,6 +175,48 @@ class AIReportModule(BaseModule):
         missing_headers = ssl.get("total_missing_headers", 0)
         if missing_headers:
             blocks.append(f"\nMISSING SECURITY HEADERS: {missing_headers} total")
+
+        # ── Active probe findings (CORS, XSS, SQLi, JWT, etc.)
+        active_probe_modules = [
+            ("CORS", "cors_checker"),
+            ("Auth/Cookie", "auth_probe"),
+            ("Host Header Injection", "host_header_injection"),
+            ("XSS", "xss"),
+            ("SQL Injection", "sql_injection"),
+            ("IDOR/BOLA", "idor_probe"),
+            ("JWT", "jwt_audit"),
+            ("Prototype Pollution", "prototype_pollution"),
+            ("HTTP Smuggling", "http_smuggling"),
+            ("OAuth", "oauth_probe"),
+            ("Cache Poisoning", "cache_poison"),
+            ("Open Redirect", "open_redirect_probe"),
+            ("XXE", "xxe_probe"),
+            ("Deserialization", "deserialization_probe"),
+            ("GraphQL", "graphql_audit"),
+            ("Race Condition", "race_condition"),
+            ("WebSocket", "websocket_probe"),
+            ("API Schema", "api_schema_audit"),
+            ("JS Security", "js_security_audit"),
+            ("Injection Probe", "injection_probe"),
+        ]
+        active_crits: list[str] = []
+        active_mediums: list[str] = []
+        for label, mod_name in active_probe_modules:
+            mod_data = r.get(mod_name, {})
+            for f in (mod_data.get("findings", []) or [])[:10]:
+                sev = f.get("severity", "INFO")
+                line = f"  [{sev}] {label}: {f.get('title', '')} → {f.get('url', '')}"
+                if sev in ("CRITICAL", "HIGH"):
+                    active_crits.append(line)
+                elif sev == "MEDIUM":
+                    active_mediums.append(line)
+
+        if active_crits:
+            blocks.append(f"\nACTIVE PROBE FINDINGS ({len(active_crits)} critical/high):")
+            blocks.extend(active_crits[:25])
+        if active_mediums:
+            blocks.append(f"\nACTIVE PROBE MEDIUM FINDINGS ({len(active_mediums)}):")
+            blocks.extend(active_mediums[:15])
 
         data = "\n".join(blocks)
 
@@ -327,7 +368,8 @@ End with this sentence:
                 timeout=120,
             )
             if resp.status_code == 200:
-                return self._clean_model_output(resp.json()["choices"][0]["message"]["content"])
+                data = resp.json()
+                return self._clean_model_output(data["choices"][0]["message"]["content"])
             else:
                 self.error(f"API error {resp.status_code}: {resp.text[:200]}")
                 return ""

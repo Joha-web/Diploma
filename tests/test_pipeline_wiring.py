@@ -38,11 +38,33 @@ def test_new_modules_are_wired_into_pipeline():
     assert CLASS_MAP["sql_injection"] == ("modules.sql_injection", "SQLInjectionModule")
     assert MODULE_LABELS["sql_injection"] == "SQL Injection Testing (sqlmap)"
     for module_name, class_ref in active_modules.items():
-        assert groups[module_name] == 6
         assert CLASS_MAP[module_name] == class_ref
     for module_name, class_ref in post_parameter_modules.items():
-        assert groups[module_name] == 7
         assert CLASS_MAP[module_name] == class_ref
+
+    # Verify new group assignments
+    assert groups["http_smuggling"] == 7
+    assert groups["jwt_audit"] == 7
+    assert groups["websocket_probe"] == 7
+    assert groups["api_schema_audit"] == 7
+    assert groups["js_security_audit"] == 7
+
+    assert groups["oauth_probe"] == 8
+    assert groups["cache_poison"] == 8
+    assert groups["host_header_injection"] == 8
+    assert groups["open_redirect_probe"] == 8
+    assert groups["prototype_pollution"] == 8
+    assert groups["deserialization_probe"] == 8
+    assert groups["race_condition"] == 8
+    assert groups["graphql_audit"] == 8
+
+    assert groups["api_key_validator"] == 9
+    assert groups["xxe_probe"] == 9
+
+    assert groups["injection_probe"] == 10
+    assert groups["xss"] == 10
+    assert groups["sql_injection"] == 10
+    assert groups["idor_probe"] == 10
 
 
 def test_injection_probe_kwargs_use_parameter_and_fuzzer_results():

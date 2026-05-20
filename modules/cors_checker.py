@@ -146,6 +146,10 @@ class CORSCheckerModule(BaseModule):
                 "confidence": 0.95,
             })
 
+            # One CRITICAL is sufficient proof — stop probing this URL
+            if actual_severity == "CRITICAL":
+                break
+
         return self._dedup(findings)
 
     @staticmethod

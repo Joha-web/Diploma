@@ -183,7 +183,7 @@ class XSSModule(ActiveProbeBase):
         for offset, (line, poc_url) in enumerate(poc_entries, start=1):
             param = self._matching_param(poc_url, target.get("params", []))
             findings.append(self.make_finding(
-                f"xss_dalfox_{index}_{offset}",
+                "xss_dalfox_confirmed",
                 poc_url,
                 title="Dalfox reported reflected XSS",
                 description=(
@@ -197,11 +197,13 @@ class XSSModule(ActiveProbeBase):
                     "https://portswigger.net/web-security/cross-site-scripting",
                     "https://owasp.org/www-community/attacks/xss/",
                 ],
-                exploitability="active",
+                exploitability="confirmed",
                 evidence={
                     "tool": "dalfox",
                     "line": line,
                     "param": param,
+                    "run_index": index,
+                    "finding_offset": offset,
                     "stdout_file": stdout_file,
                     "sources": target.get("sources", []),
                 },

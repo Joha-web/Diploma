@@ -378,6 +378,17 @@ FINDING_DEFINITIONS: dict[str, FindingDefinition] = {
         "candidate",
         ("xss", "reflected"),
     ),
+    "xss_dalfox_confirmed": FindingDefinition(
+        "xss_dalfox_confirmed",
+        "Cross-Site Scripting confirmed by Dalfox",
+        "HIGH",
+        0.90,
+        "xss",
+        "Dalfox confirmed reflected XSS via proof-of-concept payload.",
+        REFERENCE_SETS["xss"],
+        "confirmed",
+        ("xss", "reflected", "dalfox"),
+    ),
 }
 
 
