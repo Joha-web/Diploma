@@ -201,6 +201,9 @@ class HTMLReportGenerator:
 
         # Embed screenshots as base64 for portable HTML
         screenshots_b64 = self._embed_screenshots(web.get("screenshots", []))
+        interesting_screenshots_b64 = self._embed_screenshots(
+            fuzz.get("interesting_screenshots", [])
+        )
 
         # Build finding descriptions from registry
         finding_descriptions = self._build_finding_descriptions(r)
@@ -244,6 +247,7 @@ class HTMLReportGenerator:
             "static_analysis": static_analysis,
             "summary":     summary,
             "screenshots_b64": screenshots_b64,
+            "interesting_screenshots_b64": interesting_screenshots_b64,
             "finding_descriptions": finding_descriptions,
         }
 
@@ -378,11 +382,14 @@ class HTMLReportGenerator:
                     ext = path.suffix.lower().lstrip(".")
                     mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                             "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/png")
-                    result.append({
+                    entry = {
                         "data_uri": f"data:{mime};base64,{data}",
                         "url": shot.get("url", shot.get("filename", "")),
                         "filename": shot.get("filename", path.name),
-                    })
+                    }
+                    if shot.get("categories"):
+                        entry["categories"] = shot["categories"]
+                    result.append(entry)
                 except Exception:
                     continue
         return result

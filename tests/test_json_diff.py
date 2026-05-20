@@ -84,3 +84,56 @@ def test_json_report_exports_new_finding_sources_and_assets(tmp_path):
     assert report["assets"]["screenshots"]
     assert report["assets"]["cloud_assets"]
     assert report["assets"]["graphql"]
+
+
+def test_build_results_diff_computes_asset_score_deltas_and_summary():
+    previous = {
+        "recon": {"subdomains": []},
+        "webdetect": {"live_urls": []},
+        "asset_risk": {"ranked_assets": [
+            {"asset": "api.example.com", "score": 60},
+            {"asset": "static.example.com", "score": 10},
+            {"asset": "gone.example.com", "score": 25},
+        ]},
+    }
+    current = {
+        "recon": {"subdomains": []},
+        "webdetect": {"live_urls": []},
+        "asset_risk": {"ranked_assets": [
+            {"asset": "api.example.com", "score": 90},        # ↑30
+            {"asset": "static.example.com", "score": 10},     # unchanged
+            {"asset": "new.example.com", "score": 45},        # new
+        ]},
+    }
+
+    diff = build_results_diff(previous, current)
+
+    by_asset = {d["asset"]: d for d in diff["asset_score_deltas"]}
+    assert by_asset["api.example.com"]["delta"] == 30
+    assert by_asset["new.example.com"]["delta"] == 45
+    assert by_asset["gone.example.com"]["delta"] == -25
+    assert "static.example.com" not in by_asset  # unchanged entries are omitted
+
+    assert diff["summary"]["assets_score_up"] == 2
+    assert diff["summary"]["assets_score_down"] == 1
+
+
+def test_persist_and_resolve_snapshot_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setenv("RECONX_SNAPSHOT_DIR", str(tmp_path))
+    from main import _persist_snapshot, _resolve_previous_snapshot, _load_previous_results
+
+    all_results = {
+        "recon": {"subdomains": ["a.example.com", "b.example.com"]},
+        "webdetect": {"live_urls": ["https://a.example.com"]},
+        "portscan": {"hosts": []},
+        "vulnscan": {"findings": [{"template_id": "x", "matched_url": "https://a.example.com"}]},
+        "asset_risk": {"ranked_assets": [{"asset": "a.example.com", "score": 42}]},
+    }
+    snap = _persist_snapshot("example.com", all_results)
+    assert snap is not None and snap.exists()
+
+    found = _resolve_previous_snapshot("example.com")
+    assert found is not None
+    loaded = _load_previous_results(str(found))
+    assert "a.example.com" in loaded["recon"]["subdomains"]
+    assert loaded["asset_risk"]["ranked_assets"][0]["score"] == 42

@@ -70,6 +70,77 @@ CWE_BY_TYPE: dict[str, str] = {
     "injection_probe": "CWE-94",
 }
 
+OWASP_BY_TYPE: dict[str, str] = {
+    "xss": "A03:2021-Injection",
+    "sql_injection": "A03:2021-Injection",
+    "injection_probe": "A03:2021-Injection",
+    "ssrf": "A10:2021-SSRF",
+    "ssti": "A03:2021-Injection",
+    "xxe": "A05:2021-Security Misconfiguration",
+    "deserialization": "A08:2021-Software and Data Integrity Failures",
+    "idor": "A01:2021-Broken Access Control",
+    "open_redirect": "A01:2021-Broken Access Control",
+    "host_header_injection": "A05:2021-Security Misconfiguration",
+    "http_smuggling": "A05:2021-Security Misconfiguration",
+    "cache_poison": "A05:2021-Security Misconfiguration",
+    "cors_misconfiguration": "A05:2021-Security Misconfiguration",
+    "cors_wildcard_origin": "A05:2021-Security Misconfiguration",
+    "cors_reflected_origin": "A05:2021-Security Misconfiguration",
+    "cors_null_origin": "A05:2021-Security Misconfiguration",
+    "prototype_pollution": "A08:2021-Software and Data Integrity Failures",
+    "graphql_introspection": "A05:2021-Security Misconfiguration",
+    "secrets_exposed": "A07:2021-Identification and Authentication Failures",
+    "secret_scanner": "A07:2021-Identification and Authentication Failures",
+    "api_key_validator": "A07:2021-Identification and Authentication Failures",
+    "subdomain_takeover": "A05:2021-Security Misconfiguration",
+    "takeover_checker": "A05:2021-Security Misconfiguration",
+    "auth": "A07:2021-Identification and Authentication Failures",
+    "session_cookie_flags": "A07:2021-Identification and Authentication Failures",
+    "session_management": "A07:2021-Identification and Authentication Failures",
+    "jwt": "A02:2021-Cryptographic Failures",
+    "websocket": "A05:2021-Security Misconfiguration",
+    "race_condition": "A04:2021-Insecure Design",
+    "javascript": "A03:2021-Injection",
+    "openapi": "A05:2021-Security Misconfiguration",
+}
+
+# Coarse MITRE ATT&CK technique mapping. We pick the ATT&CK technique that
+# best describes the *capability* gained by exploiting the finding class,
+# not the methodology used to discover it.
+ATTACK_BY_TYPE: dict[str, tuple[str, str]] = {
+    "xss": ("T1059.007", "Command and Scripting Interpreter: JavaScript"),
+    "sql_injection": ("T1190", "Exploit Public-Facing Application"),
+    "injection_probe": ("T1190", "Exploit Public-Facing Application"),
+    "ssrf": ("T1190", "Exploit Public-Facing Application"),
+    "ssti": ("T1190", "Exploit Public-Facing Application"),
+    "xxe": ("T1213", "Data from Information Repositories"),
+    "deserialization": ("T1059", "Command and Scripting Interpreter"),
+    "idor": ("T1530", "Data from Cloud Storage / Broken Access"),
+    "open_redirect": ("T1566.002", "Phishing: Spearphishing Link"),
+    "host_header_injection": ("T1557", "Adversary-in-the-Middle"),
+    "http_smuggling": ("T1557", "Adversary-in-the-Middle"),
+    "cache_poison": ("T1557", "Adversary-in-the-Middle"),
+    "cors_misconfiguration": ("T1539", "Steal Web Session Cookie"),
+    "cors_wildcard_origin": ("T1539", "Steal Web Session Cookie"),
+    "cors_reflected_origin": ("T1539", "Steal Web Session Cookie"),
+    "cors_null_origin": ("T1539", "Steal Web Session Cookie"),
+    "prototype_pollution": ("T1059.007", "Command and Scripting Interpreter: JavaScript"),
+    "graphql_introspection": ("T1592", "Gather Victim Host Information"),
+    "secrets_exposed": ("T1552.001", "Unsecured Credentials: Credentials In Files"),
+    "secret_scanner": ("T1552.001", "Unsecured Credentials: Credentials In Files"),
+    "api_key_validator": ("T1552.004", "Unsecured Credentials: Private Keys"),
+    "subdomain_takeover": ("T1584.001", "Compromise Infrastructure: Domains"),
+    "takeover_checker": ("T1584.001", "Compromise Infrastructure: Domains"),
+    "auth": ("T1078", "Valid Accounts"),
+    "session_cookie_flags": ("T1539", "Steal Web Session Cookie"),
+    "session_management": ("T1539", "Steal Web Session Cookie"),
+    "jwt": ("T1606.001", "Forge Web Credentials: Web Cookies"),
+    "websocket": ("T1557", "Adversary-in-the-Middle"),
+    "race_condition": ("T1499", "Endpoint Denial of Service"),
+    "javascript": ("T1185", "Browser Session Hijacking"),
+    "openapi": ("T1592.004", "Gather Victim Host Information: Client Configurations"),
+}
+
 CVSS_BY_TYPE: dict[str, str] = {
     "xss": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
     "sql_injection": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
@@ -522,6 +593,8 @@ def build_finding(
         "tags": item_tags,
         "cwe": cwe_for(item_type, finding_id),
         "cvss_vector": cvss_for(item_type, finding_id),
+        "owasp": owasp_for(item_type, finding_id),
+        "attack": attack_for(item_type, finding_id),
         "verdict": verdict_for(exp, evidence or {}, conf),
     }
 
@@ -551,6 +624,8 @@ def normalize_finding(module_name: str, finding: dict[str, Any]) -> dict[str, An
         "exploitability": exploitability,
         "cwe": finding.get("cwe") or cwe_for(finding_type, finding_id),
         "cvss_vector": finding.get("cvss_vector") or cvss_for(finding_type, finding_id),
+        "owasp": finding.get("owasp") or owasp_for(finding_type, finding_id),
+        "attack": finding.get("attack") or attack_for(finding_type, finding_id),
         "verdict": finding.get("verdict") or verdict_for(exploitability, evidence, confidence),
     }
 
@@ -613,6 +688,36 @@ def cvss_for(finding_type: str, finding_id: str = "") -> str | None:
         if key and (key in finding_type or key in finding_id):
             return vec
     return None
+
+
+def owasp_for(finding_type: str, finding_id: str = "") -> str | None:
+    """Best-effort OWASP Top 10 (2021) category lookup."""
+    finding_type = (finding_type or "").lower()
+    finding_id = (finding_id or "").lower()
+    if finding_type in OWASP_BY_TYPE:
+        return OWASP_BY_TYPE[finding_type]
+    for key, cat in OWASP_BY_TYPE.items():
+        if key and (key in finding_type or key in finding_id):
+            return cat
+    return None
+
+
+def attack_for(finding_type: str, finding_id: str = "") -> dict[str, str] | None:
+    """Best-effort MITRE ATT&CK technique lookup.
+
+    Returns {'id': 'T####', 'name': 'Technique Name'} or None.
+    """
+    finding_type = (finding_type or "").lower()
+    finding_id = (finding_id or "").lower()
+    hit = ATTACK_BY_TYPE.get(finding_type)
+    if hit is None:
+        for key, value in ATTACK_BY_TYPE.items():
+            if key and (key in finding_type or key in finding_id):
+                hit = value
+                break
+    if hit is None:
+        return None
+    return {"id": hit[0], "name": hit[1]}
 
 
 def verdict_for(

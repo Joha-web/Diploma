@@ -885,7 +885,10 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
         <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}" data-verdict="{{ f.verdict | default('candidate') }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
           <td><span style="font-size:.78em;text-transform:uppercase;color:var(--muted)" title="{{ f.cvss_vector or '' }}">{{ (f.verdict or 'candidate').replace('_',' ') }}</span></td>
-          <td><code style="font-size:.78em">{{ f.cwe or '—' }}</code></td>
+          <td>
+            <code style="font-size:.78em" title="{{ f.owasp or '' }}{% if f.attack %} | ATT&CK: {{ f.attack.id }} {{ f.attack.name }}{% endif %}">{{ f.cwe or '—' }}</code>
+            {% if f.owasp %}<div style="font-size:.7em;color:var(--muted)">{{ f.owasp.split('-')[0] }}{% if f.attack %} · {{ f.attack.id }}{% endif %}</div>{% endif %}
+          </td>
           <td>{{ f.title or f.name or f.type }}</td>
           <td><code>{{ f.url or f.matched_url }}</code></td>
           <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
@@ -922,7 +925,10 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
         <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}" data-verdict="{{ f.verdict | default('candidate') }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
           <td><span style="font-size:.78em;text-transform:uppercase;color:var(--muted)" title="{{ f.cvss_vector or '' }}">{{ (f.verdict or 'candidate').replace('_',' ') }}</span></td>
-          <td><code style="font-size:.78em">{{ f.cwe or '—' }}</code></td>
+          <td>
+            <code style="font-size:.78em" title="{{ f.owasp or '' }}{% if f.attack %} | ATT&CK: {{ f.attack.id }} {{ f.attack.name }}{% endif %}">{{ f.cwe or '—' }}</code>
+            {% if f.owasp %}<div style="font-size:.7em;color:var(--muted)">{{ f.owasp.split('-')[0] }}{% if f.attack %} · {{ f.attack.id }}{% endif %}</div>{% endif %}
+          </td>
           <td>{{ f.title or f.name or f.type }}</td>
           <td><code>{{ f.url or f.matched_url }}</code></td>
           <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
@@ -934,6 +940,31 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 </div>
 {% endif %}
 {% endfor %}
+
+<!-- Interesting-URL Screenshots -->
+{% if interesting_screenshots_b64 %}
+<div class="section" id="interesting-screenshots">
+  <div class="section-header">
+    <div class="section-title">📸 Interesting URL Screenshots
+      <span class="count-badge">{{ interesting_screenshots_b64 | length }}</span>
+    </div>
+  </div>
+  <div style="margin-bottom:10px;font-size:.85em;color:var(--muted)">
+    Captures of discovered admin panels, sensitive files, and interesting folders/endpoints — high-priority pages for manual review.
+  </div>
+  <div class="screenshot-grid">
+    {% for shot in interesting_screenshots_b64 %}
+    <div class="screenshot-card">
+      <img src="{{ shot.data_uri }}" alt="{{ shot.url or shot.filename }}">
+      <div class="caption">
+        {% if shot.categories %}<span style="color:var(--amber);font-size:.78em">{{ shot.categories | join(', ') }}</span><br>{% endif %}
+        {{ shot.url or shot.filename }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 <!-- Screenshots -->
 {% if screenshots_b64 %}
@@ -1016,8 +1047,79 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 
 {% if diff %}
 <div class="section" id="diff">
-  <div class="section-header"><div class="section-title">Scan Diff</div></div>
-  <div class="code-block">{{ diff | jsonpretty }}</div>
+  <div class="section-header">
+    <div class="section-title">📈 Scan Diff (vs previous scan)</div>
+  </div>
+  {% if diff.summary %}
+  <div style="margin-bottom:12px;font-size:.86em;color:var(--muted)">
+    <span style="color:var(--green)">+{{ diff.summary.new_subdomains }}</span> /
+    <span style="color:var(--amber)">−{{ diff.summary.removed_subdomains }}</span> subdomains
+    · <span style="color:var(--red)">+{{ diff.summary.new_findings }}</span> /
+    <span style="color:var(--green)">−{{ diff.summary.resolved_findings }}</span> findings
+    · <span style="color:var(--red)">+{{ diff.summary.new_open_ports }}</span> /
+    <span style="color:var(--green)">−{{ diff.summary.closed_ports }}</span> open ports
+    · <span style="color:var(--red)">{{ diff.summary.assets_score_up }}</span> assets ↑ /
+    <span style="color:var(--green)">{{ diff.summary.assets_score_down }}</span> assets ↓
+  </div>
+  {% endif %}
+
+  {% if diff.new_subdomains %}
+  <details open><summary>🟢 New subdomains <span class="count-badge">{{ diff.new_subdomains | length }}</span></summary>
+    <div class="code-block">{% for s in diff.new_subdomains[:200] %}{{ s }}
+{% endfor %}</div>
+  </details>
+  {% endif %}
+
+  {% if diff.removed_subdomains %}
+  <details><summary>⚪ Removed subdomains <span class="count-badge">{{ diff.removed_subdomains | length }}</span></summary>
+    <div class="code-block">{% for s in diff.removed_subdomains[:200] %}{{ s }}
+{% endfor %}</div>
+  </details>
+  {% endif %}
+
+  {% if diff.new_findings %}
+  <details open><summary>🔴 New findings <span class="count-badge">{{ diff.new_findings | length }}</span></summary>
+    <div class="code-block">{% for f in diff.new_findings[:200] %}{{ f }}
+{% endfor %}</div>
+  </details>
+  {% endif %}
+
+  {% if diff.resolved_findings %}
+  <details><summary>✅ Resolved findings <span class="count-badge">{{ diff.resolved_findings | length }}</span></summary>
+    <div class="code-block">{% for f in diff.resolved_findings[:200] %}{{ f }}
+{% endfor %}</div>
+  </details>
+  {% endif %}
+
+  {% if diff.new_open_ports or diff.closed_ports %}
+  <details><summary>🔌 Port changes <span class="count-badge">{{ (diff.new_open_ports | length) + (diff.closed_ports | length) }}</span></summary>
+    <div class="code-block">{% for p in diff.new_open_ports %}+ {{ p }}
+{% endfor %}{% for p in diff.closed_ports %}− {{ p }}
+{% endfor %}</div>
+  </details>
+  {% endif %}
+
+  {% if diff.asset_score_deltas %}
+  <details open><summary>📊 Asset score changes <span class="count-badge">{{ diff.asset_score_deltas | length }}</span></summary>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Asset</th><th>Before</th><th>After</th><th>Δ</th></tr></thead>
+        <tbody>
+        {% for a in diff.asset_score_deltas %}
+          <tr>
+            <td><code>{{ a.asset }}</code></td>
+            <td>{{ a.before }}</td>
+            <td>{{ a.after }}</td>
+            <td style="color:{{ 'var(--red)' if a.delta > 0 else 'var(--green)' }}">
+              {{ '+' if a.delta > 0 else '' }}{{ a.delta }}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
 </div>
 {% endif %}
 

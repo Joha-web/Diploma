@@ -224,3 +224,85 @@ def test_js_secret_match_is_redacted_by_default(tmp_path):
 
     assert "ghp_abcdefghijklmnopqrstuvwxyz1234567890" not in redacted
     assert "ghp_..." in redacted
+
+
+def test_screenshot_interesting_skips_when_gowitness_missing(tmp_path, monkeypatch):
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    monkeypatch.setattr(module, "has_tool", lambda name: False)
+    result = module._screenshot_interesting({
+        "admin_panels": ["https://example.com/admin"],
+        "interesting_directories": ["https://example.com/backup/"],
+    })
+    assert result == []
+
+
+def test_screenshot_interesting_runs_gowitness_and_tags_categories(tmp_path, monkeypatch):
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    monkeypatch.setattr(module, "has_tool", lambda name: name == "gowitness")
+
+    shots_dir = module.module_dir / "screenshots_interesting"
+
+    def fake_exec(cmd, **kwargs):
+        shots_dir.mkdir(parents=True, exist_ok=True)
+        (shots_dir / "https_example_com_admin.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        (shots_dir / "https_example_com_backup.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        return None
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+
+    result = module._screenshot_interesting({
+        "admin_panels": ["https://example.com/admin"],
+        "interesting_directories": ["https://example.com/backup/"],
+        "sensitive_files": [],
+        "interesting_endpoints": [],
+    })
+
+    assert len(result) == 2
+    by_filename = {s["filename"]: s for s in result}
+    # Both shots should have been matched to a source URL
+    assert all("url" in s for s in result)
+    assert (module.module_dir / "screenshots_interesting.json").exists()
+    assert (module.module_dir / "screenshot_targets.txt").exists()
+
+
+def test_screenshot_interesting_disabled_via_config(tmp_path, monkeypatch):
+    module = FuzzerModule(
+        "example.com",
+        str(tmp_path),
+        {"scan": {"fuzzing": {"screenshot_interesting": False}}},
+        live_hosts=[],
+    )
+    monkeypatch.setattr(module, "has_tool", lambda name: True)
+    result = module._screenshot_interesting({"admin_panels": ["https://example.com/admin"]})
+    assert result == []
+
+
+def test_spa_endpoints_reads_session_file_and_filters_scope(tmp_path):
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+
+    # Write a spa_crawler/endpoints.txt sibling to the fuzzer's session
+    spa_dir = tmp_path / "spa_crawler"
+    spa_dir.mkdir(parents=True, exist_ok=True)
+    (spa_dir / "endpoints.txt").write_text(
+        "\n".join([
+            "https://api.example.com/v1/users",
+            "https://app.example.com/api/orders",
+            "https://evil-example.com/leak",         # out of scope — should be filtered
+            "ftp://example.com/file",                 # non-HTTP — should be ignored
+            "https://example.com/spa/route",
+        ]),
+        encoding="utf-8",
+    )
+
+    out = module._spa_endpoints()
+
+    assert "https://api.example.com/v1/users" in out
+    assert "https://app.example.com/api/orders" in out
+    assert "https://example.com/spa/route" in out
+    assert not any("evil-example.com" in u for u in out)
+    assert not any(u.startswith("ftp://") for u in out)
+
+
+def test_spa_endpoints_returns_empty_when_file_missing(tmp_path):
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    assert module._spa_endpoints() == []

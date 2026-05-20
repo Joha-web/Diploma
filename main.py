@@ -11,6 +11,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -49,6 +50,7 @@ PIPELINE: list[dict] = [
     {"name": "portscan",    "group": 2},   # parallel with webdetect
     {"name": "webdetect",   "group": 2},   # parallel with portscan
     {"name": "techstack",   "group": 3},
+    {"name": "spa_crawler", "group": 3},   # headless-browser SPA crawl, parallel with techstack
     {"name": "fuzzer",      "group": 4},   # parallel with ssl/auth/cors
     {"name": "ssl_checker", "group": 4},
     {"name": "cors_checker","group": 4},
@@ -97,6 +99,7 @@ CLASS_MAP = {
     "portscan":    ("modules.portscan",     "PortScanModule"),
     "webdetect":   ("modules.webdetect",    "WebdetectModule"),
     "techstack":   ("modules.techstack",    "TechStackModule"),
+    "spa_crawler": ("modules.spa_crawler",  "SPACrawlerModule"),
     "fuzzer":      ("modules.fuzzer",       "FuzzerModule"),
     "ssl_checker": ("modules.ssl_checker",  "SSLCheckerModule"),
     "cors_checker":("modules.cors_checker", "CORSCheckerModule"),
@@ -140,6 +143,7 @@ MODULE_LABELS = {
     "portscan":    "Port Scanning",
     "webdetect":   "Web Application Detection",
     "techstack":   "Technology Fingerprinting",
+    "spa_crawler": "Headless-browser SPA Crawl",
     "fuzzer":      "Crawling & Fuzzing",
     "ssl_checker": "SSL/TLS & Headers Analysis",
     "cors_checker":"CORS Misconfiguration Scanner",
@@ -306,7 +310,7 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
     kwargs: dict = {}
     if name == "portscan":
         kwargs["resolved_ips"] = recon.get("scan_ips") or recon.get("resolved_ips", [])
-    elif name in ("webdetect", "techstack", "fuzzer", "ssl_checker",
+    elif name in ("webdetect", "techstack", "spa_crawler", "fuzzer", "ssl_checker",
                   "cors_checker", "auth_probe", "openapi_parser",
                   "http_smuggling", "oauth_probe", "cache_poison"):
         kwargs["live_hosts"] = live
@@ -405,6 +409,10 @@ def _module_summary(name: str, result: dict) -> str:
                 + (f", ⚠{hr} high-risk" if hr else ""))
     elif name == "techstack":
         return f"{len(result.get('technologies_summary', {}))} technologies"
+    elif name == "spa_crawler":
+        if result.get("status") == "skipped":
+            return "skipped (playwright not installed)"
+        return f"{result.get('total', 0)} SPA-rendered endpoint(s)"
     elif name == "fuzzer":
         return (f"{result.get('total_endpoints', 0)} endpoints, "
                 f"{result.get('js_secrets_count', 0)} JS secrets")
@@ -596,6 +604,9 @@ def run_pipeline(
             )
         except Exception as e:
             console.print(f"[yellow]![/yellow] Diff skipped: {e}")
+
+    # Persist a per-target snapshot so the next run can auto-diff.
+    _persist_snapshot(target, all_results)
 
     # ── Telegram: critical vulnerability alerts ───────────────────────────────
     vuln_findings = all_results.get("vulnscan", {}).get("findings", [])
@@ -870,6 +881,12 @@ enabled automatically. Use --new to force a clean start.
     preset_name = args.preset or cfg.get("preset") or cfg.get("scan", {}).get("preset", "")
     cfg = apply_env_overrides(apply_config_preset(cfg, preset_name))
     previous_results = _load_previous_results(args.diff) if args.diff else None
+    if previous_results is None:
+        # Auto-pick the most recent snapshot for this target so re-scans diff out of the box.
+        auto_prev = _resolve_previous_snapshot(args.target)
+        if auto_prev is not None:
+            previous_results = _load_previous_results(str(auto_prev))
+            console.print(f"[dim]Diff baseline:[/dim] {auto_prev}")
     legal_cfg = cfg.get("legal", {})
     if legal_cfg.get("require_acknowledgment", False) and not args.legal_acknowledgment:
         console.print("[red]Error: pass --legal-acknowledgment to confirm authorization[/red]")
@@ -977,8 +994,91 @@ def _load_previous_results(path: str) -> dict:
             "webdetect": {"live_urls": data.get("assets", {}).get("live_urls", [])},
             "portscan": {"hosts": data.get("assets", {}).get("ports_by_host", [])},
             "vulnscan": {"findings": data.get("findings", [])},
+            "asset_risk": data.get("asset_risk", {}),
         }
     return data if isinstance(data, dict) else {}
+
+
+# ── Scan snapshot store (per-target history for auto-diff) ────────────────────
+
+def _snapshot_root() -> Path:
+    base = os.environ.get("RECONX_SNAPSHOT_DIR")
+    if base:
+        return Path(base).expanduser()
+    return Path.home() / ".reconx" / "snapshots"
+
+
+def _snapshot_dir(target: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", target)
+    return _snapshot_root() / safe
+
+
+def _resolve_previous_snapshot(target: str) -> Path | None:
+    """Return the path to the most recent prior snapshot for this target."""
+    sdir = _snapshot_dir(target)
+    if not sdir.is_dir():
+        return None
+    candidates = sorted(sdir.glob("scan-*.json"))
+    return candidates[-1] if candidates else None
+
+
+def _persist_snapshot(target: str, all_results: dict) -> Path | None:
+    """Save a compact snapshot of this scan for future diffs.
+
+    Trims the snapshot to only what build_results_diff actually consumes so
+    the per-target history stays small even after many scans.
+    """
+    try:
+        sdir = _snapshot_dir(target)
+        sdir.mkdir(parents=True, exist_ok=True)
+        snapshot = {
+            "recon": {
+                "subdomains": all_results.get("recon", {}).get("subdomains", []),
+            },
+            "webdetect": {
+                "live_urls": all_results.get("webdetect", {}).get("live_urls", [])
+                             or all_results.get("recon", {}).get("live_http", []),
+            },
+            "portscan": {
+                "hosts": all_results.get("portscan", {}).get("hosts", []),
+            },
+            "vulnscan": {
+                "findings": all_results.get("vulnscan", {}).get("findings", []),
+            },
+            "asset_risk": {
+                "ranked_assets": [
+                    {"asset": a.get("asset"), "score": a.get("score")}
+                    for a in all_results.get("asset_risk", {}).get("ranked_assets", [])
+                ],
+            },
+        }
+        # Mirror per-module findings so _finding_set can compute the delta
+        for module_name in (
+            "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
+            "injection_probe", "xss", "sql_injection", "http_smuggling",
+            "oauth_probe", "cache_poison", "host_header_injection",
+            "prototype_pollution", "xxe_probe", "deserialization_probe",
+            "graphql_audit", "race_condition", "open_redirect_probe",
+            "api_key_validator", "idor_probe", "jwt_audit", "websocket_probe",
+            "api_schema_audit", "js_security_audit", "sourcemap_analyzer",
+            "takeover_checker", "correlator",
+        ):
+            findings = all_results.get(module_name, {}).get("findings", [])
+            if findings:
+                snapshot[module_name] = {"findings": findings}
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = sdir / f"scan-{timestamp}.json"
+        path.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        # Keep at most 10 snapshots per target
+        keep = sorted(sdir.glob("scan-*.json"))[-10:]
+        for old in sdir.glob("scan-*.json"):
+            if old not in keep:
+                old.unlink(missing_ok=True)
+        return path
+    except Exception as exc:
+        console.print(f"[yellow]Snapshot persist skipped: {exc}[/yellow]")
+        return None
 
 
 if __name__ == "__main__":

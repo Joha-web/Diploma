@@ -170,6 +170,12 @@ class FuzzerModule(BaseModule):
             well_known = self._robots_sitemap(urls)
             all_endpoints.update(well_known)
 
+        # 5b. SPA crawler output (Playwright-rendered XHR/fetch + SPA hrefs)
+        spa_eps = self._spa_endpoints()
+        if spa_eps:
+            all_endpoints.update(spa_eps)
+            self.info(f"  + {len(spa_eps)} SPA-crawl endpoint(s)")
+
         # 6. GraphQL endpoint detection and schema mapping
         graphql = []
         if self.config.get("scan", {}).get("fuzzing", {}).get("graphql_probe", True):
@@ -195,6 +201,10 @@ class FuzzerModule(BaseModule):
         classified["cloud_assets"] = cloud_assets
 
         self.success(f"Total unique endpoints: {len(merged)}")
+
+        # Optional: take screenshots of interesting URLs surfaced by classification
+        interesting_screenshots = self._screenshot_interesting(classified)
+
         return {
             "total_endpoints":  len(merged),
             "all_endpoints":    merged,
@@ -207,6 +217,7 @@ class FuzzerModule(BaseModule):
             "well_known_urls":   well_known,
             "findings":          findings,
             "total_findings":    len(findings),
+            "interesting_screenshots": interesting_screenshots,
         }
 
     def summary(self) -> str:
@@ -388,6 +399,22 @@ class FuzzerModule(BaseModule):
         self.save_json(cloud_assets, "js_mining/cloud_assets.json")
         self.success(f"JS Mining → {len(endpoints)} endpoints, {len(secrets)} secrets")
         return endpoints, secrets, js_urls, cloud_assets
+
+    # ── SPA crawler import ────────────────────────────────────────────────────
+
+    def _spa_endpoints(self) -> list[str]:
+        """Read endpoints surfaced by the spa_crawler module, if it ran.
+
+        The SPA crawler writes one URL per line; we filter to scope and return
+        them so they get classified and fuzzed alongside crawler/feroxbuster.
+        """
+        spa_file = self.session_path("spa_crawler", "endpoints.txt")
+        lines = self.load_lines(spa_file)
+        if not lines:
+            return []
+        return list(self.filter_in_scope_urls(
+            url for url in lines if url.startswith(("http://", "https://"))
+        ))
 
     # ── robots.txt / sitemap.xml ─────────────────────────────────────────────
 
@@ -608,6 +635,90 @@ class FuzzerModule(BaseModule):
                 seen.add(endpoint)
                 result.append(item)
         return result
+
+    # ── Screenshots of interesting URLs ───────────────────────────────────────
+
+    SCREENSHOT_CATEGORIES = (
+        "admin_panels",
+        "sensitive_files",
+        "interesting_directories",
+        "interesting_endpoints",
+    )
+
+    def _screenshot_interesting(self, classified: dict) -> list[dict]:
+        """Capture screenshots of high-signal URLs surfaced by the fuzzer.
+
+        Runs gowitness against the union of admin / sensitive / interesting
+        categories. Each screenshot record is tagged with the category that
+        contributed the URL so the report can group them. Silently skips when
+        gowitness is unavailable or screenshots are disabled.
+        """
+        cfg = self.config.get("scan", {}).get("fuzzing", {})
+        if not cfg.get("screenshot_interesting", True):
+            return []
+        if not self.has_tool("gowitness"):
+            return []
+
+        url_to_categories: dict[str, list[str]] = {}
+        for cat in self.SCREENSHOT_CATEGORIES:
+            for url in classified.get(cat, []) or []:
+                url = str(url).strip()
+                if not url.startswith(("http://", "https://")):
+                    continue
+                url_to_categories.setdefault(url, []).append(cat)
+
+        if not url_to_categories:
+            return []
+
+        max_urls = int(cfg.get("screenshot_max", 40))
+        urls = sorted(url_to_categories)[:max_urls]
+
+        shots_dir = self.module_dir / "screenshots_interesting"
+        shots_dir.mkdir(exist_ok=True)
+        urls_file = self.module_dir / "screenshot_targets.txt"
+        self.save_text(urls, "screenshot_targets.txt")
+
+        self.info(f"Capturing {len(urls)} interesting-URL screenshots (gowitness)…")
+        self.exec(
+            ["gowitness", "file",
+             "-f", str(urls_file),
+             "--screenshot-path", str(shots_dir),
+             "--threads", str(int(cfg.get("screenshot_threads", 5))),
+             "--timeout", str(int(cfg.get("screenshot_timeout", 15))),
+             "--disable-logging"],
+            timeout=int(cfg.get("screenshot_total_timeout", 600)),
+            label="gowitness interesting",
+        )
+
+        shots: list[dict] = []
+        for path in sorted(shots_dir.glob("*.png")):
+            shots.append({
+                "path": str(path),
+                "relative_path": str(path.relative_to(self.output_dir)),
+                "filename": path.name,
+            })
+        if not shots:
+            self.warn("No interesting-URL screenshots captured")
+            return []
+
+        # Best-effort match: assign each shot to its source URL by hostname/port token.
+        # gowitness names files using the host:port portion; we accept any token overlap.
+        from urllib.parse import urlparse as _urlparse
+
+        unused = list(shots)
+        for url, cats in url_to_categories.items():
+            host = _urlparse(url).hostname or ""
+            token = host.replace(".", "_")
+            for shot in list(unused):
+                if token and token in shot["filename"]:
+                    shot["url"] = url
+                    shot["categories"] = cats
+                    unused.remove(shot)
+                    break
+
+        self.save_json(shots, "screenshots_interesting.json")
+        self.success(f"Interesting-URL screenshots: {len(shots)}")
+        return shots
 
     # ── Classification ────────────────────────────────────────────────────────
 

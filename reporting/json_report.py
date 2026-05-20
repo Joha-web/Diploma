@@ -197,7 +197,11 @@ def _assets(results: dict) -> dict:
 
 
 def build_results_diff(previous: dict, current: dict) -> dict:
-    """Return a compact diff between two all_results-like dictionaries."""
+    """Return a compact diff between two all_results-like dictionaries.
+
+    Includes asset-score deltas when both snapshots ran the asset_risk module,
+    so the report can call out which hosts got more or less exposed.
+    """
     prev_subs = set(previous.get("recon", {}).get("subdomains", []))
     curr_subs = set(current.get("recon", {}).get("subdomains", []))
     prev_live = set(previous.get("webdetect", {}).get("live_urls", []))
@@ -206,6 +210,7 @@ def build_results_diff(previous: dict, current: dict) -> dict:
     curr_ports = _port_set(current)
     prev_findings = _finding_set(previous)
     curr_findings = _finding_set(current)
+    asset_deltas = _asset_score_deltas(previous, current)
     return {
         "new_subdomains": sorted(curr_subs - prev_subs),
         "removed_subdomains": sorted(prev_subs - curr_subs),
@@ -215,7 +220,44 @@ def build_results_diff(previous: dict, current: dict) -> dict:
         "closed_ports": sorted(prev_ports - curr_ports),
         "new_findings": sorted(curr_findings - prev_findings),
         "resolved_findings": sorted(prev_findings - curr_findings),
+        "asset_score_deltas": asset_deltas,
+        "summary": {
+            "new_subdomains": len(curr_subs - prev_subs),
+            "removed_subdomains": len(prev_subs - curr_subs),
+            "new_findings": len(curr_findings - prev_findings),
+            "resolved_findings": len(prev_findings - curr_findings),
+            "new_open_ports": len(curr_ports - prev_ports),
+            "closed_ports": len(prev_ports - curr_ports),
+            "assets_score_up": sum(1 for a in asset_deltas if a["delta"] > 0),
+            "assets_score_down": sum(1 for a in asset_deltas if a["delta"] < 0),
+        },
     }
+
+
+def _asset_score_deltas(previous: dict, current: dict) -> list[dict]:
+    """Per-asset score delta sorted by absolute change. Limited to top 50."""
+    prev_scores = {
+        a.get("asset", ""): int(a.get("score", 0))
+        for a in (previous.get("asset_risk", {}) or {}).get("ranked_assets", []) or []
+    }
+    curr_scores = {
+        a.get("asset", ""): int(a.get("score", 0))
+        for a in (current.get("asset_risk", {}) or {}).get("ranked_assets", []) or []
+    }
+    deltas: list[dict] = []
+    for asset in set(prev_scores) | set(curr_scores):
+        before = prev_scores.get(asset, 0)
+        after = curr_scores.get(asset, 0)
+        if before == after:
+            continue
+        deltas.append({
+            "asset": asset,
+            "before": before,
+            "after": after,
+            "delta": after - before,
+        })
+    deltas.sort(key=lambda d: abs(d["delta"]), reverse=True)
+    return deltas[:50]
 
 
 def _port_set(results: dict) -> set[str]:

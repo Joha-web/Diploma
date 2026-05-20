@@ -2,10 +2,12 @@ from modules.finding_registry import (
     VERDICT_CONFIRMED,
     VERDICT_CANDIDATE,
     VERDICT_REVIEW,
+    attack_for,
     build_finding,
     cvss_for,
     cwe_for,
     normalize_finding,
+    owasp_for,
     verdict_for,
 )
 
@@ -52,6 +54,21 @@ def test_build_finding_attaches_cwe_cvss_and_verdict():
     assert finding["verdict"] == VERDICT_CONFIRMED
     assert finding["severity"] == "HIGH"
     assert finding["risk_score"] > 0
+    assert finding["owasp"].startswith("A03:2021")
+    assert finding["attack"]["id"].startswith("T")
+
+
+def test_owasp_and_attack_lookups():
+    assert owasp_for("sql_injection").startswith("A03:2021")
+    assert owasp_for("idor").startswith("A01:2021")
+    assert owasp_for("", "jwt_audit_weak_secret").startswith("A02:2021")
+    assert owasp_for("unknown") is None
+
+    attack = attack_for("ssrf")
+    assert attack["id"] == "T1190"
+    attack = attack_for("", "subdomain_takeover_provider")
+    assert attack["id"].startswith("T1584")
+    assert attack_for("unknown") is None
 
 
 def test_normalize_finding_backfills_enrichment_fields():
