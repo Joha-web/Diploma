@@ -385,7 +385,6 @@ wordlists:
 reporting:
   formats:
     - html
-    - md
     - json
   language: "en"
 

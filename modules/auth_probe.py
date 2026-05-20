@@ -124,8 +124,17 @@ class AuthProbeModule(BaseModule):
 
         return findings
 
+    # Cookies that are intentionally accessible via JavaScript — missing HttpOnly
+    # on these is expected behaviour, not a vulnerability.
+    ANALYTICS_COOKIE_PREFIXES = (
+        "_ga", "_gid", "_gat", "_gcl_", "_fbp", "_fbc",
+        "__utm", "_hjid", "_hjSession", "ajs_", "mp_",
+        "amplitude_id", "mixpanel", "intercom-",
+    )
+
     def _audit_cookies(self, url: str, headers: list[str]) -> list[dict]:
         findings: list[dict] = []
+        seen_cookie_issues: set[tuple[str, str]] = set()
         for raw in headers:
             cookie = SimpleCookie()
             try:
@@ -133,25 +142,41 @@ class AuthProbeModule(BaseModule):
             except Exception:
                 continue
             for name, morsel in cookie.items():
+                # Skip analytics/tracking cookies for HttpOnly checks — they are
+                # intentionally JS-readable; flagging them produces false positives.
+                is_analytics = any(
+                    name.lower().startswith(prefix.lower())
+                    for prefix in self.ANALYTICS_COOKIE_PREFIXES
+                )
+
                 if url.startswith("https://") and not morsel["secure"]:
-                    findings.append(self._finding(
-                        "cookie_missing_secure", "MEDIUM", url,
-                        "HTTPS cookie missing Secure flag",
-                        {"cookie": name},
-                    ))
-                if not morsel["httponly"]:
-                    findings.append(self._finding(
-                        "cookie_missing_httponly", "MEDIUM", url,
-                        "Cookie missing HttpOnly flag",
-                        {"cookie": name},
-                    ))
+                    key = ("cookie_missing_secure", name)
+                    if key not in seen_cookie_issues:
+                        seen_cookie_issues.add(key)
+                        findings.append(self._finding(
+                            "cookie_missing_secure", "MEDIUM", url,
+                            "HTTPS cookie missing Secure flag",
+                            {"cookie": name},
+                        ))
+                if not morsel["httponly"] and not is_analytics:
+                    key = ("cookie_missing_httponly", name)
+                    if key not in seen_cookie_issues:
+                        seen_cookie_issues.add(key)
+                        findings.append(self._finding(
+                            "cookie_missing_httponly", "MEDIUM", url,
+                            "Cookie missing HttpOnly flag",
+                            {"cookie": name},
+                        ))
                 samesite = str(morsel["samesite"] or "").lower()
                 if not samesite or samesite == "none":
-                    findings.append(self._finding(
-                        "cookie_weak_samesite", "LOW", url,
-                        "Cookie missing strict SameSite protection",
-                        {"cookie": name},
-                    ))
+                    key = ("cookie_weak_samesite", name)
+                    if key not in seen_cookie_issues:
+                        seen_cookie_issues.add(key)
+                        findings.append(self._finding(
+                            "cookie_weak_samesite", "LOW", url,
+                            "Cookie missing strict SameSite protection",
+                            {"cookie": name},
+                        ))
         return findings
 
     @staticmethod
@@ -201,6 +226,15 @@ class AuthProbeModule(BaseModule):
 
     def _finding(self, finding_type: str, severity: str, url: str,
                  title: str, evidence: dict) -> dict:
+        # Cookie/header best-practice observations are not confirmed exploitable
+        # vulnerabilities — use a lower confidence to reflect that.
+        is_cookie_observation = finding_type in (
+            "cookie_missing_httponly", "cookie_missing_secure",
+            "cookie_weak_samesite", "jwt_expired_token_seen",
+        )
+        confidence = 0.5 if finding_type == "jwt_expired_token_seen" else (
+            0.6 if is_cookie_observation else 0.8
+        )
         return {
             "source": self.name,
             "id": finding_type,
@@ -212,7 +246,7 @@ class AuthProbeModule(BaseModule):
             "matched_url": url,
             "description": title,
             "evidence": evidence,
-            "confidence": 0.8,
+            "confidence": confidence,
         }
 
     def _extract_urls(self) -> list[str]:

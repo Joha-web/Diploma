@@ -4,6 +4,7 @@ Renders templates/report.html via Jinja2 with full scan results.
 AI analysis is rendered from Markdown to HTML for proper formatting.
 """
 
+import base64
 import json
 import html
 from pathlib import Path
@@ -53,10 +54,10 @@ class HTMLReportGenerator:
         template = env.get_template("report.html")
 
         ctx = self._build_context(all_results, ai_analysis)
-        html = template.render(**ctx)
+        html_content = template.render(**ctx)
 
         out_path = self.output_dir / "report.html"
-        out_path.write_text(html, encoding="utf-8")
+        out_path.write_text(html_content, encoding="utf-8")
         return str(out_path)
 
     # ── Context builder ───────────────────────────────────────────────────────
@@ -189,6 +190,17 @@ class HTMLReportGenerator:
         if ai_analysis:
             ai_html = self._render_markdown(ai_analysis)
 
+        # Embed screenshots as base64 for portable HTML
+        screenshots_b64 = self._embed_screenshots(web.get("screenshots", []))
+
+        # Build finding descriptions from registry
+        finding_descriptions = self._build_finding_descriptions(r)
+
+        # Generate static AI fallback if AI analysis is empty
+        static_analysis = ""
+        if not ai_html:
+            static_analysis = self._build_static_analysis(r, summary)
+
         return {
             "target":      self.target,
             "date":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -219,7 +231,10 @@ class HTMLReportGenerator:
             "all_findings_count": all_findings_count,
             "diff":        r.get("diff", {}),
             "ai_analysis": ai_html,
+            "static_analysis": static_analysis,
             "summary":     summary,
+            "screenshots_b64": screenshots_b64,
+            "finding_descriptions": finding_descriptions,
         }
 
     @staticmethod
@@ -292,4 +307,105 @@ class HTMLReportGenerator:
                 protocols=["http", "https", "mailto"],
                 strip=True,
             )
-        return html.escape(rendered)
+        # Return rendered HTML directly — do NOT call html.escape() here because
+        # `rendered` already contains HTML tags produced by the markdown library
+        # (or the <pre>…</pre> fallback). Escaping would double-encode all tags.
+        return rendered
+
+    def _embed_screenshots(self, screenshots: list) -> list:
+        """Convert screenshot file paths to base64 data URIs."""
+        result = []
+        for shot in (screenshots or [])[:80]:
+            path_str = shot.get("path", "")
+            if not path_str:
+                rel = shot.get("relative_path", "")
+                if rel:
+                    path_str = str(self.output_dir / rel)
+            from pathlib import Path as P
+            path = P(path_str)
+            if path.exists() and path.stat().st_size > 0:
+                try:
+                    data = base64.b64encode(path.read_bytes()).decode("ascii")
+                    ext = path.suffix.lower().lstrip(".")
+                    mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                            "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/png")
+                    result.append({
+                        "data_uri": f"data:{mime};base64,{data}",
+                        "url": shot.get("url", shot.get("filename", "")),
+                        "filename": shot.get("filename", path.name),
+                    })
+                except Exception:
+                    continue
+        return result
+
+    @staticmethod
+    def _build_finding_descriptions(r: dict) -> dict:
+        """Build human-readable descriptions for common finding types."""
+        return {
+            "xss": {"title": "Cross-Site Scripting (XSS)", "impact": "Attackers can inject malicious scripts into web pages viewed by other users, potentially stealing session cookies, credentials, or performing actions on behalf of the victim.", "remediation": "Encode all user-controlled output. Use Content-Security-Policy headers. Validate and sanitize input."},
+            "sql_injection": {"title": "SQL Injection", "impact": "Attackers can manipulate database queries to read, modify, or delete data. May lead to full database compromise, authentication bypass, or remote code execution.", "remediation": "Use parameterized queries/prepared statements. Apply input validation. Use least-privilege database accounts."},
+            "injection_probe": {"title": "Server-Side Injection (SSTI/SSRF)", "impact": "Attackers can execute arbitrary code on the server (SSTI) or make the server send requests to internal services (SSRF), potentially accessing internal networks.", "remediation": "Sanitize template inputs. Restrict outbound network access. Use allowlists for URL parameters."},
+            "cors_checker": {"title": "CORS Misconfiguration", "impact": "Overly permissive CORS policies can allow malicious websites to make authenticated requests to the application, stealing sensitive data.", "remediation": "Restrict Access-Control-Allow-Origin to trusted domains. Avoid wildcard origins with credentials."},
+            "auth_probe": {"title": "Authentication/Authorization Issues", "impact": "Weak authentication configurations can allow unauthorized access, session hijacking, or privilege escalation.", "remediation": "Implement secure session management. Use HttpOnly and Secure cookie flags. Enforce strong password policies."},
+            "ssl_checker": {"title": "SSL/TLS & Security Headers", "impact": "Weak SSL configurations or missing security headers can expose users to man-in-the-middle attacks, clickjacking, and XSS.", "remediation": "Use TLS 1.2+. Add HSTS, CSP, X-Frame-Options, X-Content-Type-Options headers."},
+            "prototype_pollution": {"title": "Prototype Pollution", "impact": "Attackers can modify JavaScript object prototypes, potentially leading to property injection, denial of service, or remote code execution.", "remediation": "Use Object.create(null) for maps. Validate and sanitize user input. Use __proto__ pollution prevention libraries."},
+            "http_smuggling": {"title": "HTTP Request Smuggling", "impact": "Attackers can bypass security controls, access unauthorized content, or poison web caches by exploiting discrepancies in HTTP request parsing.", "remediation": "Use HTTP/2 end-to-end. Normalize Transfer-Encoding handling. Ensure consistent parsing across proxy layers."},
+            "open_redirect_probe": {"title": "Open Redirect", "impact": "Attackers can redirect users to malicious websites for phishing or malware delivery while the URL appears legitimate.", "remediation": "Validate redirect URLs against an allowlist. Avoid using user input directly in redirects."},
+            "jwt_audit": {"title": "JWT Security Issues", "impact": "Weak JWT configurations can allow token forgery, authentication bypass, or privilege escalation.", "remediation": "Use strong signing algorithms (RS256/ES256). Validate all claims. Set appropriate expiration times."},
+            "idor_probe": {"title": "Insecure Direct Object Reference (IDOR)", "impact": "Attackers can access or modify resources belonging to other users by manipulating object identifiers in API requests.", "remediation": "Implement proper authorization checks. Use indirect references. Validate user permissions server-side."},
+            "secret_scanner": {"title": "Exposed Secrets in Git Repositories", "impact": "API keys, passwords, and tokens leaked in source code can provide direct access to backend services and cloud infrastructure.", "remediation": "Rotate all exposed credentials immediately. Use environment variables or secret managers. Add .gitignore rules."},
+            "takeover_checker": {"title": "Subdomain Takeover", "impact": "Unclaimed subdomains pointing to expired services can be taken over by attackers to host malicious content under the organization's domain.", "remediation": "Remove stale DNS records. Monitor subdomain health. Claim or decommission unused services."},
+        }
+
+    @staticmethod
+    def _build_static_analysis(r: dict, summary: dict) -> str:
+        """Generate a deterministic analysis when AI is unavailable."""
+        lines = []
+        risk = summary.get("risk_level", "LOW")
+        sev = summary.get("finding_severity", {})
+        total_findings = sum(sev.values())
+
+        # Executive Summary
+        lines.append("<h2>Executive Summary</h2>")
+        if risk == "CRITICAL":
+            lines.append(f"<p>The automated scan identified <strong>{total_findings} findings</strong> including <strong style='color:var(--red)'>{sev.get('CRITICAL',0)} critical</strong> issues. Immediate remediation is required. Security grade: <strong>F</strong>.</p>")
+        elif risk == "HIGH":
+            lines.append(f"<p>The scan found <strong>{total_findings} findings</strong> with <strong style='color:var(--amber)'>{sev.get('HIGH',0)} high-severity</strong> issues requiring prompt attention. Security grade: <strong>D</strong>.</p>")
+        elif risk == "MEDIUM":
+            lines.append(f"<p>The scan found <strong>{total_findings} findings</strong> with <strong>{sev.get('MEDIUM',0)} medium-severity</strong> issues. Security grade: <strong>C</strong>.</p>")
+        else:
+            lines.append(f"<p>The scan found <strong>{total_findings} findings</strong>. No critical or high-risk issues were confirmed. Security grade: <strong>B</strong>.</p>")
+
+        # Key Metrics
+        lines.append("<h2>Attack Surface Overview</h2><ul>")
+        lines.append(f"<li><strong>{summary.get('subdomains',0)}</strong> subdomains discovered</li>")
+        lines.append(f"<li><strong>{summary.get('live_hosts',0)}</strong> live HTTP hosts</li>")
+        lines.append(f"<li><strong>{summary.get('open_ports',0)}</strong> open ports</li>")
+        lines.append(f"<li><strong>{summary.get('technologies',0)}</strong> technologies detected</li>")
+        lines.append(f"<li><strong>{summary.get('endpoints',0)}</strong> endpoints discovered</li>")
+        lines.append("</ul>")
+
+        # Findings by severity
+        if total_findings > 0:
+            lines.append("<h2>Findings Breakdown</h2><ul>")
+            for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
+                count = sev.get(s, 0)
+                if count > 0:
+                    lines.append(f"<li><strong>{s}</strong>: {count} finding(s)</li>")
+            lines.append("</ul>")
+
+        # Remediation priorities
+        lines.append("<h2>Recommended Actions</h2><ol>")
+        if sev.get("CRITICAL", 0) > 0:
+            lines.append("<li><strong>Critical:</strong> Address all critical findings immediately — these represent actively exploitable vulnerabilities.</li>")
+        if sev.get("HIGH", 0) > 0:
+            lines.append("<li><strong>High:</strong> Remediate high-severity findings within the current sprint.</li>")
+        if sev.get("MEDIUM", 0) > 0:
+            lines.append("<li><strong>Medium:</strong> Plan remediation for medium findings in upcoming releases.</li>")
+        lines.append("<li>Review and validate all automated findings manually before tracking for remediation.</li>")
+        lines.append("<li>Implement missing security headers (CSP, HSTS, X-Frame-Options) across all hosts.</li>")
+        lines.append("<li>Conduct periodic re-scans to track remediation progress.</li>")
+        lines.append("</ol>")
+        lines.append("<p><em>All automated findings should be manually verified before remediation tracking or risk acceptance.</em></p>")
+
+        return "\n".join(lines)

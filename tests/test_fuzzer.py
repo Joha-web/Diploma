@@ -17,9 +17,12 @@ def test_classify_patterns(tmp_path):
 
     assert classified["api"]
     assert classified["auth"]
-    assert classified["sensitive_files"]
-    assert classified["admin_panels"]
     assert classified["with_params"]
+    # admin_panels and sensitive_files are now HTTP-verified;
+    # unreachable test URLs correctly return empty verified lists
+    # but unverified candidate counts are tracked
+    assert classified.get("admin_panels_unverified", 0) >= 1
+    assert classified.get("sensitive_files_unverified", 0) >= 1
 
 
 def test_extract_urls_filters_out_of_scope(tmp_path):

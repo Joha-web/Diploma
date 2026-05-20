@@ -613,6 +613,14 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   </div>
   <div class="ai-body">{{ ai_analysis | safe }}</div>
 </div>
+{% elif static_analysis %}
+<div class="section ai-section" id="ai">
+  <div class="section-header">
+    <div class="section-title">🤖 Security Analysis</div>
+    <span class="count-badge">Auto-generated</span>
+  </div>
+  <div class="ai-body">{{ static_analysis | safe }}</div>
+</div>
 {% else %}
 <div class="section" id="ai" style="border-color:rgba(90,112,144,.2)">
   <div class="section-header">
@@ -674,7 +682,18 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
         {% for f in vuln.findings %}
         <tr class="finding-row" data-module="vulnscan" data-severity="{{ f.severity }}" data-confidence="{{ f.confidence | default(0.8) }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
-          <td>{{ f.name }}</td>
+          <td>
+            {{ f.name }}
+            {% if f.description %}
+            <details style="margin-top:4px">
+              <summary style="font-size:.78em;color:var(--muted);padding:4px 8px;border:none;background:none">Details</summary>
+              <div class="detail-body" style="font-size:.82em;padding:8px">
+                <p>{{ f.description }}</p>
+                {% if f.reference %}<p style="color:var(--muted)">Ref: {{ f.reference[:3] | join(', ') }}</p>{% endif %}
+              </div>
+            </details>
+            {% endif %}
+          </td>
           <td><code>{{ f.matched_url }}</code></td>
           <td><code style="color:var(--muted)">{{ f.template_id }}</code></td>
         </tr>
@@ -767,16 +786,23 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div class="section-header">
     <div class="section-title">{{ title }} <span class="count-badge">{{ findings | length }}</span></div>
   </div>
+  {% if finding_descriptions.get(section_id) %}
+  <div style="margin-bottom:12px;padding:10px 14px;background:var(--surface);border-radius:8px;font-size:.84em;border-left:3px solid var(--accent)">
+    <strong>{{ finding_descriptions[section_id].title }}:</strong>
+    {{ finding_descriptions[section_id].impact }}<br>
+    <span style="color:var(--green)">→ {{ finding_descriptions[section_id].remediation }}</span>
+  </div>
+  {% endif %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Evidence</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>
       <tbody>
         {% for f in findings %}
         <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
           <td>{{ f.title or f.name or f.type }}</td>
           <td><code>{{ f.url or f.matched_url }}</code></td>
-          <td><code>{{ f.evidence | jsonpretty }}</code></td>
+          <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -791,16 +817,24 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div class="section-header">
     <div class="section-title">{{ title }} <span class="count-badge">{{ module.findings | length }}</span></div>
   </div>
+  {% if finding_descriptions.get(section_id.replace('-','_')) %}
+  {% set desc = finding_descriptions[section_id.replace('-','_')] %}
+  <div style="margin-bottom:12px;padding:10px 14px;background:var(--surface);border-radius:8px;font-size:.84em;border-left:3px solid var(--accent)">
+    <strong>{{ desc.title }}:</strong>
+    {{ desc.impact }}<br>
+    <span style="color:var(--green)">→ {{ desc.remediation }}</span>
+  </div>
+  {% endif %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Evidence</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>
       <tbody>
         {% for f in module.findings %}
         <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}">
           <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
           <td>{{ f.title or f.name or f.type }}</td>
           <td><code>{{ f.url or f.matched_url }}</code></td>
-          <td><code>{{ f.evidence | jsonpretty }}</code></td>
+          <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -811,7 +845,21 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 {% endfor %}
 
 <!-- Screenshots -->
-{% if web.screenshots %}
+{% if screenshots_b64 %}
+<div class="section" id="screenshots">
+  <div class="section-header">
+    <div class="section-title">Screenshots <span class="count-badge">{{ screenshots_b64 | length }}</span></div>
+  </div>
+  <div class="screenshot-grid">
+    {% for shot in screenshots_b64 %}
+    <div class="screenshot-card">
+      <img src="{{ shot.data_uri }}" alt="{{ shot.url or shot.filename }}">
+      <div class="caption">{{ shot.url or shot.filename }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% elif web.screenshots %}
 <div class="section" id="screenshots">
   <div class="section-header">
     <div class="section-title">Screenshots <span class="count-badge">{{ web.screenshots | length }}</span></div>
@@ -903,9 +951,9 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
         <tbody>
           {% for f in s.findings %}
           <tr>
-            <td>{{ f.type }}</td>
-            <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
-            <td>{{ f.get('title', f.get('detail', f.get('name', ''))) }}</td>
+            <td>{{ f.type | default('') }}</td>
+            <td><span class="badge badge-{{ f.severity | default('INFO') }}">{{ f.severity | default('INFO') }}</span></td>
+            <td>{{ f.title or f.detail or f.name or '' }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -928,7 +976,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
     <input class="filter-input" type="text" placeholder="Filter…" oninput="filterCode('subdomain-block', this.value)">
   </div>
   {% if recon.subdomains %}
-  <div class="code-block" id="subdomain-block">{{ recon.subdomains | join('\n') }}</div>
+  <div class="code-block" id="subdomain-block">{{ (recon.subdomains or []) | join('\n') }}</div>
   {% else %}
   <p style="color:var(--muted)">No subdomains found</p>
   {% endif %}
@@ -1072,6 +1120,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 {% endif %}
 
 <!-- SSL / TLS -->
+{% if ssl.ssl or ssl.ssl_issues or ssl.headers %}
 <div class="section" id="ssl">
   <div class="section-header">
     <div class="section-title">🔒 SSL / TLS & Security Headers</div>
@@ -1126,6 +1175,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   </div>
   {% endif %}
 </div>
+{% endif %}
 
 <!-- DNS Records -->
 {% if recon.dns_records %}

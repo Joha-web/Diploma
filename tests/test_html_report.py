@@ -54,5 +54,6 @@ def test_html_report_renders_ai_unavailable_placeholder(tmp_path):
     generator.generate({})
 
     html = tmp_path.joinpath("report.html").read_text(encoding="utf-8")
-    assert "AI Analysis — not available" in html
-    assert "ollama serve" in html
+    # When AI is unavailable, static analysis fallback is shown
+    assert "Executive Summary" in html or "Security Analysis" in html
+    assert "Auto-generated" in html or "Recommended Actions" in html

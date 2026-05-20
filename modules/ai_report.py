@@ -54,9 +54,10 @@ class AIReportModule(BaseModule):
             self.warn("AI returned empty response")
             return {"analysis": "", "status": "empty"}
 
-        if lang == "en" and not self._is_acceptable_english_report(analysis):
-            self.warn("AI returned a non-English or unsupported analysis — skipping AI section")
-            return {"analysis": "", "status": "invalid_language"}
+        rejection_reason = self._report_rejection_reason(analysis, lang)
+        if rejection_reason:
+            self.warn(f"AI analysis rejected ({rejection_reason}) — using static fallback")
+            return {"analysis": "", "status": "invalid_language", "rejection_reason": rejection_reason}
 
         self.save_text(analysis, "ai_analysis.md")
         self.success(f"AI analysis ready ({len(analysis):,} chars)")
@@ -341,28 +342,42 @@ End with this sentence:
         return text.strip()
 
     @staticmethod
-    def _is_acceptable_english_report(text: str) -> bool:
-        """Reject mixed-language or clearly unsupported AI reports."""
+    def _report_rejection_reason(text: str, lang: str) -> str:
+        """Return a human-readable rejection reason, or empty string if the report is acceptable."""
         if not text or len(text.strip()) < 120:
-            return False
+            return "response_too_short"
 
+        # Only apply language checks for English reports
+        if lang != "en":
+            return ""
+
+        # Reject clearly non-English output (Cyrillic, CJK, German security jargon)
         non_english_patterns = [
-            r"[\u0400-\u04ff]",  # Cyrillic
-            r"[\u4e00-\u9fff]",  # CJK characters occasionally appear in bad translations
-            r"\b(Kritische|Risikogebiete|Angriff|Entdeckung|Warum|Empfehlung|Mittelrisiko)\b",
-            r"\b(Niedrigen|Informations?ale|OffenePorts|fehlende|Überprüfen|Zertifikat)\b",
-            r"\b(PROtection|Overprüfung|Angriffssfläche|mutsam|sogenah)\b",
+            (r"[\u0400-\u04ff]",  "cyrillic_detected"),
+            (r"[\u4e00-\u9fff]",  "cjk_detected"),
+            (r"\b(Kritische|Risikogebiete|Angriff|Entdeckung|Warum|Empfehlung|Mittelrisiko)\b", "german_detected"),
+            (r"\b(Niedrigen|Informations?ale|OffenePorts|fehlende|Überprüfen|Zertifikat)\b",    "german_detected"),
+            (r"\b(PROtection|Overprüfung|Angriffssfläche|mutsam|sogenah)\b",                    "german_detected"),
         ]
-        if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in non_english_patterns):
-            return False
+        for pattern, reason in non_english_patterns:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                return reason
 
-        unsupported_claims = [
-            r"\bCSRF\b",
-            r"\bDRDoS\b",
-            r"\bwsgiApparentlyProtected\b",
-            r"\bx-forwarded-uri\b",
+        # Reject obviously fabricated / hallucinated claims not present in real scan data.
+        # NOTE: CSRF is intentionally NOT listed here — it is a valid security term that
+        # LLMs legitimately mention in recommendations even when not in scan data.
+        hallucination_patterns = [
+            (r"\bDRDoS\b",                   "fabricated_drdos"),
+            (r"\bwsgiApparentlyProtected\b",  "hallucinated_term"),
+            (r"\bx-forwarded-uri\b",          "hallucinated_header"),
         ]
-        if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in unsupported_claims):
-            return False
+        for pattern, reason in hallucination_patterns:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                return reason
 
-        return True
+        return ""
+
+    @staticmethod
+    def _is_acceptable_english_report(text: str) -> bool:
+        """Legacy shim kept for test compatibility."""
+        return not AIReportModule._report_rejection_reason(text, "en")

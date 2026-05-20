@@ -77,9 +77,39 @@ class CORSCheckerModule(BaseModule):
 
             finding_type = ""
             actual_severity = severity
+
             if acao == "*":
-                finding_type = "cors_wildcard_origin"
-                actual_severity = "MEDIUM"
+                # Wildcard CORS: create a single MEDIUM finding and stop probing
+                # this URL — further probes (unrelated_domain etc.) would only
+                # produce duplicate / inflated HIGH findings for the same root cause.
+                findings.append({
+                    "source": self.name,
+                    "id": "cors_wildcard_origin",
+                    "type": "cors_wildcard_origin",
+                    "name": "CORS policy trusts untrusted origin",
+                    "title": "CORS policy trusts untrusted origin",
+                    "severity": "MEDIUM",
+                    "url": url,
+                    "matched_url": url,
+                    "description": (
+                        "The application returns Access-Control-Allow-Origin: * "
+                        "which allows any origin to read the response. Browsers block "
+                        "credentialed cross-origin reads with a wildcard ACAO."
+                    ),
+                    "evidence": {
+                        "origin_sent": origin,
+                        "access_control_allow_origin": acao,
+                        "access_control_allow_credentials": acac,
+                        "browser_note": (
+                            "Browsers reject credentialed CORS reads when ACAO is '*'."
+                            if acac == "true" else ""
+                        ),
+                    },
+                    "poc": self._poc(url, origin, False),
+                    "confidence": 0.9,
+                })
+                break  # no need to check other probes for this URL
+
             elif origin == "null" and acao == "null":
                 finding_type = "cors_null_origin"
             elif acao == origin:
@@ -87,7 +117,7 @@ class CORSCheckerModule(BaseModule):
 
             if not finding_type:
                 continue
-            if acao != "*" and acac == "true" and actual_severity != "CRITICAL":
+            if acac == "true" and actual_severity != "CRITICAL":
                 actual_severity = "CRITICAL"
 
             findings.append({

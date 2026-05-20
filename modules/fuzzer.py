@@ -30,6 +30,20 @@ CLASSIFY_PATTERNS: dict[str, str] = {
     "with_params":    r"\?.*=",
 }
 
+# Static asset extensions — never classify these as admin panels
+STATIC_ASSET_EXTENSIONS = {
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf", ".map", ".webp",
+    ".mp4", ".mp3", ".webm", ".ogg", ".pdf", ".avif",
+}
+
+# Admin panel indicators in HTML response body
+ADMIN_PANEL_INDICATORS = [
+    b"<form", b"login", b"password", b"dashboard", b"sign in",
+    b"username", b"authentication", b"admin panel", b"console",
+    b"manage", b"log in", b"\xd0\xb2\xd0\xbe\xd0\xb9\xd1\x82\xd0\xb8",  # войти (Russian)
+]
+
 GRAPHQL_PATHS = [
     "/graphql", "/api/graphql", "/v1/graphql", "/query",
     "/graphiql", "/playground", "/api",
@@ -587,10 +601,153 @@ class FuzzerModule(BaseModule):
         for cat, pattern in CLASSIFY_PATTERNS.items():
             matches = sorted({u for u in urls if re.search(pattern, u, re.IGNORECASE)})
             result[cat] = matches
-            if matches:
-                self.save_text(matches, f"merged/{cat}.txt")
-                self.success(f"  {cat}: {len(matches)}")
+
+        # Verify admin panels — filter out static assets and check via HTTP
+        raw_admin = result.get("admin_panels", [])
+        if raw_admin:
+            self.info(f"Verifying {len(raw_admin)} admin panel candidates...")
+            result["admin_panels"] = self._verify_admin_panels(raw_admin)
+            result["admin_panels_unverified"] = len(raw_admin)
+
+        # Verify sensitive files — check that they actually exist (return 200)
+        raw_sensitive = result.get("sensitive_files", [])
+        if raw_sensitive:
+            self.info(f"Verifying {len(raw_sensitive)} sensitive file candidates...")
+            result["sensitive_files"] = self._verify_sensitive_files(raw_sensitive)
+            result["sensitive_files_unverified"] = len(raw_sensitive)
+
+        for cat in CLASSIFY_PATTERNS:
+            items = result.get(cat, [])
+            if items:
+                self.save_text(items, f"merged/{cat}.txt")
+                self.success(f"  {cat}: {len(items)}")
         return result
+
+    def _verify_admin_panels(self, urls: list[str]) -> list[str]:
+        """Filter admin panel URLs to only those that are actual admin pages.
+
+        Removes:
+        - Static assets (CSS, JS, images, fonts)
+        - URLs that are just subdomains with 'admin' in hostname pointing to normal pages
+        - URLs that don't respond with HTML containing login/dashboard indicators
+        """
+        # Step 1: Filter out obvious static assets
+        candidates: list[str] = []
+        for url in urls:
+            parsed = urlparse(url)
+            path_lower = parsed.path.lower()
+            # Skip static assets
+            if any(path_lower.endswith(ext) for ext in STATIC_ASSET_EXTENSIONS):
+                continue
+            # Skip paths that are clearly asset directories
+            if re.search(r'/(assets|static|dist|build|node_modules|vendor|fonts|img|images|media|css|js)/', path_lower):
+                continue
+            # Skip URLs with typical asset patterns in the path
+            if re.search(r'/[a-f0-9]{6,}\.(js|css|chunk|bundle)', path_lower):
+                continue
+            candidates.append(url)
+
+        if not candidates:
+            return []
+
+        # Step 2: Deduplicate by origin — only probe unique root paths
+        seen_origins: set[str] = set()
+        unique_candidates: list[str] = []
+        for url in candidates:
+            parsed = urlparse(url)
+            # Normalize to origin + first path segment
+            segments = [s for s in parsed.path.strip('/').split('/') if s]
+            key_path = '/' + segments[0] if segments else '/'
+            origin_key = f"{parsed.scheme}://{parsed.netloc}{key_path}"
+            if origin_key not in seen_origins:
+                seen_origins.add(origin_key)
+                unique_candidates.append(url)
+
+        # Step 3: HTTP verification — probe top candidates
+        verified: list[str] = []
+        sess = requests.Session()
+        sess.verify = False
+        sess.headers["User-Agent"] = "Mozilla/5.0 ReconX/2.0"
+        probe_limit = min(len(unique_candidates), 50)  # cap probing
+
+        for url in unique_candidates[:probe_limit]:
+            try:
+                resp = self.http_get(url, session=sess, timeout=8, verify=False)
+                if resp is None:
+                    continue
+                if resp.status_code not in (200, 301, 302, 307, 308, 401, 403):
+                    continue
+                # 401/403 on admin path is likely a real admin panel
+                if resp.status_code in (401, 403):
+                    verified.append(url)
+                    continue
+                # Check content type — must be HTML
+                ct = resp.headers.get("content-type", "").lower()
+                if "text/html" not in ct and "application/xhtml" not in ct:
+                    continue
+                # Check body for admin panel indicators
+                body_lower = (resp.content or b"")[:5000].lower()
+                if any(indicator in body_lower for indicator in ADMIN_PANEL_INDICATORS):
+                    verified.append(url)
+            except Exception:
+                continue
+
+        if verified:
+            self.warn(f"  Verified admin panels: {len(verified)} / {len(raw_admin)} candidates")
+        else:
+            self.info(f"  No verified admin panels (all {len(urls)} were false positives)")
+        return sorted(set(verified))
+
+    def _verify_sensitive_files(self, urls: list[str]) -> list[str]:
+        """Verify sensitive files by checking HTTP response status.
+
+        Only includes files that actually return 200 with non-trivial content.
+        """
+        # Deduplicate by actual URL (not regex pattern artifacts)
+        unique_urls: list[str] = []
+        seen: set[str] = set()
+        for url in urls:
+            if url.startswith("http") and url not in seen:
+                seen.add(url)
+                unique_urls.append(url)
+
+        if not unique_urls:
+            return []
+
+        verified: list[str] = []
+        sess = requests.Session()
+        sess.verify = False
+        sess.headers["User-Agent"] = "Mozilla/5.0 ReconX/2.0"
+        probe_limit = min(len(unique_urls), 80)
+
+        for url in unique_urls[:probe_limit]:
+            try:
+                resp = self.http_get(url, session=sess, timeout=6, verify=False)
+                if resp is None:
+                    continue
+                if resp.status_code != 200:
+                    continue
+                # Must have some content (not empty or tiny error page)
+                body = resp.content or b""
+                if len(body) < 10:
+                    continue
+                # Check it's not a generic 404/error page returned as 200
+                body_lower = body[:2000].lower()
+                if any(marker in body_lower for marker in (
+                    b"page not found", b"404", b"not found",
+                    b"does not exist", b"no such file",
+                )):
+                    continue
+                verified.append(url)
+                self.warn(f"  ⚠ Verified sensitive file: {url}")
+            except Exception:
+                continue
+
+        if verified:
+            self.warn(f"  Verified sensitive files: {len(verified)} / {len(urls)} candidates")
+        else:
+            self.info(f"  No verified sensitive files (all {len(urls)} were false positives)")
+        return sorted(set(verified))
 
     # ── Cloud asset analysis ─────────────────────────────────────────────────
 

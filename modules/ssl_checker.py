@@ -137,11 +137,27 @@ class SSLCheckerModule(BaseModule):
                     except ValueError:
                         pass
 
-                # Self-signed detection (issuer == subject)
-                issuer  = dict(x[0] for x in cert.get("issuer", []))
+                # Self-signed detection: issuer == subject on both CN and O,
+                # excluding well-known public CA organization names that legitimately
+                # issue certs to themselves (e.g. DigiCert, Amazon, Let's Encrypt).
+                KNOWN_PUBLIC_CAS = {
+                    "digicert", "comodo", "sectigo", "globalsign", "letsencrypt",
+                    "let's encrypt", "entrust", "godaddy", "verisign", "geotrust",
+                    "amazon", "microsoft", "google", "cloudflare", "rapidssl",
+                    "thawte", "usertrust", "identrust", "isrg",
+                }
+                issuer  = dict(x[0] for x in cert.get("issuer",  []))
                 subject = dict(x[0] for x in cert.get("subject", []))
-                if issuer.get("organizationName") == subject.get("organizationName") \
-                        and issuer.get("organizationName"):
+                issuer_org = (issuer.get("organizationName") or "").strip().lower()
+                subject_org = (subject.get("organizationName") or "").strip().lower()
+                issuer_cn = (issuer.get("commonName") or "").strip().lower()
+                subject_cn = (subject.get("commonName") or "").strip().lower()
+                is_known_ca = any(ca in issuer_org for ca in KNOWN_PUBLIC_CAS)
+                if (
+                    not is_known_ca
+                    and issuer_org and issuer_org == subject_org
+                    and issuer_cn and issuer_cn == subject_cn
+                ):
                     issues.append("SELF_SIGNED")
 
                 base["issuer"] = issuer.get("organizationName", "Unknown")

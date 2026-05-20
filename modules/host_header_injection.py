@@ -56,7 +56,8 @@ class HostHeaderInjectionModule(BaseModule):
             {"X-Forwarded-Host": self.marker},
             {"X-Host": self.marker},
             {"X-Original-Host": self.marker},
-            {"X-Forwarded-Proto": "http"},
+            # NOTE: X-Forwarded-Proto: http is intentionally excluded — it does
+            # not carry the random marker so it can never trigger a confirmed finding.
         ]
         baseline = self.http_get(url, session=session, timeout=float(cfg.get("timeout", 10)), verify=False)
         baseline_text = (baseline.text or "") if baseline else ""

@@ -597,39 +597,21 @@ def run_pipeline(
     formats = config.get("reporting", {}).get("formats", ["html", "md"])
 
     report_path = ""
-    pdf_path = ""
-    md_path = ""
     json_path = ""
-    if "json" in formats:
-        try:
-            from reporting.json_report import generate_json_report
-            json_path = generate_json_report(session_dir, target, all_results, elapsed)
-            console.print(f"  [green]✓[/green]  JSON → {json_path}")
-        except Exception as e:
-            console.print(f"  [red]✗[/red]  JSON report: {e}")
+    try:
+        from reporting.json_report import generate_json_report
+        json_path = generate_json_report(session_dir, target, all_results, elapsed)
+        console.print(f"  [green]✓[/green]  JSON → {json_path}")
+    except Exception as e:
+        console.print(f"  [red]✗[/red]  JSON report: {e}")
 
-    if "html" in formats:
-        try:
-            from reporting.html_report import HTMLReportGenerator
-            gen = HTMLReportGenerator(str(session_dir), target, elapsed)
-            report_path = gen.generate(all_results, ai_text)
-            console.print(f"  [green]✓[/green]  HTML → {report_path}")
-        except Exception as e:
-            console.print(f"  [red]✗[/red]  HTML report: {e}")
-
-        # PDF (WeasyPrint)
-        if report_path:
-            try:
-                from reporting.pdf_report import generate_pdf
-                pdf_path = generate_pdf(report_path)
-                if pdf_path:
-                    console.print(f"  [green]✓[/green]  PDF  → {pdf_path}")
-            except Exception as e:
-                console.print(f"  [yellow]![/yellow]  PDF skipped: {e}")
-
-    if "md" in formats:
-        md_path = _md_report(session_dir, target, all_results, ai_text, elapsed)
-        console.print(f"  [green]✓[/green]  MD   → {md_path}")
+    try:
+        from reporting.html_report import HTMLReportGenerator
+        gen = HTMLReportGenerator(str(session_dir), target, elapsed)
+        report_path = gen.generate(all_results, ai_text)
+        console.print(f"  [green]✓[/green]  HTML → {report_path}")
+    except Exception as e:
+        console.print(f"  [red]✗[/red]  HTML report: {e}")
 
     _print_summary(target, session_dir, all_results, elapsed)
 
@@ -661,125 +643,11 @@ def run_pipeline(
             "elapsed":         elapsed,
         }
 
-        report_files = [p for p in (json_path, md_path, report_path, pdf_path) if p]
+        report_files = [p for p in (json_path, report_path) if p]
         tg.notify_complete(target, tg_summary, report_files)
 
     return all_results
 
-
-# ─── Markdown report ──────────────────────────────────────────────────────────
-
-def _md_report(
-    session_dir: Path, target: str, results: dict, ai: str, elapsed: str
-) -> str:
-    recon = results.get("recon", {})
-    web = results.get("webdetect", {})
-    ports = results.get("portscan", {}).get("summary", {})
-    tech  = results.get("techstack", {})
-    fuzz  = results.get("fuzzer", {})
-    vuln  = results.get("vulnscan", {})
-    cve   = results.get("cve_check", {})
-    cors  = results.get("cors_checker", {})
-    auth  = results.get("auth_probe", {})
-    secret = results.get("secret_scanner", {})
-    injection = results.get("injection_probe", {})
-    active_probe_findings = sum(
-        results.get(module_name, {}).get("total", len(results.get(module_name, {}).get("findings", [])))
-        for module_name in ACTIVE_PROBE_MODULES
-    )
-    takeover = results.get("takeover_checker", {})
-    openapi = results.get("openapi_parser", {})
-    params = results.get("parameter_discovery", {})
-    corr = results.get("correlator", {})
-
-    lines = [
-        f"# 🔬 ReconX: `{target}`",
-        f"\n> **Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  **Duration:** {elapsed}\n",
-        "---\n## 📊 Summary\n",
-        "| Metric | Value |", "|--------|-------|",
-        f"| Subdomains | {recon.get('subdomains_total', 0)} |",
-        f"| Live HTTP hosts | {len(web.get('live_urls') or recon.get('live_http', []))} |",
-        f"| Unique IPs | {len(recon.get('resolved_ips', []))} |",
-        f"| Open ports | {ports.get('total_open_ports', 0)} |",
-        f"| Technologies | {len(tech.get('technologies_summary', {}))} |",
-        f"| Endpoints | {fuzz.get('total_endpoints', 0)} |",
-        f"| Vulnerabilities | {vuln.get('total', 0)} |",
-        f"| CVEs | {cve.get('summary', {}).get('total_cves', 0)} |",
-        f"| ExploitDB matches | {cve.get('summary', {}).get('with_exploitdb', 0)} |",
-        f"| JS Secrets | {fuzz.get('js_secrets_count', 0)} |",
-        f"| Git secret findings | {secret.get('total', len(secret.get('findings', [])))} |",
-        f"| CORS findings | {cors.get('total', len(cors.get('findings', [])))} |",
-        f"| Auth findings | {auth.get('total', len(auth.get('findings', [])))} |",
-        f"| Active probe findings | {active_probe_findings} |",
-        f"| Takeover candidates | {takeover.get('total', len(takeover.get('findings', [])))} |",
-        f"| OpenAPI endpoints | {openapi.get('total_endpoints', 0)} |",
-        f"| Parameters | {params.get('total', 0)} |",
-        f"| Correlated priorities | {corr.get('total', 0)} |",
-        "",
-    ]
-    if ai:
-        lines += ["---\n## 🤖 AI Analysis\n", ai, ""]
-
-    for f in vuln.get("findings", [])[:50]:
-        sev = f.get("severity", "").upper()
-        lines.append(f"| {sev} | {f.get('name','')} | {f.get('matched_url','')} |")
-
-    cves = cve.get("cves", [])
-    if cves:
-        lines += ["", "---\n## CVE / ExploitDB Correlation\n",
-                  "| CVE | Severity | Target | ExploitDB | Mode |",
-                  "|-----|----------|--------|-----------|------|"]
-        for item in cves[:50]:
-            edb = "yes" if item.get("exploit_available") else "no"
-            sim = item.get("attack_simulation", {}).get("mode", "dry_run")
-            target_ref = item.get("matched_url") or item.get("component", "")
-            lines.append(
-                f"| {item.get('cve', '')} | {item.get('severity', '')} | "
-                f"{target_ref} | {edb} | {sim} |"
-            )
-
-    for module_name, title in (
-        ("secret_scanner", "Git Secret Findings"),
-        ("fuzzer", "Fuzzer Findings"),
-        ("cors_checker", "CORS Findings"),
-        ("auth_probe", "Auth Findings"),
-        ("injection_probe", "Injection Probe Findings"),
-        ("xss", "XSS Findings"),
-        ("sql_injection", "SQL Injection Findings"),
-        ("http_smuggling", "HTTP Smuggling Findings"),
-        ("oauth_probe", "OAuth / OIDC Findings"),
-        ("cache_poison", "Cache Poisoning Findings"),
-        ("host_header_injection", "Host Header Findings"),
-        ("prototype_pollution", "Prototype Pollution Findings"),
-        ("xxe_probe", "XXE Findings"),
-        ("deserialization_probe", "Deserialization Findings"),
-        ("graphql_audit", "GraphQL Audit Findings"),
-        ("race_condition", "Race Condition Findings"),
-        ("open_redirect_probe", "Open Redirect Findings"),
-        ("api_key_validator", "API Key Validation Findings"),
-        ("idor_probe", "IDOR / BOLA Findings"),
-        ("jwt_audit", "JWT Audit Findings"),
-        ("websocket_probe", "WebSocket Findings"),
-        ("api_schema_audit", "OpenAPI Schema Audit Findings"),
-        ("js_security_audit", "JavaScript Security Findings"),
-        ("sourcemap_analyzer", "Source Map Findings"),
-        ("takeover_checker", "Subdomain Takeover Candidates"),
-        ("correlator", "Cross-Finding Correlation"),
-    ):
-        findings = results.get(module_name, {}).get("findings", [])
-        if findings:
-            lines += ["", f"---\n## {title}\n",
-                      "| Severity | Type | URL |",
-                      "|----------|------|-----|"]
-            for item in findings[:50]:
-                lines.append(
-                    f"| {item.get('severity', 'INFO')} | {item.get('type', '')} | "
-                    f"{item.get('url') or item.get('matched_url', '')} |"
-                )
-
-    path = session_dir / "report.md"
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return str(path)
 
 
 # ─── Console summary ──────────────────────────────────────────────────────────
@@ -939,7 +807,11 @@ Examples:
   python3 main.py -t example.com
   python3 main.py -t example.com -m recon,portscan,vulnscan
   python3 main.py -t example.com --skip cmscan
-  python3 main.py -t example.com --resume
+  python3 main.py -t example.com --resume       # reuse previous session
+  python3 main.py -t example.com --new           # ignore previous results
+
+Note: if a previous session exists for the same target, resume is
+enabled automatically. Use --new to force a clean start.
         """,
     )
     p.add_argument("-t", "--target",  help="Domain or IP")
@@ -952,6 +824,8 @@ Examples:
     p.add_argument("--preset", choices=sorted(CONFIG_PRESETS),
                    help="Scan profile: safe, bug_bounty, deep, or intrusive")
     p.add_argument("--diff", help="Compare against previous all_results.json or report.json")
+    p.add_argument("--new", action="store_true",
+                   help="Force a clean session (ignore previous results)")
     p.add_argument("--legal-acknowledgment", action="store_true",
                    help="Confirm you are authorized to scan the target")
     p.add_argument("--list-modules",  action="store_true")
@@ -992,28 +866,90 @@ Examples:
     console.print(f"[bold]Modules:[/bold] {', '.join(active)}")
     if cfg.get("active_preset"):
         console.print(f"[bold]Preset:[/bold]  {cfg['active_preset']}")
-    console.print(f"[bold]Resume:[/bold]  {'yes' if args.resume else 'no'}")
     if args.legal_acknowledgment:
         console.print("[green]Legal acknowledgment:[/green] authorization confirmed\n")
     else:
         console.print("[yellow]Legal notice:[/yellow] run only with written authorization and defined scope\n")
 
-    session_dir = create_session_dir(args.target, args.output)
+    session_dir, effective_resume = resolve_session_dir(
+        args.target, args.output, args.resume, args.new
+    )
+    console.print(f"[bold]Resume:[/bold]  {'yes' if effective_resume else 'no'}")
     console.print(f"[bold]Output:[/bold]  {session_dir}\n")
 
     try:
         install_ctrl_c_skip_handler()
-        run_pipeline(args.target, cfg, session_dir, active, args.resume, previous_results)
+        run_pipeline(args.target, cfg, session_dir, active, effective_resume, previous_results)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted — partial results saved.[/yellow]")
         sys.exit(1)
 
 
+def find_latest_session(target: str, base: str) -> Path | None:
+    """Find the most recent existing session directory for the given target.
+
+    Searches output/ for directories whose name ends with _{target} (the
+    date prefix varies).  Returns the newest match (by name sort) or None.
+    """
+    safe = target.replace("/", "_").replace(":", "_")
+    output_root = Path(base) / "output"
+    if not output_root.is_dir():
+        return None
+    candidates = sorted(
+        (d for d in output_root.iterdir()
+         if d.is_dir() and d.name.endswith(f"_{safe}")),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+    # Return the latest one that actually has an all_results.json (i.e. data)
+    for d in candidates:
+        if (d / "all_results.json").exists():
+            return d
+    # If there are dirs but none has results yet, return the newest dir anyway
+    return candidates[0] if candidates else None
+
+
 def create_session_dir(target: str, base: str) -> Path:
-    safe = target.replace("/", "_").replace(":", "_").replace(".", "_")
-    d = Path(base) / "output" / f"reconx_{safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    safe = target.replace("/", "_").replace(":", "_")
+    # Keep dots in domain for readability: 17-05-2026_miras.app
+    date_str = datetime.now().strftime('%d-%m-%Y')
+    d = Path(base) / "output" / f"{date_str}_{safe}"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def resolve_session_dir(target: str, base: str, resume: bool, force_new: bool) -> tuple[Path, bool]:
+    """Resolve the session directory and whether resume should be active.
+
+    Returns (session_dir, effective_resume_flag).
+    When resume is True (or auto-detected), the latest existing session is
+    reused so that cached module results carry over — even across days.
+    """
+    if force_new:
+        return create_session_dir(target, base), False
+
+    previous = find_latest_session(target, base)
+
+    if resume:
+        if previous:
+            console.print(
+                f"[cyan]♻  Resuming previous session:[/cyan] {previous}"
+            )
+            return previous, True
+        else:
+            console.print("[yellow]No previous session found — starting fresh[/yellow]")
+            return create_session_dir(target, base), False
+
+    # Auto-resume: if a previous session with data exists, reuse it
+    if previous and (previous / "all_results.json").exists():
+        console.print(
+            f"[cyan]♻  Previous session detected for [bold]{target}[/bold] → auto-resuming[/cyan]\n"
+            f"   [dim]{previous}[/dim]\n"
+            f"   [dim]Use --new to force a clean start[/dim]"
+        )
+        return previous, True
+
+    return create_session_dir(target, base), False
 
 
 def _load_previous_results(path: str) -> dict:
