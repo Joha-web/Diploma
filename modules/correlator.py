@@ -439,7 +439,10 @@ class CorrelatorModule(BaseModule):
 
     @staticmethod
     def _primary_url(evidence: dict) -> str:
-        for key in ("admin_urls", "assets", "graphql", "takeover"):
+        for key in (
+            "admin_urls", "assets", "graphql", "takeover",
+            "cors_findings", "auth_findings", "xss_urls",
+        ):
             values = evidence.get(key, [])
             if not values:
                 continue

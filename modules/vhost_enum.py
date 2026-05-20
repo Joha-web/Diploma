@@ -104,8 +104,11 @@ class VHostEnumModule(BaseModule):
             verify=False,
             allow_redirects=False,
         )
-        if not resp or resp.status_code not in (200, 201, 204, 401, 403):
+        if resp is None or resp.status_code not in (200, 201, 204, 401, 403):
             return False
+        # 401/403 with the configured Host header is meaningful — accept directly.
+        if resp.status_code in (401, 403):
+            return True
         # Minimum content size — not an empty/error page
         return len(resp.content) > 200
 
