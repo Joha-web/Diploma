@@ -34,6 +34,34 @@ SENSITIVE_RESOURCE_RE = re.compile(
     re.I,
 )
 
+# Cache-busting / asset-versioning query params that look like IDs but never are.
+CACHE_BUSTER_PARAMS = {
+    "v", "_", "t", "ts", "time", "timestamp", "cb", "rev", "rnd", "rand",
+    "build", "buildid", "build_id", "version", "ver", "hash", "h", "nonce",
+    "cache", "nocache", "no-cache", "bust", "_bust", "r",
+}
+
+# URL path prefixes that point to static assets — never useful IDOR candidates.
+STATIC_ASSET_PATH_RE = re.compile(
+    r"/(?:_debugbar|debugbar|"
+    r"assets?|static|public|build|dist|out|"
+    r"node_modules|vendor|bower_components|"
+    r"admin_assets|lte_assets|app_assets|"
+    r"css|js|fonts?|images?|img|media|video|audio|svg|icons?|"
+    r"\.well-known)(?:/|$)",
+    re.I,
+)
+
+# File extensions that mark a URL as a static asset
+STATIC_ASSET_EXT_RE = re.compile(
+    r"\.(?:css|js|mjs|map|png|jpe?g|gif|svg|webp|ico|bmp|tiff|"
+    r"woff2?|ttf|otf|eot|"
+    r"mp[34]|webm|ogg|wav|"
+    r"pdf|zip|tar|gz|bz2|7z|"
+    r"json|xml)(?:\?|$)",
+    re.I,
+)
+
 
 class IDORProbeModule(ActiveProbeBase):
     name = "idor_probe"
@@ -149,8 +177,14 @@ class IDORProbeModule(ActiveProbeBase):
     def _add_url_candidates(self, url: str, source: str, add, method: str = "GET") -> None:
         if not url.startswith(("http://", "https://")):
             return
+        if self._looks_like_static_asset(url):
+            return
         for param, value in self.query_pairs(url):
-            if self._interesting_param(param) or self._interesting_value(value):
+            if self._is_cache_buster(param):
+                continue
+            # Require the param NAME to look ID-like — high-entropy values alone on
+            # ordinary params produce too many FPs (e.g. tokens, version stamps, hashes).
+            if self._interesting_param(param):
                 add({
                     "url": url,
                     "kind": "query",
@@ -162,12 +196,21 @@ class IDORProbeModule(ActiveProbeBase):
 
         path = urlparse(url).path
         for resource, value in PATH_ID_RE.findall(path):
-            if SENSITIVE_RESOURCE_RE.search(resource) or self._interesting_value(value):
+            # Skip when the matched resource is itself a static-asset folder.
+            if STATIC_ASSET_PATH_RE.match(f"/{resource}/") or resource.lower() in {
+                "assets", "static", "public", "build", "dist", "img", "images",
+                "css", "js", "fonts", "media", "video", "audio", "svg", "icons",
+            }:
+                continue
+            # Require a recognisable sensitive resource name OR a UUID/hex (high-entropy)
+            # value. A bare integer on an unknown resource is too weak to flag.
+            shape = self._value_shape(value)
+            if SENSITIVE_RESOURCE_RE.search(resource) or shape in {"uuid", "hex_identifier"}:
                 add({
                     "url": url,
                     "kind": "path",
                     "resource": resource,
-                    "value_shape": self._value_shape(value),
+                    "value_shape": shape,
                     "source": source,
                     "method": method,
                 })
@@ -275,6 +318,23 @@ class IDORProbeModule(ActiveProbeBase):
     @staticmethod
     def _interesting_param(param: str) -> bool:
         return bool(ID_PARAM_RE.search(str(param or "")))
+
+    @staticmethod
+    def _is_cache_buster(param: str) -> bool:
+        return str(param or "").strip().lower() in CACHE_BUSTER_PARAMS
+
+    @staticmethod
+    def _looks_like_static_asset(url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return False
+        path = parsed.path or ""
+        if STATIC_ASSET_PATH_RE.search(path):
+            return True
+        if STATIC_ASSET_EXT_RE.search(path):
+            return True
+        return False
 
     @staticmethod
     def _interesting_value(value: str) -> bool:

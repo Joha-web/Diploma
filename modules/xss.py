@@ -235,6 +235,10 @@ class XSSModule(ActiveProbeBase):
             body = resp.text or ""
             if self.marker not in body or self.marker in baseline_body:
                 continue
+            if self._reflection_is_json_uri_echo(body, self.marker, param):
+                # Marker only appears inside a JSON-encoded request-URI field (e.g.
+                # Laravel debugbar, framework error JSON). Not an executable context.
+                continue
             finding_id, severity, confidence, context = self._classify_reflection(body)
             findings.append(self.make_finding(
                 finding_id,
@@ -381,6 +385,38 @@ class XSSModule(ActiveProbeBase):
         script_start = before.rfind("<script")
         script_end = before.rfind("</script")
         return script_start > script_end
+
+    @staticmethod
+    def _reflection_is_json_uri_echo(body: str, marker: str, param: str) -> bool:
+        """Return True if every occurrence of the marker is inside a JSON request-URI echo
+        (debugbar/error JSON, access-log style responses). Not exploitable as XSS even
+        though the script-context heuristic would otherwise match."""
+        if not body or marker not in body:
+            return False
+        # Quick reject: payload not rendered into HTML, only into JSON URI strings.
+        echo_tokens = (
+            '"uri"', "'uri'", '"url"', "'url'", '"path"',
+            "request_uri", "REQUEST_URI", "fullUrl",
+            '"originalUrl"', '"requestUri"',
+        )
+        idx = 0
+        any_match = False
+        while True:
+            pos = body.find(marker, idx)
+            if pos < 0:
+                break
+            any_match = True
+            window = body[max(0, pos - 300): pos]
+            # JSON-encoded URI characteristic: backslash-escaped slashes (\/) and
+            # backslash-u escapes (& for & in query string).
+            has_json_escapes = ("\\/" in window) or ("\\u00" in window)
+            has_echo_token = any(tok in window for tok in echo_tokens)
+            has_param = (f"{param}=" in window) or (f"{param}\\u003d" in window)
+            if has_json_escapes and (has_echo_token or has_param):
+                idx = pos + len(marker)
+                continue
+            return False
+        return any_match
 
     @staticmethod
     def _inside_tag(body: str, marker: str) -> bool:

@@ -51,9 +51,21 @@ class APIKeyValidatorModule(BaseModule):
 
         candidates = self._candidates()[: int(cfg.get("max_candidates", 100))]
         findings: list[dict] = []
+        relevance_severity = {
+            "trusted": "HIGH",
+            "related": "MEDIUM",
+            "weak": "LOW",
+            "unrelated": "INFO",
+        }
         for candidate in candidates:
             validation = self._validate(candidate, cfg) if cfg.get("live_validation", False) else {"status": "not_validated"}
-            severity = "CRITICAL" if validation.get("valid") else "HIGH"
+            if validation.get("valid"):
+                # Live-validated keys are always CRITICAL regardless of origin repo.
+                severity = "CRITICAL"
+            else:
+                relevance = candidate.get("repo_relevance", {}) or {}
+                score = str(relevance.get("score", "")) or "trusted"
+                severity = relevance_severity.get(score, "HIGH")
             findings.append(self._finding("api_key_leak", severity, candidate, validation))
 
         findings = self._dedup(findings)
@@ -67,6 +79,7 @@ class APIKeyValidatorModule(BaseModule):
             evidence = finding.get("evidence", {}) if isinstance(finding, dict) else {}
             raw = evidence.get("raw", {}) if isinstance(evidence, dict) else {}
             rule = evidence.get("rule", finding.get("id", "")) if isinstance(evidence, dict) else finding.get("id", "")
+            relevance = evidence.get("relevance", {}) if isinstance(evidence, dict) else {}
             raw_added = False
             if isinstance(raw, dict):
                 for key in ("Secret", "secret", "Redacted", "Match", "match"):
@@ -79,6 +92,7 @@ class APIKeyValidatorModule(BaseModule):
                         "fingerprint": raw.get(f"{key}_sha256") or evidence.get("fingerprint", ""),
                         "type_hint": rule,
                         "location": evidence.get("file", ""),
+                        "repo_relevance": relevance,
                     })
                     raw_added = True
                     break
@@ -89,6 +103,7 @@ class APIKeyValidatorModule(BaseModule):
                     "fingerprint": evidence.get("fingerprint", "") if isinstance(evidence, dict) else "",
                     "type_hint": rule,
                     "location": evidence.get("file", "") if isinstance(evidence, dict) else "",
+                    "repo_relevance": relevance,
                 })
 
         for secret in self.fuzzer_results.get("classified", {}).get("js_secrets", []) or []:
@@ -126,10 +141,12 @@ class APIKeyValidatorModule(BaseModule):
                         "source": item["source"],
                         "location": item.get("location", ""),
                         "has_raw_secret": True,
+                        "repo_relevance": item.get("repo_relevance", {}),
                     })
             if len(candidates) == before:
                 metadata_candidate = self._metadata_candidate(item)
                 if metadata_candidate:
+                    metadata_candidate["repo_relevance"] = item.get("repo_relevance", {})
                     candidates.append(metadata_candidate)
         return self._dedup_candidates(candidates)
 
@@ -296,6 +313,7 @@ class APIKeyValidatorModule(BaseModule):
                 "fingerprint": candidate.get("fingerprint", ""),
                 "source": candidate.get("source", ""),
                 "location": candidate.get("location", ""),
+                "repo_relevance": candidate.get("repo_relevance", {}),
                 "validation": validation,
             },
             "confidence": 0.95 if validation.get("valid") else 0.75,

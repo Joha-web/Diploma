@@ -12,6 +12,34 @@ from modules.base import BaseModule
 
 RESET_KEYWORDS = ("reset", "forgot", "password", "recover", "account")
 
+# Contexts where reflected Host shows up via routine framework URL generation rather than
+# user-visible actionable links. These do not constitute an exploitable host header injection
+# on their own and should be reported at LOW severity.
+LOW_RISK_REFLECTION_CONTEXTS = (
+    "rel=\"manifest\"",
+    "rel='manifest'",
+    "rel=manifest",
+    "rel=\"canonical\"",
+    "rel='canonical'",
+    "rel=canonical",
+    "rel=\"alternate\"",
+    "rel='alternate'",
+    "property=\"og:url\"",
+    "property='og:url'",
+    "name=\"twitter:url\"",
+    "name='twitter:url'",
+    "apple-mobile-web-app",
+    "rel=\"apple-touch-icon\"",
+    "rel='apple-touch-icon'",
+    "rel=\"icon\"",
+    "rel='icon'",
+    "rel=\"shortcut icon\"",
+    "rel='shortcut icon'",
+    "rel=\"stylesheet\"",
+    "rel='stylesheet'",
+    "<base href=",
+)
+
 
 class HostHeaderInjectionModule(BaseModule):
     name = "host_header_injection"
@@ -79,15 +107,26 @@ class HostHeaderInjectionModule(BaseModule):
             if self.marker in location:
                 findings.append(self._finding("host_header_redirect", "HIGH", url, "Host header reflected in redirect Location", evidence))
             elif self.marker in body and self.marker not in baseline_text:
-                evidence["excerpt"] = self._excerpt(body, self.marker)
+                excerpt = self._excerpt(body, self.marker)
+                evidence["excerpt"] = excerpt
                 is_reset = self._looks_like_reset(url)
-                findings.append(self._finding(
-                    "password_reset_poisoning_indicator" if is_reset else "host_header_reflection",
-                    "HIGH" if is_reset else "MEDIUM",
-                    url,
-                    "Password reset poisoning indicator" if is_reset else "Host header reflected in response body",
-                    evidence,
-                ))
+                low_risk = self._reflection_is_low_risk(body, self.marker)
+                evidence["low_risk_context"] = low_risk
+                if is_reset:
+                    severity = "HIGH"
+                    finding_id = "password_reset_poisoning_indicator"
+                    title = "Password reset poisoning indicator"
+                elif low_risk:
+                    # Reflection only in benign URL-generation contexts (PWA manifest,
+                    # canonical, og:url, favicon, etc.). Not exploitable on its own.
+                    severity = "LOW"
+                    finding_id = "host_header_reflection_low"
+                    title = "Host header reflected in non-actionable URL context"
+                else:
+                    severity = "MEDIUM"
+                    finding_id = "host_header_reflection"
+                    title = "Host header reflected in response body"
+                findings.append(self._finding(finding_id, severity, url, title, evidence))
         return findings
 
     def _targets(self) -> list[str]:
@@ -106,6 +145,30 @@ class HostHeaderInjectionModule(BaseModule):
     def _looks_like_reset(url: str) -> bool:
         lowered = url.lower()
         return any(keyword in lowered for keyword in RESET_KEYWORDS)
+
+    @staticmethod
+    def _reflection_is_low_risk(body: str, marker: str) -> bool:
+        """Return True if EVERY occurrence of the marker is inside a benign URL context.
+
+        We scan a small window (~200 chars before each match) for known low-risk tags such
+        as PWA manifest, canonical URLs, favicons, og:url, base href. If at least one match
+        is in a non-trivial context (form action, fetch URL, plain body text, etc.) we keep
+        the higher MEDIUM severity.
+        """
+        body_l = body.lower()
+        m = marker.lower()
+        idx = 0
+        any_match = False
+        while True:
+            pos = body_l.find(m, idx)
+            if pos < 0:
+                break
+            any_match = True
+            window = body_l[max(0, pos - 250): pos]
+            if not any(token in window for token in LOW_RISK_REFLECTION_CONTEXTS):
+                return False
+            idx = pos + len(m)
+        return any_match
 
     @staticmethod
     def _excerpt(body: str, marker: str, radius: int = 100) -> str:

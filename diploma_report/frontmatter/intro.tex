@@ -1,0 +1,40 @@
+\chapter{Introduction}
+\label{chap:intro}
+
+\textbf{The relevance of this work} is determined by the continuing growth of web-application attack surfaces and by the central role that web applications now play in business, government, and academic services. Modern organizations expose dozens of subdomains, third-party integrations, content-management systems, single-page applications, and APIs, each of which extends the perimeter that an attacker may reach. The OWASP Top~10 list of web-application risks is updated every few years and still places \textit{Broken Access Control}, \textit{Cryptographic Failures}, and \textit{Injection} among the most damaging categories~\cite{owasp_top10}, while industry analyses consistently report that the largest share of breaches starts with a publicly reachable web endpoint.
+
+External penetration testing --- the practice of evaluating the security of a web application from the public Internet, without internal credentials or source code --- is therefore one of the most direct ways for an organization to discover how it actually looks to an attacker. In practice, however, the work is repetitive, time-consuming, and highly dependent on the analyst's discipline: running subdomain enumeration, port scanning, technology fingerprinting, JavaScript secret hunting, and probes for each OWASP Top~10 class manually, against tens or hundreds of hosts, is impractical within the typical engagement window of one to two weeks. A clear demand exists for a single tool that automates the reproducible parts of this work, organizes its output, and lets the analyst focus on the parts that require human judgement.
+
+A second factor of relevance is the recent maturity of \textbf{open-weight Large Language Models}. Models such as DeepSeek-R1, Qwen2.5, and Llama~3 can now run locally on consumer hardware and produce coherent, structured natural-language analysis of technical text. This makes it realistic, for the first time, to embed an explanatory layer directly into a penetration-testing framework, instead of leaving raw scan output for the analyst to interpret.
+
+\textbf{The aim of this work} is to design, implement, and experimentally evaluate \textbf{ReconX} --- a method and supporting framework for external penetration testing of web applications --- that combines reconnaissance, configuration analysis, and a broad set of OWASP-aligned active probes into a single reproducible pipeline, normalizes its output into a unified finding schema, and uses a local LLM to produce an analyst-readable report.
+
+\textbf{The research problem} is the need to design a framework that (a)~covers the dominant OWASP Top~10 categories with a single black-box tool, (b)~produces \textit{explainable} findings that link each result to an OWASP / CWE / MITRE~ATT\&CK reference, (c)~enforces scope so the framework can never accidentally test out-of-scope hosts, and (d)~remains usable on a single Kali-Linux workstation without commercial licenses.
+
+To achieve the aim, the following \textbf{tasks} were defined:
+\begin{enumerate}
+  \item to study the modern external-penetration-testing methodology, the OWASP Top~10 risk catalogue, and the existing automated tools used by the offensive-security community;
+  \item to formulate functional and non-functional requirements for an integrated external-pentest framework;
+  \item to design a modular pipeline architecture in which each module is responsible for a single class of analysis and communicates with other modules through a shared finding schema;
+  \item to design and implement a \textit{finding registry} that normalizes every probe's output into a unified record with severity, confidence, CWE, CVSS, OWASP, and MITRE~ATT\&CK metadata;
+  \item to implement reconnaissance modules (subdomain discovery, DNS, port and service scanning, technology and CMS fingerprinting, endpoint and parameter discovery);
+  \item to implement configuration-analysis modules (TLS, security headers, CORS, authentication cookies, JWT, OpenAPI auditing, secret hunting in public GitHub repositories);
+  \item to implement active probes for the most relevant OWASP Top~10 classes: reflected XSS, SQL injection, IDOR, host header injection, cache poisoning, prototype pollution, open redirect, SSRF, SSTI, XXE, HTTP request smuggling, race conditions, and others;
+  \item to implement a correlator and an asset-risk module that combine findings across probes and rank exposed assets by their exploitable risk;
+  \item to integrate a local LLM (Ollama / DeepSeek-R1) that produces a natural-language analytical report from the structured findings;
+  \item to implement an HTML report renderer, a SIEM-compatible JSON export, an append-only audit log of every issued HTTP request, and a Telegram notifier for long-running scans;
+  \item to evaluate the framework in a controlled laboratory environment against a deliberately vulnerable target and to compare the observed findings with the target's known vulnerabilities;
+  \item to analyze the results, the limitations of the proposed method, and the directions for further development.
+\end{enumerate}
+
+\textbf{The object of research} is the process of external penetration testing of a web application.
+
+\textbf{The subject of research} is a method --- realized as the ReconX framework --- for automated external testing of a web application, including its modular pipeline architecture, finding-normalization layer, correlation logic, and LLM-assisted reporting.
+
+\textbf{The research methods} include analysis of the OWASP Top~10 (2021) catalogue, OWASP Web Security Testing Guide, and PortSwigger Web Security Academy materials; comparative analysis of existing automated tools (Nuclei, sqlmap, dalfox, subfinder, amass, ffuf, Arjun, gitleaks); architectural design of a modular Python pipeline; iterative implementation and refactoring of 46 modules in Python~3 using the \texttt{requests}, \texttt{rich}, \texttt{jinja2}, and \texttt{pyjwt} libraries; controlled experimentation on the \textit{OWASP Juice Shop} target; static evaluation of false-positive and false-negative behavior on selected findings; and integration of a local LLM via the Ollama HTTP API for explanatory reporting.
+
+\textbf{The scientific significance} of the work lies in the proposed end-to-end pipeline that unifies reconnaissance, configuration analysis, active probing, finding correlation, and LLM-assisted reporting under a single normalization schema, with explicit triage of \textit{confirmed} versus \textit{candidate} verdicts.
+
+\textbf{The practical significance} of the work lies in the fact that the resulting framework can be used directly by security teams and bug-bounty researchers as an automated first pass over a web target, freeing analyst time for the manual verification stages that genuinely require human judgement. The framework runs on a single Kali-Linux workstation, requires no commercial licenses, and produces reports that can be consumed both by humans (HTML) and by SIEM-style systems (JSON).
+
+\textbf{Structure of the work.} The first chapter discusses the theoretical foundations of external penetration testing of web applications: the OWASP Top~10 risk catalogue, the typical pentest methodology, the main classes of web vulnerabilities, the existing open-source toolchain, and the role of LLMs in security work. The second chapter presents the design of the ReconX framework: requirements, the 15-stage pipeline architecture, the finding registry, the correlator and asset-risk modules, the configuration and scope-enforcement system, and the integration with the local LLM. The third chapter describes the practical implementation of the framework in Python~3, walks through representative modules from each category, presents the experimental evaluation against \textit{OWASP Juice Shop}, analyzes the observed results, and discusses limitations and directions for further development.

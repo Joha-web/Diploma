@@ -81,6 +81,10 @@ class PrototypePollutionModule(BaseModule):
                 continue
             body = resp.text or ""
             if self.marker_value in body and self.marker_value not in baseline_body:
+                if self._reflection_is_uri_echo_only(body, self.marker_value, param):
+                    # Marker only appears as the request URI echoed back inside an error
+                    # page / debug response (e.g. Laravel debugbar JSON). Not pollution.
+                    continue
                 return [self._finding("sspp_qs_reflection", "HIGH", probe_url, "Prototype pollution marker reflected from query string", {
                     "param": param,
                     "value": value,
@@ -184,6 +188,53 @@ class PrototypePollutionModule(BaseModule):
         if idx < 0:
             return body[:200]
         return body[max(0, idx - radius): idx + len(marker) + radius]
+
+    @staticmethod
+    def _reflection_is_uri_echo_only(body: str, marker: str, param: str) -> bool:
+        r"""Return True if every occurrence of the marker is just the request URI being
+        echoed back (debug bars, JSON 404 responses, access-log style traces).
+
+        We look at a short window of bytes immediately before each marker hit and detect
+        signatures like "uri":"\/...?param=...", request_uri=..., GET /path?param=...
+        If at least one occurrence is in a meaningful context (HTML body, JSON property
+        value bound to a real key), we keep the finding.
+        """
+        if not body or marker not in body:
+            return False
+        body_l = body
+        idx = 0
+        any_match = False
+        # Tokens that strongly suggest a URI echo (the marker is part of the request path/query).
+        uri_echo_tokens = (
+            '"uri"', "'uri'", "request_uri", "REQUEST_URI",
+            '"url"', "'url'",
+            '"path"', "'path'",
+            '"path_info"', "PATH_INFO",
+            '"query_string"', "QUERY_STRING",
+            "GET /", "POST /", "PUT /", "PATCH /", "DELETE /",
+            "HTTP_REQUEST_URI", "fullUrl", '"originalUrl"',
+            '"requestUri"', "request-uri",
+        )
+        # The marker key (e.g. "__proto__[reconx_pp_probe]") inside an HTML link or a
+        # rendered error trace looking like ?__proto__[...]=... — typical URI echo.
+        # Build a list of param-related substrings to check appears right before the marker.
+        param_l = param
+        while True:
+            pos = body_l.find(marker, idx)
+            if pos < 0:
+                break
+            any_match = True
+            window_start = max(0, pos - 300)
+            window = body_l[window_start: pos]
+            # If the marker is preceded (within ~300 chars) by the param= or %5D= pattern
+            # AND the window contains a uri-echo signature, treat this occurrence as echo.
+            param_seen = (f"{param_l}=" in window) or (f"%5D={marker[:1]}" in window and "%5B" in window) or (param_l in window)
+            echo_seen = any(tok in window for tok in uri_echo_tokens)
+            if param_seen and echo_seen:
+                idx = pos + len(marker)
+                continue
+            return False
+        return any_match
 
     @staticmethod
     def _dedup(findings: list[dict]) -> list[dict]:

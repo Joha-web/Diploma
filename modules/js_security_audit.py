@@ -24,6 +24,63 @@ DOM_SINK_RE = re.compile(
     re.I,
 )
 GRAPHQL_RE = re.compile(r"""["'`]((?:https?:)?//[^"'`]+/graphql[^"'`]*|/[^"'`]*graphql[^"'`]*)["'`]""", re.I)
+
+# Well-known third-party JavaScript libraries. The `.innerHTML=` and similar sinks
+# in these files are part of the library's own implementation, not an application
+# bug, so we either skip them entirely or downgrade their findings to INFO.
+VENDOR_LIB_FILENAME_RE = re.compile(
+    r"(?:^|/)("
+    r"jquery(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"jquery\.[a-z0-9_-]+\.m?js|"
+    r"jquery-ui(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"react(?:-dom)?(?:[-.][\w.]*)?(?:\.min|\.production|\.development)?\.m?js|"
+    r"vue(?:[-.][\w.]*)?(?:\.min|\.runtime|\.common|\.esm)?\.m?js|"
+    r"vue-router(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"vuex(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"angular(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"ember(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"backbone(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"underscore(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"lodash(?:[-.][\w.]*)?(?:\.min|\.fp|\.core)?\.m?js|"
+    r"moment(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"bootstrap(?:[-.][\w.]*)?(?:\.bundle)?(?:\.min)?\.m?js|"
+    r"popper(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"tippy(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"uikit(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"foundation(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"semantic(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"materialize(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"chart(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"d3(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"three(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"axios(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"socket\.io(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"summernote(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"tinymce(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"ckeditor(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"datatables?(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"swiper(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"select2(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"pdf(?:js|\.worker)(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"highlight(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"flatpickr(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"core-js(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"polyfill(?:[-.][\w.]*)?(?:\.min)?\.m?js|"
+    r"runtime~?[\w.-]*\.m?js|"
+    r"chunk~?[\w.-]*\.m?js|"
+    r"vendor[s]?~?[\w.-]*\.m?js|"
+    r"vendors~main\.[\w.-]*\.m?js|"
+    r"manifest~?[\w.-]*\.m?js"
+    r")(?:[?#].*)?$",
+    re.I,
+)
+
+# URL path tokens that indicate a vendor/library directory
+VENDOR_LIB_PATH_RE = re.compile(
+    r"/(?:node_modules|vendor|vendors|bower_components|third[_-]?party|"
+    r"libs?|jslib|jsLibs|cdn|external)/",
+    re.I,
+)
 REDIRECT_RE = re.compile(
     r"((window\.)?location(\.href)?\s*=|location\.(assign|replace)\s*\(|window\.open\s*\()"
     r"[^;\n]{0,180}(location\.|URLSearchParams|searchParams|getParameter|queryString)",
@@ -104,11 +161,59 @@ class JSSecurityAuditModule(ActiveProbeBase):
 
     def _analyse_js(self, url: str, content: str) -> list[dict]:
         findings: list[dict] = []
-        findings.extend(self._dom_xss_findings(url, content))
-        findings.extend(self._postmessage_findings(url, content))
+        is_vendor = self._is_vendor_library(url, content)
+        # For vendor libraries we still surface GraphQL hardcoded endpoints (those are
+        # almost never library-internal) but skip DOM-XSS / unsafe-redirect / postMessage
+        # rules because their matches reflect the library's own implementation.
+        if not is_vendor:
+            findings.extend(self._dom_xss_findings(url, content))
+            findings.extend(self._postmessage_findings(url, content))
+            findings.extend(self._redirect_findings(url, content))
         findings.extend(self._graphql_findings(url, content))
-        findings.extend(self._redirect_findings(url, content))
         return findings
+
+    @staticmethod
+    def _is_vendor_library(url: str, content: str) -> bool:
+        """Best-effort detection of a third-party JS library file."""
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            parsed = None
+        path = parsed.path if parsed else url
+        if VENDOR_LIB_FILENAME_RE.search(path):
+            return True
+        if VENDOR_LIB_PATH_RE.search(path):
+            return True
+        # Look for typical library headers in the first ~2KB of content.
+        head = (content or "")[:2048]
+        head_l = head.lower()
+        library_banners = (
+            "jquery javascript library",
+            "jquery foundation",
+            "jquery.com",
+            "/*! jquery",
+            "/*! react",
+            "/*! vue.js",
+            "/*! lodash",
+            "/*! bootstrap",
+            "/*! popper",
+            "/*! uikit",
+            "/*! axios",
+            "/*! chart.js",
+            "/*! d3 ",
+            "/*! moment.js",
+            "/*! tippy.js",
+            "/*! ckeditor",
+            "/*! summernote",
+            "github.com/jquery",
+            "github.com/facebook/react",
+            "github.com/vuejs/",
+            "github.com/lodash/",
+            "github.com/twbs/bootstrap",
+            "licensed under mit",
+            "released under the mit license",
+        )
+        return any(banner in head_l for banner in library_banners)
 
     def _dom_xss_findings(self, url: str, content: str) -> list[dict]:
         findings: list[dict] = []

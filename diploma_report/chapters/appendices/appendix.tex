@@ -1,0 +1,267 @@
+% Appendices for the ReconX diploma project
+
+\chapter{Pipeline and Configuration Reference}
+
+This appendix lists the pipeline configuration consumed by the orchestrator at start-up. The full content of \texttt{config.yaml.example} is shipped in the repository.
+
+\section*{A.1 Pipeline groups}
+
+\begin{lstlisting}[language=Python,basicstyle=\ttfamily\footnotesize,caption={Pipeline definition consumed by \texttt{main.py}.}]
+PIPELINE: list[dict] = [
+    {"name": "recon",                  "group": 1},
+    {"name": "secret_scanner",         "group": 1},
+    {"name": "portscan",               "group": 2},
+    {"name": "webdetect",              "group": 2},
+    {"name": "techstack",              "group": 3},
+    {"name": "spa_crawler",            "group": 3},
+    {"name": "fuzzer",                 "group": 4},
+    {"name": "ssl_checker",            "group": 4},
+    {"name": "cors_checker",           "group": 4},
+    {"name": "auth_probe",             "group": 4},
+    {"name": "cmscan",                 "group": 5},
+    {"name": "sourcemap_analyzer",     "group": 5},
+    {"name": "vhost_enum",             "group": 5},
+    {"name": "takeover_checker",       "group": 5},
+    {"name": "openapi_parser",         "group": 5},
+    {"name": "parameter_discovery",    "group": 6},
+    {"name": "http_smuggling",         "group": 7},
+    {"name": "jwt_audit",              "group": 7},
+    {"name": "websocket_probe",        "group": 7},
+    {"name": "api_schema_audit",       "group": 7},
+    {"name": "js_security_audit",      "group": 7},
+    {"name": "oauth_probe",            "group": 8},
+    {"name": "cache_poison",           "group": 8},
+    {"name": "host_header_injection",  "group": 8},
+    {"name": "open_redirect_probe",    "group": 8},
+    {"name": "prototype_pollution",    "group": 8},
+    {"name": "deserialization_probe",  "group": 8},
+    {"name": "race_condition",         "group": 8},
+    {"name": "graphql_audit",          "group": 8},
+    {"name": "api_key_validator",      "group": 9},
+    {"name": "xxe_probe",              "group": 9},
+    {"name": "injection_probe",        "group": 10},
+    {"name": "xss",                    "group": 10},
+    {"name": "sql_injection",          "group": 10},
+    {"name": "idor_probe",             "group": 10},
+    {"name": "vulnscan",               "group": 11},
+    {"name": "cve_check",              "group": 12},
+    {"name": "correlator",             "group": 13},
+    {"name": "asset_risk",             "group": 14},
+    {"name": "ai_report",              "group": 15},
+]
+\end{lstlisting}
+
+\section*{A.2 Excerpt of the configuration schema}
+
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize,caption={Excerpt of \texttt{config.yaml.example} showing the most important sections.}]
+api_keys:
+  shodan: ""
+  censys_api_id: ""
+  censys_api_secret: ""
+  github: ""
+
+preset: ""   # safe | bug_bounty | deep | intrusive
+
+auth_profiles:
+  anonymous: {}
+  user_a:   { token: "", token_type: "Bearer", headers: {}, cookies: {} }
+  user_b:   { token: "", token_type: "Bearer", headers: {}, cookies: {} }
+  admin:    { token: "", token_type: "Bearer", headers: {}, cookies: {} }
+
+telegram:
+  enabled:   true
+  bot_token: ""
+  chat_id:   ""
+  notify_on: [start, module_complete, critical_finding, complete]
+
+ai:
+  enabled:          true
+  provider:         "ollama"
+  model:            "deepseek-r1:7b"
+  ollama_url:       "http://localhost:11434"
+  openai_api_key:   ""
+  openai_base_url:  "https://api.openai.com/v1"
+  temperature:      0.3
+  max_tokens:       4096
+  language:         "en"
+  realtime_advice:  false
+  advise_on: [recon, portscan, techstack, fuzzer, vulnscan, cve_check]
+
+scan:
+  threads:           50
+  timeout:           30
+  rate_limit:        50
+  global_rate_limit: 50
+  allow_write:       false
+
+scope:
+  enforce:          true
+  allowed_domains:  [localhost]
+  allowed_ips:      [127.0.0.1]
+  excluded:         []
+\end{lstlisting}
+
+\chapter{Module Catalogue}
+
+This appendix summarizes every module of the framework, with its file, its size in lines of code, and its responsibility. The line counts reflect the snapshot of the repository at the time of writing.
+
+\begingroup
+\scriptsize
+\begin{longtable}{|l|l|r|p{5.6cm}|}
+\hline
+\textbf{Module} & \textbf{File} & \textbf{LoC} & \textbf{Responsibility} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Module} & \textbf{File} & \textbf{LoC} & \textbf{Responsibility} \\
+\hline
+\endhead
+\textbf{Core} & & & \\
+BaseModule              & \texttt{modules/base.py}                   & 611 & Cross-cutting services: scope, rate limit, audit, subprocess, resume \\
+ActiveProbeBase         & \texttt{modules/active\_probe\_base.py}    & 164 & Active-probe mixin: profiles, jitter, dedup, finding builder \\
+FindingRegistry         & \texttt{modules/finding\_registry.py}      & 752 & Unified finding schema and risk scoring \\
+TokenBucket             & \texttt{modules/rate\_limiter.py}          &  44 & Thread-safe rate limiter \\
+AuditLogger             & \texttt{modules/audit.py}                  &  48 & Append-only JSONL audit log \\
+\hline
+\textbf{Reconnaissance} & & & \\
+recon                   & \texttt{modules/recon.py}                  & 1038 & DNS / subdomain enumeration from 9+ sources \\
+portscan                & \texttt{modules/portscan.py}               &  211 & Nmap / masscan wrapper \\
+webdetect               & \texttt{modules/webdetect.py}              &  366 & HTTP/HTTPS probing of resolved hosts \\
+techstack               & \texttt{modules/techstack.py}              &  303 & Wappalyzer-based technology fingerprinting \\
+spa\_crawler            & \texttt{modules/spa\_crawler.py}           &  202 & Headless-browser crawl for SPAs \\
+fuzzer                  & \texttt{modules/fuzzer.py}                 & 1467 & Crawl, brute-force, JS secrets, GraphQL detection \\
+cmscan                  & \texttt{modules/cmscan.py}                 &  229 & WPScan and CMS-specific scans \\
+vhost\_enum             & \texttt{modules/vhost\_enum.py}            &  121 & Virtual-host enumeration \\
+takeover\_checker       & \texttt{modules/takeover\_checker.py}      &  296 & Subdomain takeover detection \\
+sourcemap\_analyzer     & \texttt{modules/sourcemap\_analyzer.py}    &  166 & .js.map recovery and analysis \\
+openapi\_parser         & \texttt{modules/openapi\_parser.py}        &  202 & OpenAPI / Swagger spec discovery and parsing \\
+parameter\_discovery    & \texttt{modules/parameter\_discovery.py}   &  120 & Arjun + OpenAPI parameter discovery \\
+\hline
+\textbf{Configuration analysis} & & & \\
+ssl\_checker            & \texttt{modules/ssl\_checker.py}           &  258 & TLS / certificate / security-header audit \\
+cors\_checker           & \texttt{modules/cors\_checker.py}          &  188 & CORS misconfiguration detection \\
+auth\_probe             & \texttt{modules/auth\_probe.py}            &  258 & Cookie / Authorization-header audit \\
+jwt\_audit              & \texttt{modules/jwt\_audit.py}             &  313 & JWT header / claims / signature audit \\
+oauth\_probe            & \texttt{modules/oauth\_probe.py}           &  310 & OAuth endpoint and flow audit \\
+api\_schema\_audit      & \texttt{modules/api\_schema\_audit.py}     &  206 & OpenAPI security anti-pattern audit \\
+js\_security\_audit     & \texttt{modules/js\_security\_audit.py}    &  314 & Static analysis of .js files \\
+secret\_scanner         & \texttt{modules/secret\_scanner.py}        &  298 & Secret hunting in public GitHub repositories \\
+api\_key\_validator     & \texttt{modules/api\_key\_validator.py}    &  320 & Optional live validation of discovered API keys \\
+\hline
+\textbf{Active probes} & & & \\
+xss                     & \texttt{modules/xss.py}                    &  451 & Reflected-XSS probing (dalfox + reflection fallback) \\
+sql\_injection          & \texttt{modules/sql\_injection.py}         &  219 & sqlmap wrapper \\
+injection\_probe        & \texttt{modules/injection\_probe.py}       &  411 & SSTI and SSRF probing \\
+idor\_probe             & \texttt{modules/idor\_probe.py}            &  419 & IDOR / BOLA candidate detection and cross-profile comparison \\
+host\_header\_injection & \texttt{modules/host\_header\_injection.py}&  208 & Host / X-Forwarded-Host injection probing \\
+cache\_poison           & \texttt{modules/cache\_poison.py}          &  238 & Web cache poisoning probing \\
+prototype\_pollution    & \texttt{modules/prototype\_pollution.py}   &  270 & Server-side prototype-pollution probing \\
+open\_redirect\_probe   & \texttt{modules/open\_redirect\_probe.py}  &  127 & Open-redirect detection \\
+deserialization\_probe  & \texttt{modules/deserialization\_probe.py} &  158 & Insecure-deserialization indicators \\
+xxe\_probe              & \texttt{modules/xxe\_probe.py}             &  170 & XXE indicators with optional OOB \\
+http\_smuggling         & \texttt{modules/http\_smuggling.py}        &  220 & CL.TE / TE.CL / TE.TE desync probing \\
+websocket\_probe        & \texttt{modules/websocket\_probe.py}       &  300 & WebSocket origin / handshake audit \\
+race\_condition         & \texttt{modules/race\_condition.py}        &  112 & Race-condition candidate detection \\
+graphql\_audit          & \texttt{modules/graphql\_audit.py}         &  142 & GraphQL introspection and authorization audit \\
+\hline
+\textbf{Aggregation and analytics} & & & \\
+vulnscan                & \texttt{modules/vulnscan.py}               &  369 & Nuclei wrapper \\
+cve\_check              & \texttt{modules/cve\_check.py}             &  228 & ExploitDB / CVE correlation \\
+correlator              & \texttt{modules/correlator.py}             &  461 & Cross-finding correlation rules \\
+asset\_risk             & \texttt{modules/asset\_risk.py}            &  291 & Per-asset risk score and tier ranking \\
+\hline
+\textbf{AI and reporting} & & & \\
+ai\_advisor             & \texttt{modules/ai\_advisor.py}            &  127 & Real-time per-module LLM advice \\
+ai\_report              & \texttt{modules/ai\_report.py}             &  457 & Post-scan LLM analytical report \\
+html\_report            & \texttt{reporting/html\_report.py}         &  601 & Jinja2 HTML report renderer \\
+json\_report            & \texttt{reporting/json\_report.py}         &  287 & SIEM-compatible JSON renderer \\
+telegram                & \texttt{reporting/telegram.py}             &  277 & Telegram notification stream \\
+\hline
+\end{longtable}
+\endgroup
+
+\chapter{Selected Source Code Listings}
+
+This appendix lists three representative source-code excerpts that illustrate the design described in Chapter~\ref{chap:02}. The complete source code of the framework is shipped in the repository and is not reproduced here in full.
+
+\section*{C.1 BaseModule initialization}
+
+\begin{lstlisting}[language=Python,basicstyle=\ttfamily\footnotesize,caption={Cross-cutting services attached at module construction (excerpt from \texttt{modules/base.py}).}]
+class BaseModule:
+    name: str = "base"
+    description: str = ""
+    required_tools: list = []
+
+    def __init__(self, target: str, output_dir: str, config: dict):
+        self.target  = target
+        self.output_dir = Path(output_dir)
+        self.config  = config
+        self.domain  = self._clean_domain(target)
+        self.rate_limiter = TokenBucket(rate=self._module_rate_limit())
+        global_rate = config.get("scan", {}).get("global_rate_limit", 100)
+        session_key = str(self.output_dir)
+        self._global_limiter = _get_global_bucket(session_key, global_rate)
+        self.audit   = AuditLogger(self.output_dir)
+        self.results = {}
+        self.interrupted_commands: list[str] = []
+        self.start_time = None
+        self.end_time   = None
+        self.module_dir = self.output_dir / self.name
+        self.module_dir.mkdir(parents=True, exist_ok=True)
+\end{lstlisting}
+
+\section*{C.2 Finding-registry weights and verdict logic}
+
+\begin{lstlisting}[language=Python,basicstyle=\ttfamily\footnotesize,caption={Severity / exploitability weights and risk-score helpers (excerpt from \texttt{modules/finding\_registry.py}).}]
+SEVERITY_WEIGHTS = {
+    "INFO":      5,
+    "LOW":      20,
+    "MEDIUM":   45,
+    "HIGH":     70,
+    "CRITICAL": 90,
+}
+
+EXPLOITABILITY_WEIGHTS = {
+    "passive":       0.20,
+    "candidate":     0.35,
+    "requires_auth": 0.50,
+    "active":        0.65,
+    "confirmed":     0.90,
+}
+
+def risk_score(severity: str, confidence: float, exploitability: str) -> float:
+    return (
+        SEVERITY_WEIGHTS.get(severity, 20)
+        * clamp(confidence, default=0.75)
+        * _exploitability_weight(exploitability)
+    )
+\end{lstlisting}
+
+\section*{C.3 AI report invocation}
+
+\begin{lstlisting}[language=Python,basicstyle=\ttfamily\footnotesize,caption={Local-LLM provider selection in the post-scan analysis module (excerpt from \texttt{modules/ai\_report.py}).}]
+def run(self) -> dict:
+    ai_cfg = self.config.get("ai", {})
+
+    if not ai_cfg.get("enabled", True):
+        self.info("AI analysis disabled in config")
+        return {"analysis": "", "status": "disabled"}
+
+    provider = ai_cfg.get("provider", "ollama")
+    model    = ai_cfg.get("model", "deepseek-r1:7b")
+    lang     = self._normalize_language(ai_cfg.get("language", "en"))
+
+    prompt = self._build_prompt(lang)
+    self.save_text(prompt, "ai_prompt.txt")
+    self.info(f"Provider: {provider}  Model: {model}")
+
+    if provider == "ollama":
+        ollama_url = ai_cfg.get("ollama_url", "http://localhost:11434")
+        if not self._ollama_alive(ollama_url):
+            self.warn("Ollama not running -- skipping AI analysis")
+            return {"analysis": "", "status": "ollama_unavailable"}
+        analysis = self._ollama_generate(ollama_url, model, prompt, ai_cfg)
+    else:
+        analysis = self._openai_compatible_generate(prompt, ai_cfg)
+    # ... language validation and return ...
+\end{lstlisting}

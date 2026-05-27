@@ -177,13 +177,21 @@ class AIReportModule(BaseModule):
         if fc:
             blocks.append(f"\nFUZZING (total endpoints: {fuzz.get('total_endpoints', 0)}):")
             for cat, items in fc.items():
-                if cat != "js_secrets" and items:
-                    blocks.append(f"  {cat}: {len(items)}")
-                    for url in items[:5]:
-                        blocks.append(f"    {url}")
+                if cat == "js_secrets" or not items:
+                    continue
+                if isinstance(items, int):
+                    blocks.append(f"  {cat}: {items}")
+                    continue
+                if not isinstance(items, list):
+                    continue
+                blocks.append(f"  {cat}: {len(items)}")
+                for url in items[:5]:
+                    blocks.append(f"    {url}")
 
         # ── JS Secrets
         secrets = fc.get("js_secrets", []) if fc else []
+        if not isinstance(secrets, list):
+            secrets = []
         if secrets:
             blocks.append(f"\nJS SECRETS ({len(secrets)}):")
             for s in secrets[:10]:

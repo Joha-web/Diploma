@@ -1,0 +1,30 @@
+\chapter{Conclusion}
+
+This diploma project addressed the problem of automating external penetration testing of web applications. The work proposed and implemented \textbf{ReconX} --- a method and a Python~3 framework that integrates reconnaissance, configuration analysis, and a broad set of OWASP-aligned active probes into a single reproducible pipeline, normalizes their output into a unified finding schema, and uses a local LLM to produce an analyst-readable report.
+
+\textbf{Results acquired.}
+\begin{itemize}
+  \item The theoretical part of the work analyzed the OWASP Top~10 (2021) catalogue, the structure of a modern external-pentest engagement, the main classes of web vulnerabilities, and the open-source toolchain used by the offensive-security community.
+  \item Functional and non-functional requirements for an integrated external-pentest framework were formulated, including reproducibility, modularity, scope enforcement, finding normalization, and LLM-assisted reporting.
+  \item A modular pipeline architecture was designed, consisting of 46 specialized modules grouped into 15 sequential execution stages, with intra-stage thread-level parallelism.
+  \item A central \textit{finding registry} was implemented that maps every probe's raw output into a unified record with severity, confidence, CWE, CVSS, OWASP, and MITRE ATT\&CK metadata, and that derives a triage \textit{verdict} of \textit{confirmed} versus \textit{candidate}.
+  \item Reconnaissance modules were implemented: subdomain discovery from nine passive sources, DNS auditing, port scanning, technology and CMS fingerprinting, endpoint and parameter discovery, source-map analysis, and OpenAPI parsing.
+  \item Configuration-analysis modules were implemented for TLS, security headers, CORS, authentication cookies, JWT tokens, OpenAPI security anti-patterns, and secret hunting in public GitHub repositories.
+  \item Active probes were implemented for reflected XSS, SQL injection (via sqlmap), IDOR with cross-profile comparison, host header injection, cache poisoning, prototype pollution, open redirect, SSRF / SSTI, XXE, HTTP request smuggling, WebSocket security, race conditions, GraphQL auditing, and OAuth misconfigurations.
+  \item A correlator implementing nine cross-finding rules and an asset-risk module producing a ranked per-host risk score were implemented, allowing the framework to highlight the most exploitable assets at the top of the report.
+  \item A local LLM integration (Ollama with DeepSeek-R1~7B as the default model and an OpenAI-compatible fallback) was implemented and produces an executive-summary report from the structured findings.
+  \item An HTML report renderer, a SIEM-compatible JSON export, a per-session append-only audit log of every HTTP request, and a Telegram notifier for long-running scans were implemented.
+  \item The framework was experimentally evaluated in two complementary settings: a controlled laboratory run against \textit{OWASP Juice Shop} and an authorized real-world case study against the \texttt{miras.app} academic management system. The detected vulnerabilities matched the expected categories of both targets, the scope enforcer correctly blocked the single out-of-scope request observed during the real scan, the asset-risk module placed the most exposed administrative subdomain at the top of the ranking, and the full real-target pipeline completed in approximately 1~minute~43~seconds.
+\end{itemize}
+
+\textbf{Improvements that can be made in future work.}
+\begin{itemize}
+  \item Add a headless-browser-based DAST stage that drives the application through Playwright in addition to the current HTTP-level probing, in order to discover client-side issues that require an actual JavaScript runtime.
+  \item Extend the active-probe set to cover NoSQL injection, GraphQL batch-based authorization bypass, mass-assignment, and BOLA on REST APIs with finer granularity.
+  \item Introduce a feedback loop in which the LLM proposes follow-up probes (for example, targeted SSRF callbacks against an interactsh server) that are then automatically dispatched by the framework, instead of leaving the proposal to the human analyst.
+  \item Replace the current per-rule correlator with a learned ranker trained on labeled finding sets, in order to improve the prioritization of multi-signal observations.
+  \item Build a dedicated web dashboard --- comparable to OWASP DefectDojo --- on top of the SIEM-compatible JSON export, with multi-scan diffing and historical trend analysis.
+  \item Package the framework as an installable distribution and add a containerized runtime so that the framework can be deployed both on a local Kali-Linux workstation and inside a CI/CD pipeline.
+\end{itemize}
+
+The work demonstrates that external penetration testing of web applications can be substantially automated without sacrificing explainability, and that local LLMs are mature enough to be integrated as a first-class component of an offensive-security pipeline.

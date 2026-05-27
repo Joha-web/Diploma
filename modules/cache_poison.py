@@ -96,9 +96,20 @@ class CachePoisonModule(BaseModule):
             clean_text = (clean.text or "") if clean else ""
             cache_confirmed = self.marker in clean_text
 
+        if cache_confirmed:
+            severity = "CRITICAL"
+        elif cache_info.get("cacheable"):
+            severity = "HIGH"
+        elif cache_info.get("non_cacheable_directive"):
+            # Response explicitly forbids caching (no-cache/no-store/private). Reflection
+            # alone is informational here — useful for SSRF/host-header research but not
+            # a cache-poisoning HIGH.
+            severity = "LOW"
+        else:
+            severity = "MEDIUM"
         return self._finding(
             "cache_poisoning_unkeyed_header",
-            "CRITICAL" if cache_confirmed else "HIGH",
+            severity,
             url,
             f"Unkeyed header reflected in response: {header}",
             {
@@ -121,7 +132,13 @@ class CachePoisonModule(BaseModule):
                 continue
             resp = self.http_get(probe_url, session=session, timeout=float(cfg.get("timeout", 10)), verify=False)
             if resp and self.marker in (resp.text or ""):
-                findings.append(self._finding("cache_poisoning_fat_get", "HIGH", url, "Unkeyed query parameter reflected", {
+                if cache_info.get("cacheable"):
+                    severity = "HIGH"
+                elif cache_info.get("non_cacheable_directive"):
+                    severity = "LOW"
+                else:
+                    severity = "MEDIUM"
+                findings.append(self._finding("cache_poisoning_fat_get", severity, url, "Unkeyed query parameter reflected", {
                     "probe_url": probe_url,
                     "param": name,
                     "cache_info": cache_info,
@@ -134,7 +151,13 @@ class CachePoisonModule(BaseModule):
         cookie = f"reconx_probe={self.marker}"
         resp = self.http_get(url, session=session, headers={"Cookie": cookie}, timeout=float(cfg.get("timeout", 10)), verify=False)
         if resp and self.marker in (resp.text or ""):
-            return [self._finding("cache_poisoning_unkeyed_cookie", "HIGH", url, "Cookie value reflected in cacheable response", {
+            if cache_info.get("cacheable"):
+                severity = "HIGH"
+            elif cache_info.get("non_cacheable_directive"):
+                severity = "LOW"
+            else:
+                severity = "MEDIUM"
+            return [self._finding("cache_poisoning_unkeyed_cookie", severity, url, "Cookie value reflected in response", {
                 "cookie": cookie,
                 "cache_info": cache_info,
                 "excerpt": self._excerpt(resp.text or "", self.marker),
@@ -144,13 +167,23 @@ class CachePoisonModule(BaseModule):
     def _cache_info(self, url: str, session: requests.Session, cfg: dict) -> dict:
         resp = self.http_get(url, session=session, timeout=float(cfg.get("timeout", 8)), verify=False)
         if resp is None:
-            return {"cache_detected": False, "headers": {}}
+            return {"cache_detected": False, "cacheable": False, "headers": {}}
         headers = {name: resp.headers.get(name, "") for name in CACHE_HEADERS if resp.headers.get(name)}
         cc = resp.headers.get("Cache-Control", "")
         if cc:
             headers["Cache-Control"] = cc
+        cc_lower = cc.lower()
+        # Explicit non-cacheable directives override the presence of caching headers.
+        non_cacheable = any(tok in cc_lower for tok in ("no-store", "no-cache", "private"))
+        # max-age=0 / s-maxage=0 are effectively non-cacheable.
+        if "max-age=0" in cc_lower.replace(" ", "") or "s-maxage=0" in cc_lower.replace(" ", ""):
+            non_cacheable = True
+        cache_detected = bool(headers) or any(tok in cc_lower for tok in ("public", "max-age", "s-maxage"))
+        cacheable = cache_detected and not non_cacheable
         return {
-            "cache_detected": bool(headers) or any(token in cc.lower() for token in ("public", "max-age", "s-maxage")),
+            "cache_detected": cache_detected,
+            "cacheable": cacheable,
+            "non_cacheable_directive": non_cacheable,
             "headers": headers,
         }
 

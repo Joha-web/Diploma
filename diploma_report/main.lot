@@ -1,0 +1,32 @@
+\babel@toc {english}{}\relax 
+\addvspace {10pt}
+\babel@toc {russian}{}\relax 
+\babel@toc {english}{}\relax 
+\babel@toc {russian}{}\relax 
+\babel@toc {english}{}\relax 
+\addvspace {10pt}
+\addvspace {10pt}
+\addvspace {10pt}
+\addvspace {10pt}
+\par \nobreak \textbf {{\scshape Table} \hfill Page}\par \nobreak 
+\addvspace {10pt}
+\addvspace {10pt}
+\contentsline {table}{\numberline {1.1}{\ignorespaces Selected open-source tools used by ReconX}}{8}{table.caption.20}%
+\addvspace {10pt}
+\contentsline {table}{\numberline {2.1}{\ignorespaces Module contract enforced by \texttt {BaseModule}.}}{15}{table.caption.22}%
+\contentsline {table}{\numberline {2.2}{\ignorespaces Pipeline groups and the modules they contain.}}{16}{table.caption.23}%
+\contentsline {table}{\numberline {2.3}{\ignorespaces Unified schema produced by the finding registry.}}{18}{table.caption.24}%
+\contentsline {table}{\numberline {2.4}{\ignorespaces Built-in scan profiles.}}{20}{table.caption.25}%
+\contentsline {table}{\numberline {2.5}{\ignorespaces Representative correlation rules.}}{21}{table.caption.26}%
+\addvspace {10pt}
+\contentsline {table}{\numberline {3.1}{\ignorespaces Development and runtime environment.}}{26}{table.caption.28}%
+\contentsline {table}{\numberline {3.2}{\ignorespaces Experimental test-bench configuration.}}{33}{table.caption.30}%
+\contentsline {table}{\numberline {3.3}{\ignorespaces Illustrative quantitative summary of an OWASP Juice Shop scan.}}{34}{table.caption.31}%
+\contentsline {table}{\numberline {3.4}{\ignorespaces Distribution of findings across OWASP Top~10 categories (Juice Shop, typical run).}}{35}{table.caption.32}%
+\contentsline {table}{\numberline {3.5}{\ignorespaces Actual quantitative summary of the authorized \texttt {miras.app} scan.}}{37}{table.caption.34}%
+\contentsline {table}{\numberline {3.6}{\ignorespaces Distribution of findings by source module on the \texttt {miras.app} scan.}}{38}{table.caption.35}%
+\contentsline {table}{\numberline {3.7}{\ignorespaces Top five assets ranked by the asset-risk module on \texttt {miras.app}.}}{39}{table.caption.37}%
+\addvspace {10pt}
+\addvspace {10pt}
+\addvspace {10pt}
+\addvspace {10pt}

@@ -1,0 +1,266 @@
+% File:    the University of Southampton Thesis Template
+% Author:  Tengxiang Li
+%
+% Warns for incorrect (obsolete) LaTeX usage
+\RequirePackage[l2tabu]{nag}		
+%
+%
+% Memoir is a flexible class for typesetting poetry, fiction, 
+% non-fiction and mathematical works as books, reports, articles or
+% manuscripts. CTAN repository is found at:
+% http://www.ctan.org/tex-archive/macros/latex/contrib/memoir/
+%
+%
+\documentclass[a4paper,12pt,oneside,openbib,oldfontcommands]{memoir} %add 'draft' to turn draft option on (see below)
+%
+%
+% Adding metadata:
+\let\ordinal\relax %to avoid warning with datetime and memoir
+\usepackage{datetime}
+\usepackage{ifpdf}
+\ifpdf
+\pdfinfo{
+   /Author (Author name)
+   /Title (Thesis title)
+   /Keywords (One; Two;Three)
+   /CreationDate (D:\pdfdate)
+}
+\fi
+% When draft option is on. 
+\ifdraftdoc 
+	\usepackage{draftwatermark}				%Sets watermarks up.
+	\SetWatermarkScale{0.3}
+	\SetWatermarkText{\bf Draft: \today}
+\fi
+%
+\usepackage{microtype}
+\sloppy
+
+%
+% Better page layout for A4 paper, see memoir manual.
+\settrimmedsize{297mm}{210mm}{*}
+\setlength{\trimtop}{0pt} 
+\setlength{\trimedge}{\stockwidth} 
+\addtolength{\trimedge}{-\paperwidth} 
+\settypeblocksize{634pt}{448.13pt}{*} 
+\setulmargins{4cm}{*}{*} 
+\setlrmargins{*}{*}{1.5} 
+\setmarginnotes{17pt}{51pt}{\onelineskip} 
+\setheadfoot{\onelineskip}{2\onelineskip} 
+\setheaderspaces{*}{2\onelineskip}{*} 
+\checkandfixthelayout
+%
+\frenchspacing
+%
+\OnehalfSpacing 
+%
+% Sets numbering division level
+\setsecnumdepth{subsection} 
+\maxsecnumdepth{subsubsection}
+%
+%
+\makepagestyle{myvf} 
+\makeoddfoot{myvf}{}{\thepage}{} 
+\makeevenfoot{myvf}{}{\thepage}{} 
+\makeheadrule{myvf}{\textwidth}{\normalrulethickness} 
+\makeevenhead{myvf}{\small\textsc{\leftmark}}{}{} 
+\makeoddhead{myvf}{}{}{\small\textsc{\rightmark}}
+\pagestyle{myvf}
+%
+\newcommand{\clearemptydoublepage}{\newpage{\thispagestyle{empty}\cleardoublepage}}
+%
+\usepackage[T2A]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[main=english, russian, kazakh]{babel}
+%
+% Creates index for Table of Contents, List of Figures, List of Tables and Index
+\makeindex
+% \printglossaries below creates a list of abbreviations. \gls and related
+% commands are then used throughout the text, so that latex can automatically
+% keep track of which abbreviations have already been defined in the text.
+%
+% The import command enables each chapter tex file to use relative paths when
+% accessing supplementary files. For example, to include
+% chapters/brewing/images/figure1.png from chapters/brewing/brewing.tex we can
+% use
+% \includegraphics{images/figure1}
+% instead of
+% \includegraphics{chapters/brewing/images/figure1}
+\usepackage{import}
+
+% Add other packages needed for chapters here. For example:
+\usepackage{amsfonts} 					%Calls Amer. Math. Soc. (AMS) fonts
+\usepackage{amsmath}			%Writes maths centred down
+\usepackage{stmaryrd}					%New AMS symbols
+\usepackage{amssymb}					%Calls AMS symbols
+\usepackage{amsthm}					%Calls AMS theorem environment
+\usepackage{newlfont}					%Helpful package for fonts and symbols
+\usepackage{layouts}					%Layout diagrams
+\usepackage{graphicx}					%Calls figure environment
+\usepackage[utf8]{inputenc}			%Needed to encode non-english characters 
+									%directly for mac
+\usepackage{float}						%Helps to place figures, tables, etc. 
+\usepackage[square,numbers,
+		     sort&compress]{natbib}		%Calls bibliography commands 
+\usepackage{url}						%Supports url commands
+\usepackage[main=english, russian, kazakh]{babel}
+	%For languages characters and hyphenation
+
+\usepackage[colorlinks=true,
+		     allcolors=black]{hyperref}              %Creates hyperlinks in cross references
+\usepackage{memhfixc}					%Must be used on memoir document 
+									%class after hyperref
+\usepackage{enumerate}					%For enumeration counter
+\usepackage{footnote}					%For footnotes
+\usepackage{microtype}					%Makes pdf look better.
+\usepackage[version=0.96]{pgf}			%PGF/TikZ is a tandem of languages for producing vector graphics from a 
+
+
+
+
+\usepackage{listings}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  numberstyle=\tiny,
+  numbersep=6pt,
+  breaklines=true,
+  showstringspaces=false,
+  keepspaces=true,
+  columns=fullflexible,
+  backgroundcolor=\color{white},
+  keywordstyle=\color{black},
+  commentstyle=\color{black},
+  stringstyle=\color{black}
+}
+
+
+
+
+
+
+%Reduce widows  (the last line of a paragraph at the start of a page) and orphans 
+% (the first line of paragraph at the end of a page)
+\widowpenalty=1000
+\clubpenalty=1000
+%
+% New command definitions for my thesis
+%
+\newcommand{\keywords}[1]{\par\noindent{\small{\bf Keywords:} #1}} %Defines keywords small section
+%
+%
+\usepackage{enumitem}      % даёт гибкий контроль над description
+
+
+%
+\usepackage{lipsum}
+\usepackage{subcaption}
+%
+\usepackage{xcolor}
+%Creates coloured text and background
+\definecolor{UniversityBlue}{RGB}{38,90,130}
+%Defines user-defined colour
+%
+% Theorem styles used in my thesis
+%
+\theoremstyle{plain}
+\newtheorem{theo}{Theorem}[chapter]
+\theoremstyle{plain}
+\newtheorem{prop}{Proposition}[chapter]
+\theoremstyle{plain}
+\theoremstyle{definition}
+\newtheorem{dfn}{Definition}[chapter]
+\theoremstyle{plain}
+\newtheorem{lema}{Lemma}[chapter]
+\theoremstyle{plain}
+\newtheorem{cor}{Corollary}[chapter]
+\theoremstyle{plain}
+\newtheorem{resu}{Result}[chapter]
+%
+%
+%
+\begin{document}
+% 
+%
+% 
+\frontmatter
+\pagenumbering{roman}
+%
+\input{frontmatter/title}
+%\clearemptydoublepage
+%
+\input{frontmatter/abstract}
+\clearemptydoublepage
+%
+\input{frontmatter/dedication}
+%\clearemptydoublepage
+%
+\input{frontmatter/declaration}
+
+\input{frontmatter/definitions}
+\input{frontmatter/dda}
+
+%\clearemptydoublepage
+%
+%\clearemptydoublepage
+%
+\listoftables
+\addtocontents{lot}{\par\nobreak\textbf{{\scshape Table} \hfill Page}\par\nobreak}
+\newpage
+%\clearemptydoublepage
+%
+%
+\listoffigures
+\addtocontents{lof}{\par\nobreak\textbf{{\scshape Figure} \hfill Page}\par\nobreak}
+\newpage
+%\clearemptydoublepage
+%
+\addtocontents{toc}{\par\nobreak \mbox{}\hfill{\bf }\par\nobreak}
+%
+\renewcommand{\contentsname}{Table of Contents}
+\maxtocdepth{subsection}
+\tableofcontents*
+
+
+\input{frontmatter/intro.tex} 
+%\frontmatter       
+%\input{frontmatter/intro.tex} 
+
+%\cleardoublepage
+%\pagenumbering{arabic}
+%\setcounter{page}{1}
+
+
+
+\mainmatter
+%
+\import{chapters/chapter01/}{introduction.tex}
+% \clearemptydoublepage
+%
+\import{chapters/chapter02/}{main.tex}
+%
+\import{chapters/chapter03/}{conclusion.tex}
+%
+% And the appendix goes here
+\backmatter             % опционально: приложения, список литературы
+\input{frontmatter/concl.tex} 
+
+%\clearemptydoublepage
+%
+% Apparently the guidelines don't say anything about citations or
+% bibliography styles so I guess we can use anything.
+\backmatter
+\bibliographystyle{unsrt}
+\refstepcounter{chapter}
+\bibliography{thesisbiblio}
+
+\appendix
+\import{chapters/appendices/}{app0A.tex}
+
+
+\clearemptydoublepage
+%
+% Add index
+%\printindex
+%   
+\end{document}

@@ -133,6 +133,13 @@ class HTMLReportGenerator:
         ) + sum(
             len(module.get("findings", [])) for _, _, module in active_probe_sections
         )
+        all_findings = self._collect_all_findings(
+            vuln,
+            cms,
+            cve,
+            extra_finding_sections,
+            active_probe_sections,
+        )
         severity_counts = self._all_finding_severity_counts(
             vuln,
             cms,
@@ -242,6 +249,7 @@ class HTMLReportGenerator:
             "active_probe_sections": active_probe_sections,
             "finding_filter_modules": finding_filter_modules,
             "all_findings_count": all_findings_count,
+            "all_findings": all_findings,
             "diff":        r.get("diff", {}),
             "ai_analysis": ai_html,
             "static_analysis": static_analysis,
@@ -250,6 +258,124 @@ class HTMLReportGenerator:
             "interesting_screenshots_b64": interesting_screenshots_b64,
             "finding_descriptions": finding_descriptions,
         }
+
+    # Severity order for sorting (higher number = more important)
+    _SEVERITY_RANK = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1}
+
+    @classmethod
+    def _collect_all_findings(
+        cls,
+        vuln: dict,
+        cms: dict,
+        cve: dict,
+        extra_finding_sections: list,
+        active_probe_sections: list,
+    ) -> list:
+        """Flatten every finding across modules into a single list sorted by severity
+        (CRITICAL → INFO) then by confidence descending.
+
+        Each entry has a stable shape consumed by the All Findings section in the
+        HTML template:
+            {module, module_label, anchor, title, severity, severity_rank,
+             url, confidence, verdict, evidence_excerpt, raw}
+        """
+        flat: list[dict] = []
+
+        def push(module_id: str, module_label: str, anchor: str, finding: dict) -> None:
+            if not isinstance(finding, dict):
+                return
+            sev = str(finding.get("severity", "INFO") or "INFO").upper()
+            if sev not in cls._SEVERITY_RANK:
+                sev = "INFO"
+            title = (
+                finding.get("title")
+                or finding.get("name")
+                or finding.get("id")
+                or finding.get("rule")
+                or "Untitled finding"
+            )
+            url = finding.get("url") or finding.get("matched_url") or ""
+            confidence = finding.get("confidence")
+            try:
+                confidence_num = float(confidence) if confidence is not None else None
+            except (TypeError, ValueError):
+                confidence_num = None
+            verdict = finding.get("verdict") or ""
+            flat.append({
+                "module": module_id,
+                "module_label": module_label,
+                "anchor": anchor,
+                "id": str(finding.get("id", "") or ""),
+                "title": str(title)[:240],
+                "severity": sev,
+                "severity_rank": cls._SEVERITY_RANK[sev],
+                "url": str(url)[:300],
+                "confidence": confidence_num,
+                "verdict": str(verdict),
+                "evidence_excerpt": cls._evidence_excerpt(finding.get("evidence")),
+                "tags": finding.get("tags") or [],
+            })
+
+        # Vulnscan
+        for finding in vuln.get("findings", []) or []:
+            push("vulnscan", "Nuclei", "vulns", finding)
+
+        # Extra sections (already paired with their anchor + label)
+        for anchor, label, findings in extra_finding_sections:
+            for finding in findings or []:
+                push(anchor, label, anchor, finding)
+
+        # Active probe sections (module dicts)
+        for anchor, label, module in active_probe_sections:
+            for finding in module.get("findings", []) or []:
+                push(anchor, label, anchor, finding)
+
+        # CMS scans
+        for scan in cms.get("scans", []) or []:
+            cms_name = scan.get("cms", "cmscan")
+            for finding in scan.get("findings", []) or []:
+                push("cmscan", f"CMS ({cms_name})", "cms", finding)
+
+        # CVE / ExploitDB correlation
+        for finding in cve.get("cves", []) or []:
+            push("cve_check", "CVE / ExploitDB", "cve", finding)
+
+        flat.sort(
+            key=lambda item: (
+                -item["severity_rank"],
+                -(item["confidence"] if item["confidence"] is not None else -1),
+                item["module"],
+                item["title"],
+            )
+        )
+        return flat
+
+    @staticmethod
+    def _evidence_excerpt(evidence) -> str:
+        """Short single-line evidence summary for the All Findings table."""
+        if not evidence:
+            return ""
+        if isinstance(evidence, str):
+            text = evidence
+        elif isinstance(evidence, dict):
+            # Prefer the most informative field if present
+            for key in (
+                "excerpt", "body_excerpt", "snippet", "match", "description",
+                "payload", "header", "param", "rule", "file",
+            ):
+                value = evidence.get(key)
+                if value:
+                    text = f"{key}={value}"
+                    break
+            else:
+                try:
+                    text = json.dumps(evidence, default=str, ensure_ascii=False)
+                except Exception:
+                    text = str(evidence)
+        else:
+            text = str(evidence)
+        text = " ".join(str(text).split())
+        return text[:200]
 
     @staticmethod
     def _all_finding_severity_counts(

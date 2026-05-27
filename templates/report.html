@@ -221,6 +221,22 @@ tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover td { background: rgba(79,142,247,.04); }
 td code { font-family: var(--mono); font-size: .9em; color: var(--cyan); word-break: break-all; }
 
+/* URL cell — force long paths/URLs to wrap on any character boundary instead of
+   being clipped or pushing horizontal scroll. Applied per-cell so other code
+   elements keep their previous behaviour. */
+td.url-cell {
+  max-width: 380px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+td.url-cell code {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 /* Filter input */
 .filter-input {
   background: var(--surface);
@@ -458,8 +474,11 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <a href="#ai">🤖 AI Status</a>
   {% endif %}
 
-  {% if vuln.findings %}
+  {% if all_findings %}
   <div class="sidebar-section">Findings</div>
+  <a href="#all-findings" class="critical">📋 All Findings ({{ all_findings | length }})</a>
+  {% endif %}
+  {% if vuln.findings %}
   {% set crit = vuln.by_severity.get('CRITICAL', 0) %}
   {% set high = vuln.by_severity.get('HIGH', 0) %}
   {% if crit %}<a href="#vulns" class="critical">🔴 Critical ({{ crit }})</a>{% endif %}
@@ -472,6 +491,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
 
   <div class="sidebar-section">Infrastructure</div>
   <a href="#subdomains"><span class="dot"></span> Subdomains</a>
+  {% if recon.live_subdomains %}<a href="#live-subdomains"><span class="dot"></span> Live Subdomains ({{ recon.live_subdomains_total | default(recon.live_subdomains | length) }})</a>{% endif %}
   {% if secret.findings %}<a href="#secret-scanner"><span class="dot"></span> Git Secrets</a>{% endif %}
   <a href="#ports"><span class="dot"></span> Port Scan</a>
   <a href="#tech"><span class="dot"></span> Tech Stack</a>
@@ -684,6 +704,124 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
     </table>
   </div>
 </div>
+{% endif %}
+
+<!-- All Findings (unified view) -->
+{% if all_findings %}
+<div class="section" id="all-findings">
+  <div class="section-header">
+    <div class="section-title">📋 All Findings
+      <span class="count-badge">{{ all_findings | length }}</span>
+    </div>
+  </div>
+  <div style="margin-bottom:12px;font-size:.85em;color:var(--muted)">
+    Every finding emitted by any module, sorted by severity then confidence.
+    Use the filters below to narrow by module or severity. Each title links to the
+    module section for full evidence.
+  </div>
+  <div class="finding-filters" style="margin-bottom:12px">
+    <label>Module
+      <select id="all-findings-module" onchange="applyAllFindingsFilter()">
+        <option value="">All modules</option>
+        {% set seen_modules = [] %}
+        {% for f in all_findings %}
+          {% if f.module not in seen_modules %}
+            {% set _ = seen_modules.append(f.module) %}
+            <option value="{{ f.module }}">{{ f.module_label }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </label>
+    <label>Severity
+      <select id="all-findings-severity" onchange="applyAllFindingsFilter()">
+        <option value="">All severities</option>
+        <option value="CRITICAL">Critical</option>
+        <option value="HIGH">High</option>
+        <option value="MEDIUM">Medium</option>
+        <option value="LOW">Low</option>
+        <option value="INFO">Info</option>
+      </select>
+    </label>
+    <label>Min confidence
+      <input id="all-findings-confidence" type="number" min="0" max="1" step="0.05" placeholder="0.00" oninput="applyAllFindingsFilter()">
+    </label>
+    <label>Search
+      <input id="all-findings-search" type="text" class="filter-input" placeholder="title, URL or evidence" oninput="applyAllFindingsFilter()">
+    </label>
+  </div>
+  <div class="table-wrap" style="max-height:720px">
+    <table>
+      <thead>
+        <tr>
+          <th>Severity</th>
+          <th>Module</th>
+          <th>Title</th>
+          <th>URL</th>
+          <th>Conf.</th>
+          <th>Verdict</th>
+          <th>Evidence</th>
+        </tr>
+      </thead>
+      <tbody id="all-findings-tbody">
+        {% for f in all_findings %}
+        <tr class="all-finding-row"
+            data-module="{{ f.module }}"
+            data-severity="{{ f.severity }}"
+            data-confidence="{{ f.confidence if f.confidence is not none else '' }}"
+            data-search="{{ (f.title ~ ' ' ~ f.url ~ ' ' ~ f.evidence_excerpt) | lower }}">
+          <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+          <td>
+            <a href="#{{ f.anchor }}" style="color:var(--accent);text-decoration:none">
+              {{ f.module_label }}
+            </a>
+          </td>
+          <td><strong>{{ f.title }}</strong></td>
+          <td>
+            {% if f.url %}
+              <code style="word-break:break-all">{{ f.url }}</code>
+            {% else %}
+              <span style="color:var(--muted)">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if f.confidence is not none %}
+              {{ "%.2f" | format(f.confidence) }}
+            {% else %}
+              <span style="color:var(--muted)">—</span>
+            {% endif %}
+          </td>
+          <td style="font-size:.78em;color:var(--muted)">{{ f.verdict | default('') }}</td>
+          <td style="font-size:.78em;color:var(--muted);max-width:340px">
+            {% if f.evidence_excerpt %}
+              <code style="word-break:break-all">{{ f.evidence_excerpt }}</code>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+function applyAllFindingsFilter() {
+  const mod = document.getElementById('all-findings-module').value;
+  const sev = document.getElementById('all-findings-severity').value;
+  const minConf = parseFloat(document.getElementById('all-findings-confidence').value);
+  const search = (document.getElementById('all-findings-search').value || '').toLowerCase();
+  const rows = document.querySelectorAll('#all-findings-tbody .all-finding-row');
+  rows.forEach(row => {
+    let show = true;
+    if (mod && row.dataset.module !== mod) show = false;
+    if (sev && row.dataset.severity !== sev) show = false;
+    if (!isNaN(minConf)) {
+      const c = parseFloat(row.dataset.confidence);
+      if (!isNaN(c) && c < minConf) show = false;
+    }
+    if (search && !(row.dataset.search || '').includes(search)) show = false;
+    row.classList.toggle('finding-hidden', !show);
+  });
+}
+</script>
 {% endif %}
 
 <!-- AI Analysis -->
@@ -919,7 +1057,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   {% endif %}
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Severity</th><th>Verdict</th><th>CWE</th><th>Type</th><th>URL</th><th>Description</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Verdict</th><th>CWE</th><th>Type</th><th style="min-width:280px">URL</th><th>Description</th></tr></thead>
       <tbody>
         {% for f in module.findings %}
         <tr class="finding-row" data-module="{{ section_id }}" data-severity="{{ f.severity | default('INFO') }}" data-confidence="{{ f.confidence | default(0.75) }}" data-verdict="{{ f.verdict | default('candidate') }}">
@@ -930,7 +1068,16 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
             {% if f.owasp %}<div style="font-size:.7em;color:var(--muted)">{{ f.owasp.split('-')[0] }}{% if f.attack %} · {{ f.attack.id }}{% endif %}</div>{% endif %}
           </td>
           <td>{{ f.title or f.name or f.type }}</td>
-          <td><code>{{ f.url or f.matched_url }}</code></td>
+          <td class="url-cell">
+            {% set fu = f.url or f.matched_url %}
+            {% if fu and (fu.startswith('http://') or fu.startswith('https://')) %}
+              <a href="{{ fu }}" target="_blank" rel="noopener noreferrer" title="{{ fu }}" style="color:var(--cyan);text-decoration:none">
+                <code>{{ fu }}</code>
+              </a>
+            {% else %}
+              <code title="{{ fu }}">{{ fu }}</code>
+            {% endif %}
+          </td>
           <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
         </tr>
         {% endfor %}
@@ -1174,6 +1321,61 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <p style="color:var(--muted)">No subdomains found</p>
   {% endif %}
 </div>
+
+<!-- Live Subdomains -->
+{% if recon.live_subdomains %}
+<div class="section" id="live-subdomains">
+  <div class="section-header">
+    <div class="section-title">✅ Live Subdomains
+      <span class="count-badge">{{ recon.live_subdomains_total | default(recon.live_subdomains | length) }}</span>
+    </div>
+    <input class="filter-input" type="text" placeholder="Filter by host or IP…" oninput="filterTable('live-subdomain-table', this.value)">
+  </div>
+  <div style="margin-bottom:10px;font-size:.85em;color:var(--muted)">
+    Subdomains that responded during recon. A row is shown when at least one of
+    DNS resolution, ICMP ping, or an HTTP probe succeeded; the Liveness column
+    lists which checks responded.
+  </div>
+  <div class="table-wrap" style="max-height:640px">
+    <table id="live-subdomain-table">
+      <thead>
+        <tr>
+          <th>Subdomain</th>
+          <th>IP(s)</th>
+          <th>Liveness</th>
+          <th>HTTP URL(s)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in recon.live_subdomains %}
+        {% if s.live %}
+        <tr>
+          <td><code>{{ s.subdomain }}</code></td>
+          <td style="font-size:.82em">
+            {% for ip in s.ips or [] %}
+              <span class="port-tag">{{ ip }}</span>
+            {% endfor %}
+          </td>
+          <td style="font-size:.78em;color:var(--muted)">
+            {% for reason in s.reasons or [] %}
+              <span class="badge badge-INFO" style="margin-right:4px">{{ reason }}</span>
+            {% endfor %}
+          </td>
+          <td style="font-size:.82em">
+            {% for url in s.urls or [] %}
+              <a href="{{ url }}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none">
+                {{ url }}
+              </a><br>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 
 <!-- Port Scan -->
 {% if ports.hosts %}

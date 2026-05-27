@@ -140,7 +140,7 @@ class InjectionProbeModule(BaseModule):
                     if resp is None:
                         continue
                     body = resp.text or ""
-                    if expected not in body or expected in baseline_body:
+                    if not self._ssti_actually_evaluated(body, baseline_body, payload, expected):
                         continue
                     findings.append(self._finding(
                         finding_id="ssti_expression_evaluated",
@@ -163,6 +163,41 @@ class InjectionProbeModule(BaseModule):
                     ))
                     break
         return findings
+
+    @staticmethod
+    def _ssti_actually_evaluated(body: str, baseline_body: str, payload: str, expected: str) -> bool:
+        """Heuristic check that an SSTI payload was actually evaluated server-side.
+
+        The previous logic ("expected in body and not in baseline") is too noisy because
+        "49" is a common short string that appears in random asset timestamps, build
+        ids, cache-busters, etc. We require all of:
+          1. The expected result appears in the response body.
+          2. The raw payload is NOT echoed back verbatim (if `{{7*7}}` is reflected
+             literally the template engine did not evaluate it).
+          3. The expected value appears MORE times than in the baseline (so incidental
+             occurrences in shared chrome/error pages do not trigger).
+          4. The body does not look like a generic error/debug page where the request
+             URI is just echoed back (Laravel debugbar, Django debug, etc.).
+        """
+        if not expected or expected not in (body or ""):
+            return False
+        # 2. Payload echoed verbatim → not evaluated.
+        if payload and payload in body:
+            return False
+        # 3. More occurrences than baseline.
+        baseline_count = (baseline_body or "").count(expected)
+        body_count = body.count(expected)
+        if body_count <= baseline_count:
+            return False
+        # 4. Don't trust 500 debug pages echoing the URI.
+        debug_signatures = (
+            "_debugbar", "whoops!", "stack trace", "Symfony\\Component",
+            "Illuminate\\", "Whoops\\", "django.views.debug",
+            "Werkzeug Debugger", "Flask Debugger",
+        )
+        if any(sig in body for sig in debug_signatures):
+            return False
+        return True
 
     def _probe_ssrf(self, targets: list[dict], cfg: dict) -> list[dict]:
         helper, runtime = self._start_oob_runtime(cfg)

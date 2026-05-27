@@ -37,7 +37,8 @@ def test_secret_scanner_finds_github_clone_urls(tmp_path, monkeypatch):
 
     repos = module._find_repos()
 
-    assert repos == [
+    clone_urls = [repo["clone_url"] for repo in repos]
+    assert clone_urls == [
         "https://github.com/example/api.git",
         "https://github.com/example/app.git",
     ]
