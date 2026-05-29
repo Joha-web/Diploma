@@ -492,6 +492,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   <div class="sidebar-section">Infrastructure</div>
   <a href="#subdomains"><span class="dot"></span> Subdomains</a>
   {% if recon.live_subdomains %}<a href="#live-subdomains"><span class="dot"></span> Live Subdomains ({{ recon.live_subdomains_total | default(recon.live_subdomains | length) }})</a>{% endif %}
+  {% if recon_coverage and (recon_coverage.sibling_domains or recon_coverage.cloud_bucket_hits or recon_coverage.origin_candidates or recon_coverage.cert_san_groups or recon_coverage.asset_graph_nodes) %}<a href="#recon-coverage"><span class="dot"></span> Recon Coverage</a>{% endif %}
   {% if secret.findings %}<a href="#secret-scanner"><span class="dot"></span> Git Secrets</a>{% endif %}
   <a href="#ports"><span class="dot"></span> Port Scan</a>
   <a href="#tech"><span class="dot"></span> Tech Stack</a>
@@ -1374,6 +1375,159 @@ function applyAllFindingsFilter() {
       </tbody>
     </table>
   </div>
+</div>
+{% endif %}
+
+<!-- Recon Coverage (siblings, cloud buckets, origin IPs, cert SANs, asset graph) -->
+{% if recon_coverage and (recon_coverage.sibling_domains or recon_coverage.cloud_bucket_hits or recon_coverage.origin_candidates or recon_coverage.cert_san_groups or recon_coverage.asset_graph_nodes or recon_coverage.well_known_urls) %}
+<div class="section" id="recon-coverage">
+  <div class="section-header">
+    <div class="section-title">🛰 Reconnaissance Coverage
+      <span class="count-badge">{{ recon_coverage.asset_graph_nodes }} assets</span>
+    </div>
+  </div>
+  <p style="color:var(--muted);font-size:.85em;margin:0 0 14px">
+    Expanded recon surface — sibling domains, cloud storage, origin-IP candidates behind CDN/WAF,
+    TLS-cert SAN graph, well-known endpoints, and the unified asset graph that links them.
+  </p>
+
+  <div class="stats" style="margin-bottom:14px">
+    {% if recon_coverage.sibling_domains %}
+    <div class="stat"><div class="num">{{ recon_coverage.sibling_domains }}</div><div class="lbl">Sibling domains</div></div>
+    {% endif %}
+    {% if recon_coverage.cloud_bucket_hits %}
+    <div class="stat"><div class="num">{{ recon_coverage.cloud_bucket_hits }}</div><div class="lbl">Cloud bucket hits</div></div>
+    {% endif %}
+    {% if recon_coverage.cloud_bucket_listable %}
+    <div class="stat"><div class="num" style="color:var(--red)">{{ recon_coverage.cloud_bucket_listable }}</div><div class="lbl">Listable buckets</div></div>
+    {% endif %}
+    {% if recon_coverage.origin_candidates %}
+    <div class="stat"><div class="num">{{ recon_coverage.origin_candidates }}</div><div class="lbl">Origin candidates</div></div>
+    {% endif %}
+    {% if recon_coverage.origin_cdn_fronted %}
+    <div class="stat"><div class="num">{{ recon_coverage.origin_cdn_fronted }}</div><div class="lbl">CDN-fronted</div></div>
+    {% endif %}
+    {% if recon_coverage.cert_san_groups %}
+    <div class="stat"><div class="num">{{ recon_coverage.cert_san_groups }}</div><div class="lbl">Cert groups</div></div>
+    {% endif %}
+    {% if recon_coverage.cert_san_new_subs %}
+    <div class="stat"><div class="num">{{ recon_coverage.cert_san_new_subs }}</div><div class="lbl">New subs via SAN</div></div>
+    {% endif %}
+    {% if recon_coverage.well_known_urls %}
+    <div class="stat"><div class="num">{{ recon_coverage.well_known_urls }}</div><div class="lbl">Mined URLs</div></div>
+    {% endif %}
+  </div>
+
+  {% if recon_coverage.sibling_domain_items %}
+  <h3 style="font-size:.95em;margin:18px 0 8px">🪪 Sibling Domains (Reverse-WHOIS)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Domain</th><th>Source (org)</th><th>Issuer</th></tr></thead>
+      <tbody>
+        {% for domain, info in recon_coverage.sibling_domain_items %}
+        <tr>
+          <td><code>{{ domain }}</code></td>
+          <td style="font-size:.85em">{{ (info.sources or []) | join(', ') }}</td>
+          <td style="font-size:.78em;color:var(--muted)">{{ ((info.issuers or [])[:2]) | join(' / ') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if recon_coverage.cloud_bucket_items %}
+  <h3 style="font-size:.95em;margin:18px 0 8px">☁ Cloud Storage Buckets</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Provider</th><th>Bucket</th><th>Status</th><th>HTTP</th><th>URL</th></tr></thead>
+      <tbody>
+        {% for hit in recon_coverage.cloud_bucket_items %}
+        <tr>
+          <td><span class="badge badge-tech">{{ hit.provider | upper }}</span></td>
+          <td><code>{{ hit.name }}</code></td>
+          <td>
+            {% if hit.status == 'listable' %}<span class="badge badge-HIGH">listable</span>
+            {% elif hit.status == 'exists' %}<span class="badge badge-MEDIUM">exists</span>
+            {% else %}<span class="badge badge-LOW">{{ hit.status }}</span>{% endif %}
+          </td>
+          <td style="color:var(--muted)">{{ hit.http_status }}</td>
+          <td style="font-size:.78em"><a href="{{ hit.url }}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none">{{ hit.url }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if recon_coverage.origin_items %}
+  <h3 style="font-size:.95em;margin:18px 0 8px">🎯 Origin-IP Candidates (behind CDN/WAF)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>CDN-fronted host</th><th>Method</th><th>Confidence</th><th>Candidate signals</th></tr></thead>
+      <tbody>
+        {% for cand in recon_coverage.origin_items %}
+        <tr>
+          <td><code>{{ cand.cdn_fronted }}</code></td>
+          <td style="font-size:.82em">{{ cand.method }}</td>
+          <td>
+            {% if cand.confidence == 'medium' %}<span class="badge badge-MEDIUM">medium</span>
+            {% else %}<span class="badge badge-LOW">{{ cand.confidence }}</span>{% endif %}
+          </td>
+          <td style="font-size:.82em">
+            {% if cand.candidate_origin_sub %}<code>{{ cand.candidate_origin_sub }}</code> →{% endif %}
+            {% for ip in (cand.candidate_ips or cand.historical_non_cdn_ips or []) %}
+              <span class="port-tag">{{ ip }}</span>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if recon_coverage.cert_san_items %}
+  <h3 style="font-size:.95em;margin:18px 0 8px">🔐 TLS Cert SAN Graph</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Subject CN</th><th>Issuer</th><th>Hosts sharing</th><th>SAN count</th><th>Expires</th></tr></thead>
+      <tbody>
+        {% for grp in recon_coverage.cert_san_items %}
+        <tr>
+          <td><code>{{ grp.subject_cn or '—' }}</code></td>
+          <td style="font-size:.78em;color:var(--muted)">{{ grp.issuer_cn or '—' }}</td>
+          <td style="font-size:.82em">{{ (grp.hosts or []) | length }}</td>
+          <td>{{ grp.san_count }}</td>
+          <td style="font-size:.78em;color:var(--muted)">{{ grp.not_after }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if recon_coverage.cert_san_siblings %}
+  <p style="font-size:.85em;margin:10px 0 0">
+    <strong>Sibling domains discovered via SANs:</strong>
+    {% for sib in recon_coverage.cert_san_siblings %}<code style="margin-right:6px">{{ sib }}</code>{% endfor %}
+  </p>
+  {% endif %}
+  {% endif %}
+
+  {% if recon_coverage.asset_graph_nodes %}
+  <h3 style="font-size:.95em;margin:18px 0 8px">🕸 Asset Graph</h3>
+  <p style="font-size:.85em;color:var(--muted);margin:0 0 8px">
+    Full graph saved to <code>recon/asset_graph.json</code> — each node ties a subdomain to its
+    IPs, ASN, certs, fingerprinted tech, and discovered endpoints.
+  </p>
+  <div class="stats">
+    <div class="stat"><div class="num">{{ recon_coverage.asset_graph_summary.get('node_count', 0) }}</div><div class="lbl">Nodes</div></div>
+    <div class="stat"><div class="num">{{ recon_coverage.asset_graph_summary.get('with_ips', 0) }}</div><div class="lbl">With IPs</div></div>
+    <div class="stat"><div class="num">{{ recon_coverage.asset_graph_summary.get('with_certs', 0) }}</div><div class="lbl">With certs</div></div>
+    <div class="stat"><div class="num">{{ recon_coverage.asset_graph_summary.get('with_techs', 0) }}</div><div class="lbl">With techs</div></div>
+    <div class="stat"><div class="num">{{ recon_coverage.asset_graph_summary.get('with_endpoints', 0) }}</div><div class="lbl">With endpoints</div></div>
+    <div class="stat"><div class="num">{{ recon_coverage.asset_graph_summary.get('live_http', 0) }}</div><div class="lbl">Live HTTP</div></div>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 

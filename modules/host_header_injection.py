@@ -79,11 +79,30 @@ class HostHeaderInjectionModule(BaseModule):
         parsed = urlparse(url)
         if not parsed.hostname:
             return findings
+        legitimate_host = parsed.hostname
+        # Header sets sourced from PayloadsAllTheThings/Host Header Injection. Each
+        # set tries a different way servers/proxies might be tricked into using the
+        # attacker-supplied host (marker) instead of the legitimate one. Only sets
+        # that carry the marker can produce a confirmed reflection finding.
         header_sets = [
+            # Single-header override variants
             {"Host": self.marker},
             {"X-Forwarded-Host": self.marker},
             {"X-Host": self.marker},
             {"X-Original-Host": self.marker},
+            {"X-Forwarded-Server": self.marker},
+            {"X-HTTP-Host-Override": self.marker},
+            {"Forwarded": f"host={self.marker}"},      # RFC 7239
+            {"X-Forwarded-For": self.marker},
+            {"X-Real-IP": self.marker},
+            # Combined override — proxies that take the first explicit override header.
+            {"Host": legitimate_host, "X-Forwarded-Host": self.marker},
+            {"Host": legitimate_host, "X-Forwarded-Host": f"{self.marker}, {legitimate_host}"},
+            # Host-with-port variant — some routers parse only the hostname part.
+            {"Host": f"{self.marker}:80"},
+            # Two Host headers (HTTP/1.1 multi-header confusion). requests will join
+            # with comma; many gateways accept and split on the first.
+            {"Host": f"{legitimate_host}, {self.marker}"},
             # NOTE: X-Forwarded-Proto: http is intentionally excluded — it does
             # not carry the random marker so it can never trigger a confirmed finding.
         ]

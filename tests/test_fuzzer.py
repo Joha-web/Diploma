@@ -25,6 +25,71 @@ def test_classify_patterns(tmp_path):
     assert classified.get("sensitive_files_unverified", 0) >= 1
 
 
+def test_classify_recognises_modern_api_and_auth_surfaces(tmp_path):
+    """New patterns must catch WP REST, JSON:API, OData, OIDC OAuth flows,
+    Salesforce-style /services/data, Rails Devise /users/sign_in, and SAML ACS,
+    while NOT collateral-matching unrelated paths like /register_steps.
+    """
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+
+    classified = module._classify([
+        # api family
+        "https://example.com/wp-json/wp/v2/posts",
+        "https://example.com/odata/Customers",
+        "https://example.com/services/data/v40.0/sobjects",
+        "https://example.com/jsonrpc",
+        "https://example.com/swagger/index.html",
+        "https://example.com/openapi.json",
+        # auth family
+        "https://example.com/oauth/authorize",
+        "https://example.com/oauth/token",
+        "https://example.com/users/sign_in",
+        "https://example.com/saml/acs",
+        "https://example.com/connect/authorize",
+        # negative — register_steps must NOT match register
+        "https://example.com/register_steps",
+    ])
+
+    api_set = set(classified.get("api", []))
+    auth_set = set(classified.get("auth", []))
+    assert "https://example.com/wp-json/wp/v2/posts" in api_set
+    assert "https://example.com/odata/Customers" in api_set
+    assert "https://example.com/services/data/v40.0/sobjects" in api_set
+    assert "https://example.com/jsonrpc" in api_set
+    assert "https://example.com/swagger/index.html" in api_set
+    assert "https://example.com/openapi.json" in api_set
+    assert "https://example.com/oauth/authorize" in auth_set
+    assert "https://example.com/oauth/token" in auth_set
+    assert "https://example.com/users/sign_in" in auth_set
+    assert "https://example.com/saml/acs" in auth_set
+    assert "https://example.com/connect/authorize" in auth_set
+    # Substring of `register` must not collide on path segment with suffix.
+    assert "https://example.com/register_steps" not in auth_set
+
+
+def test_classify_recognises_sourcemaps_as_sensitive(tmp_path):
+    """A `.js.map` sourcemap is sensitive (leaks app source), not just a static asset."""
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    classified = module._classify(["https://example.com/main.js.map"])
+    # The HTTP verification step strips unreachable URLs but the unverified
+    # candidate counter must surface the hit.
+    assert classified.get("sensitive_files_unverified", 0) >= 1
+
+
+def test_classify_filters_modern_framework_build_paths(tmp_path):
+    """Next.js / Nuxt / Astro / Vite build paths must not be classified as api/auth."""
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    classified = module._classify([
+        "https://example.com/_next/static/chunks/main-abc.js",
+        "https://example.com/_nuxt/entry.def.js",
+        "https://example.com/_astro/page.ghi.js",
+        "https://example.com/cdn-cgi/scripts/zaraz.js",
+    ])
+    # None of these are api/auth surfaces.
+    assert classified.get("api", []) == []
+    assert classified.get("auth", []) == []
+
+
 def test_classify_surfaces_interesting_directories_and_endpoints(tmp_path):
     module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
 

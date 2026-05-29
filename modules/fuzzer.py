@@ -28,12 +28,43 @@ CLASSIFY_PATTERNS: dict[str, str] = {
     # (preceded by '/' and followed by '/' or end-of-path). Bare ".xml" / ".json"
     # asset extensions like "/uploads/file.xml" or "/assets/XML" must not match;
     # only routes like "/api/", "/v1/", "/graphql", "/rest/...", "/json/..." do.
-    "api":            r"(?:^|/)(api|graphql|rest|rpc)(?:/|$|\?)|(?:^|/)v[0-9]+(?:\.[0-9]+)?(?:/|$|\?)",
+    # Added: jsonrpc, services (Salesforce-style), jsonapi (json:api spec),
+    # odata, wp-json (WordPress REST), _matrix (Matrix protocol), swagger/openapi
+    # spec endpoints, hasura graphql.
+    "api": (
+        r"(?:^|/)(api|graphql|graphiql|rest|rpc|jsonrpc|jsonapi|odata|"
+        r"services|service|wp-json|_matrix|hasura|"
+        r"swagger|openapi|api-docs)(?:/|$|\?|\.json|\.yaml|\.yml)"
+        r"|(?:^|/)v[0-9]+(?:\.[0-9]+)?(?:/|$|\?)"
+    ),
     # Auth surfaces. Require a /token/ path segment, not a substring match. Avoids
     # collateral hits like "/register_steps" matching on the "register" substring.
-    "auth":           r"(?:^|/)(login|logout|signin|signout|auth|oauth|oauth2|sso|saml|register|signup|password|forgot|forgot-password|reset|reset-password|recover|recovery|verify|verification|mfa|otp|2fa|token|tokens|refresh|session|sessions)(?:/|$|\?|\.[a-z]{2,4}$)",
-    "sensitive_files":r"\.(env|git|bak|backup|old|sql|db|sqlite|dump|log|config|cfg|conf|ini|key|pem|p12|pfx|zip|tar|gz)(\?|$)",
-    "admin_panels":   r"/(admin|administrator|dashboard|console|panel|manage|management|debug|test|dev|staging|internal|actuator|monitor|metrics)",
+    # Added: oauth/authorize, oauth/token, saml/acs, openid-connect discovery,
+    # connect, authn, identity, account/login, users/sign_in (Rails/Devise),
+    # social auth providers.
+    "auth": (
+        r"(?:^|/)(login|logout|signin|sign_in|signout|sign_out|"
+        r"auth|authn|authenticate|oauth|oauth2|openid|connect|"
+        r"sso|saml|saml2|acs|identity|account|accounts|users?(?=/sign_?in|/sign_?up|/login)|"
+        r"register|signup|sign_up|password|passwd|forgot|forgot-password|"
+        r"reset|reset-password|recover|recovery|verify|verification|"
+        r"mfa|otp|2fa|totp|webauthn|fido2?|"
+        r"token|tokens|refresh|session|sessions|"
+        r"facebook|google|github|microsoft|apple|twitter)"
+        r"(?:/|$|\?|\.[a-z]{2,4}$)"
+    ),
+    "sensitive_files":r"\.(env|git|bak|backup|old|sql|db|sqlite|dump|log|config|cfg|conf|ini|key|pem|p12|pfx|zip|tar|gz|map|swp|orig)(\?|$)",
+    # Admin / management / observability panels. Added: cpanel, plesk, webmin,
+    # phpmyadmin, wp-admin, system/console, server-status, server-info, grafana,
+    # kibana, jenkins, portainer, prometheus, traefik, kong, sonarqube.
+    "admin_panels": (
+        r"/(admin|administrator|dashboard|console|panel|manage|management|"
+        r"cpanel|plesk|webmin|phpmyadmin|wp-admin|wp-login\.php|"
+        r"system/console|server-status|server-info|"
+        r"grafana|kibana|jenkins|portainer|prometheus|traefik|kong|sonarqube|"
+        r"debug|test|dev|staging|internal|actuator|monitor|metrics|env|"
+        r"swagger-ui|api-docs|graphiql|playground)"
+    ),
     "with_params":    r"\?.*=",
     # Folders/directories that often contain leftover artifacts, credentials,
     # or unintended exposure. Matches a path segment, not a substring.
@@ -48,17 +79,23 @@ CLASSIFY_PATTERNS: dict[str, str] = {
     # Concrete API-like resource paths (e.g. /api/users, /v1/orders/123).
     # Distinguished from the broader "api" bucket by requiring a resource segment.
     "interesting_endpoints": (
-        r"/(api|rest|rpc|graphql|v[0-9]+(?:\.[0-9]+)?)/[a-zA-Z][a-zA-Z0-9_.-]*"
+        r"/(api|rest|rpc|graphql|services|wp-json|odata|"
+        r"v[0-9]+(?:\.[0-9]+)?)/[a-zA-Z][a-zA-Z0-9_.-]*"
     ),
 }
 
 # Path segments that immediately disqualify a URL from the api/auth/etc buckets
-# even if the regex matches. These are static-asset or storage paths.
+# even if the regex matches. These are static-asset, framework-build, or CDN paths.
+# Added: modern framework build dirs (_next, _nuxt, _app, _astro, _vite, sapper),
+# CDN/edge paths (cdn-cgi, akamai), and webpack chunk dirs.
 NON_API_PATH_SEGMENTS = re.compile(
     r"/(?:assets?|static|public|build|dist|cdn|"
     r"uploads?|files?|media|images?|img|fonts?|css|js|video|audio|svg|icons?|"
     r"node_modules|vendor|bower_components|"
     r"admin_assets|lte_assets|app_assets|"
+    r"_next|_nuxt|_astro|_vite|_app|_sapper|_remix|_qwik|"
+    r"cdn-cgi|akamai-mpulse|akam|"
+    r"chunks?|bundles?|webpack|polyfills?|runtime|"
     r"_debugbar|debugbar|"
     r"\.well-known)/",
     re.I,
@@ -70,6 +107,14 @@ STATIC_ASSET_EXT = re.compile(
     r"mp[34]|webm|ogg|wav|"
     r"pdf|zip|tar|gz|bz2|7z|"
     r"xml|json|txt|md|rss|atom)(?:\?|$)",
+    re.I,
+)
+
+# Well-known API specification filenames. These look like static .json/.yaml
+# assets but are actually high-value API surfaces.
+API_SPEC_FILENAME_RE = re.compile(
+    r"/(?:openapi|swagger|api-docs|api_docs|apidoc|api-spec|api_spec)"
+    r"(?:[._-][\w.-]*)?\.(?:json|ya?ml)(?:\?|$)",
     re.I,
 )
 
@@ -1049,11 +1094,19 @@ class FuzzerModule(BaseModule):
     def _is_static_asset_url(url: str) -> bool:
         """True if the URL lives under a static-asset path or ends in a media/
         archive extension. Such URLs are never useful in the api/auth/etc buckets.
+
+        Exception: well-known API spec filenames (`openapi.json`, `swagger.json`,
+        `swagger.yaml`, `api-docs.json`, etc.) are kept even though `.json/.yaml`
+        is normally treated as a static-asset extension.
         """
         from urllib.parse import urlparse
         if not url or not url.startswith(("http://", "https://", "/")):
             return False
         path = urlparse(url).path if url.startswith(("http://", "https://")) else url.split("?", 1)[0]
+        # API spec endpoints first — they live in /something/openapi.json style paths
+        # that would otherwise trip the `.json` static-asset filter below.
+        if API_SPEC_FILENAME_RE.search(path):
+            return False
         if NON_API_PATH_SEGMENTS.search(path):
             return True
         if STATIC_ASSET_EXT.search(path):
@@ -1062,23 +1115,34 @@ class FuzzerModule(BaseModule):
 
     @staticmethod
     def _collapse_auth_paths(urls: list[str]) -> list[str]:
-        """Collapse auth URLs to the shortest path per (host, auth-token, scheme).
+        """Collapse nested auth URLs to their entry point.
 
-        Example: /register_steps, /register_steps/address, /register_steps/agitator
-        all match on the "register" token and live on the same host, so we keep
-        only the shortest path (the entry point).
+        The collapse key is (scheme, host, token, segment_after_token). That keeps
+        siblings such as `/oauth/authorize` vs `/oauth/token` as separate entries
+        (different OAuth endpoints) while still collapsing `/register_steps/address`,
+        `/register_steps/agitator`, … all into `/register_steps`.
+
+        Example:
+            /register_steps                ──┐
+            /register_steps/address          ├──→ /register_steps
+            /register_steps/agitator       ──┘
+            /oauth/authorize               ──→ /oauth/authorize
+            /oauth/token                   ──→ /oauth/token
         """
         from urllib.parse import urlparse
         token_re = re.compile(
-            r"(?:^|/)(login|logout|signin|signout|auth|oauth|oauth2|sso|saml|"
-            r"register|signup|password|forgot|forgot-password|reset|reset-password|"
-            r"recover|recovery|verify|verification|mfa|otp|2fa|token|tokens|"
-            r"refresh|session|sessions)(?:/|$|\?|\.)",
+            r"(?:^|/)(login|logout|signin|sign_in|signout|sign_out|"
+            r"auth|authn|authenticate|oauth|oauth2|openid|connect|"
+            r"sso|saml|saml2|acs|identity|account|accounts|"
+            r"register|signup|sign_up|password|passwd|forgot|forgot-password|"
+            r"reset|reset-password|recover|recovery|verify|verification|"
+            r"mfa|otp|2fa|totp|webauthn|fido2?|"
+            r"token|tokens|refresh|session|sessions)"
+            r"(?:/|$|\?|\.)",
             re.I,
         )
-        # Map (scheme, host, token) -> (path_length, full_url)
-        best: dict[tuple[str, str, str], tuple[int, str]] = {}
-        rel_paths: dict[tuple[str, str], tuple[int, str]] = {}
+        # Map (scheme, host, token, next_segment) -> (path_length, full_url)
+        best: dict[tuple[str, str, str, str], tuple[int, str]] = {}
         for url in urls:
             if url.startswith(("http://", "https://")):
                 p = urlparse(url)
@@ -1091,14 +1155,17 @@ class FuzzerModule(BaseModule):
                 scheme = ""
             match = token_re.search(path)
             if not match:
-                # Shouldn't happen given regex pre-filter, but keep the URL just in case.
-                key = (scheme, host, "_")
+                key = (scheme, host, "_", "")
                 cur = best.get(key)
                 if cur is None or len(path) < cur[0]:
                     best[key] = (len(path), url)
                 continue
             token = match.group(1).lower()
-            key = (scheme, host, token)
+            # Capture the segment immediately following the token, so `/oauth/authorize`
+            # vs `/oauth/token` collapse separately.
+            after_token = path[match.end():]
+            next_seg = after_token.lstrip("/").split("/", 1)[0].lower()
+            key = (scheme, host, token, next_seg)
             cur = best.get(key)
             if cur is None or len(path) < cur[0]:
                 best[key] = (len(path), url)

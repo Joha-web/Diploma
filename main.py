@@ -396,9 +396,26 @@ def _module_summary(name: str, result: dict) -> str:
         return status
 
     if name == "recon":
-        return (f"{result.get('subdomains_total', 0)} subs, "
-                f"{len(result.get('live_http', []))} live, "
-                f"{len(result.get('resolved_ips', []))} IPs")
+        parts = [
+            f"{result.get('subdomains_total', 0)} subs",
+            f"{len(result.get('live_http', []))} live",
+            f"{len(result.get('resolved_ips', []))} IPs",
+        ]
+        sibling_count = len(
+            (result.get("reverse_whois") or {}).get("sibling_domains") or {}
+        )
+        if sibling_count:
+            parts.append(f"{sibling_count} siblings")
+        bucket_total = int((result.get("cloud_buckets") or {}).get("total_hits", 0))
+        if bucket_total:
+            parts.append(f"{bucket_total} buckets")
+        origin_count = len((result.get("origin_discovery") or {}).get("origin_candidates", []) or [])
+        if origin_count:
+            parts.append(f"{origin_count} origins")
+        cert_groups = len((result.get("cert_sans") or {}).get("groups", []) or [])
+        if cert_groups:
+            parts.append(f"{cert_groups} cert groups")
+        return ", ".join(parts)
     elif name == "secret_scanner":
         return f"{result.get('total', 0)} git secret finding(s)"
     elif name == "portscan":
@@ -652,6 +669,12 @@ def run_pipeline(
         auth  = all_results.get("auth_probe", {})
         takeover = all_results.get("takeover_checker", {})
 
+        cloud_buckets = recon.get("cloud_buckets", {}) or {}
+        cert_sans = recon.get("cert_sans", {}) or {}
+        origin = recon.get("origin_discovery", {}) or {}
+        siblings = (recon.get("reverse_whois", {}) or {}).get("sibling_domains") or {}
+        asset_graph = recon.get("asset_graph_summary", {}) or {}
+
         tg_summary = {
             "subdomains":      recon.get("subdomains_total", 0),
             "live_hosts":      len(web.get("live_urls") or recon.get("live_http", [])),
@@ -664,6 +687,11 @@ def run_pipeline(
             "cors_findings":   cors.get("total", len(cors.get("findings", []))),
             "auth_findings":   auth.get("total", len(auth.get("findings", []))),
             "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
+            "sibling_domains":   len(siblings),
+            "cloud_bucket_hits": int(cloud_buckets.get("total_hits", 0)),
+            "origin_candidates": len(origin.get("origin_candidates", []) or []),
+            "cert_san_groups":   len(cert_sans.get("groups", []) or []),
+            "asset_graph_nodes": int(asset_graph.get("node_count", 0)),
             "elapsed":         elapsed,
         }
 
@@ -718,6 +746,39 @@ def _print_summary(target: str, session_dir: Path, results: dict, elapsed: str):
     t.add_row("Takeover candidates", str(takeover.get("total", len(takeover.get("findings", [])))))
     t.add_row("Parameters",          str(params.get("total", 0)))
     t.add_row("Correlated priorities", str(corr.get("total", 0)))
+
+    # Expanded recon coverage rows — only shown when the optional flags fired
+    cloud_buckets = recon.get("cloud_buckets", {}) or {}
+    cert_sans = recon.get("cert_sans", {}) or {}
+    origin = recon.get("origin_discovery", {}) or {}
+    siblings = (recon.get("reverse_whois", {}) or {}).get("sibling_domains") or {}
+    asset_graph = recon.get("asset_graph_summary", {}) or {}
+
+    sibling_count = len(siblings)
+    bucket_total = int(cloud_buckets.get("total_hits", 0))
+    bucket_listable = sum(
+        1
+        for hits in (cloud_buckets.get("by_provider", {}) or {}).values()
+        for h in (hits or [])
+        if h.get("status") == "listable"
+    )
+    origin_count = len(origin.get("origin_candidates", []) or [])
+    cert_groups = len(cert_sans.get("groups", []) or [])
+    asset_nodes = int(asset_graph.get("node_count", 0))
+
+    if sibling_count:
+        t.add_row("🪪 Sibling domains", str(sibling_count))
+    if bucket_total:
+        bucket_row = str(bucket_total)
+        if bucket_listable:
+            bucket_row += f" ([red]{bucket_listable} listable[/red])"
+        t.add_row("☁  Cloud buckets", bucket_row)
+    if origin_count:
+        t.add_row("🎯 Origin candidates", str(origin_count))
+    if cert_groups:
+        t.add_row("🔐 Cert SAN groups", str(cert_groups))
+    if asset_nodes:
+        t.add_row("🕸 Asset graph nodes", str(asset_nodes))
 
     console.print(Panel(t, title="[bold magenta]ReconX — Complete[/bold magenta]",
                         border_style="magenta", padding=(1, 2)))

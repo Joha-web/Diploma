@@ -21,16 +21,41 @@ class CachePoisonModule(BaseModule):
     description = "Web Cache Poisoning Detection"
     required_tools: list[str] = []
 
+    # Unkeyed-header probe set. Sourced from PortSwigger's web-cache-poisoning
+    # research and PayloadsAllTheThings/Web Cache Deception. If the cache key
+    # excludes one of these headers but the origin reflects its value, an attacker
+    # who poisons a single cached entry impacts everyone hitting that key.
     HEADER_PROBES = [
+        # Host-override family
         ("X-Forwarded-Host", "host override"),
         ("X-Host", "host override"),
         ("X-Forwarded-Server", "server override"),
         ("X-Original-Host", "original host override"),
         ("X-HTTP-Host-Override", "host override"),
         ("Forwarded", "forwarded host override"),
+        # Proto / port / scheme overrides — control absolute URL generation.
+        ("X-Forwarded-Proto", "scheme override"),
+        ("X-Forwarded-Scheme", "scheme override"),
+        ("X-Forwarded-Port", "port override"),
+        # URL / path / prefix rewrites — common in reverse-proxy stacks.
         ("X-Forwarded-Prefix", "prefix injection"),
         ("X-Original-URL", "original URL injection"),
         ("X-Rewrite-URL", "rewrite URL injection"),
+        ("X-Override-URL", "override URL injection"),
+        # IP-spoofing / geolocation routing headers commonly reflected.
+        ("X-Forwarded-For", "client IP override"),
+        ("X-Real-IP", "client IP override"),
+        ("X-Originating-IP", "client IP override"),
+        ("True-Client-IP", "client IP override"),
+        ("CF-Connecting-IP", "client IP override"),
+        ("Fastly-Client-IP", "client IP override"),
+        # Method / accept overrides — sometimes used by API gateways.
+        ("X-HTTP-Method-Override", "HTTP method override"),
+        ("X-Accept-Charset", "accept charset injection"),
+        # Region / locale / device headers — CDN cache-key edge cases.
+        ("X-Country-Code", "geolocation header"),
+        ("CloudFront-Viewer-Country", "geolocation header"),
+        ("X-WAP-Profile", "user-agent profile header"),
     ]
 
     def __init__(self, target: str, output_dir: str, config: dict,

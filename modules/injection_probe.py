@@ -17,20 +17,57 @@ class InjectionProbeModule(BaseModule):
     description = "SSRF / SSTI / XXE Detection"
     required_tools: list[str] = []
 
+    # Expression-evaluation payloads covering the major server-side template engines.
+    # Each (payload, expected) pair encodes "7*7 should evaluate to 49 if rendered".
+    # Sourced from PayloadsAllTheThings/Server Side Template Injection.
     SSTI_PAYLOADS = [
-        ("{{7*7}}", "49"),
-        ("${7*7}", "49"),
-        ("#{7*7}", "49"),
-        ("<%= 7*7 %>", "49"),
-        ("*{7*7}", "49"),
+        ("{{7*7}}", "49"),          # Jinja2 (Python), Twig (PHP), Liquid, Nunjucks
+        ("{{7*'7'}}", "7777777"),   # Jinja2 string-multiplication (longer signature)
+        ("${7*7}", "49"),           # FreeMarker (Java), JSP EL, Mako
+        ("${{7*7}}", "49"),         # Mako alternate / some JSP variants
+        ("#{7*7}", "49"),           # Thymeleaf (Java), Ruby string interpolation
+        ("<%= 7*7 %>", "49"),       # ERB (Ruby), EJS (Node), JSP
+        ("*{7*7}", "49"),           # Thymeleaf selection expression
+        ("@(7*7)", "49"),           # Razor (.NET)
+        ("@{7*7}", "49"),           # Pebble (Java)
+        ("{7*7}", "49"),            # Smarty short tag, AngularJS-style
+        ("[[${7*7}]]", "49"),       # Thymeleaf inline expression
     ]
 
+    # SSTI error-based detection polyglot — triggers a verbose error in most engines.
+    # The body excerpt for this payload can be cross-checked against known language
+    # error signatures (ZeroDivisionError → Python, ArithmeticException → Java, etc.).
+    SSTI_POLYGLOT = "${{<%[%'\"}}%\\."
+
     SSRF_PATHS = [
+        # AWS EC2 IMDS — v1 and v2 prefixes (the GET still indicates reachability).
         "http://169.254.169.254/latest/meta-data/",
+        "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+        "http://169.254.169.254/latest/user-data/",
+        # GCP / Google Cloud
+        "http://metadata.google.internal/computeMetadata/v1/",
         "http://metadata.google.internal/",
+        # DigitalOcean droplet metadata
         "http://169.254.169.254/metadata/v1/",
+        # Azure IMDS
+        "http://169.254.169.254/metadata/instance?api-version=2021-02-01",
+        # Alibaba Cloud ECS
+        "http://100.100.100.200/latest/meta-data/",
+        # Oracle Cloud
+        "http://192.0.0.192/latest/",
+        # Kubernetes API server (in-cluster)
+        "https://kubernetes.default.svc/",
+        "https://kubernetes.default.svc/api/v1/namespaces",
+        # Loopback service probes (signal: open-ports / reachable services)
         "http://localhost:22",
-        "http://127.0.0.1:6379",
+        "http://127.0.0.1:6379",            # Redis
+        "http://127.0.0.1:9200/_cat/indices",  # Elasticsearch
+        "http://127.0.0.1:8500/v1/agent/self",  # Consul
+        "http://127.0.0.1:2379/v2/keys/?recursive=true",  # etcd
+        "http://127.0.0.1:2375/version",   # Docker API
+        # IPv4 obfuscation that bypasses naive deny-list filters
+        "http://2852039166/latest/meta-data/",  # decimal form of 169.254.169.254
+        "http://0xa9fea9fe/latest/meta-data/",  # hex form of 169.254.169.254
     ]
 
     def __init__(
@@ -171,29 +208,42 @@ class InjectionProbeModule(BaseModule):
         The previous logic ("expected in body and not in baseline") is too noisy because
         "49" is a common short string that appears in random asset timestamps, build
         ids, cache-busters, etc. We require all of:
-          1. The expected result appears in the response body.
+          1. The expected result appears in the response body as a standalone token
+             (not embedded in a longer numeric run such as a line number "149:13").
           2. The raw payload is NOT echoed back verbatim (if `{{7*7}}` is reflected
              literally the template engine did not evaluate it).
           3. The expected value appears MORE times than in the baseline (so incidental
              occurrences in shared chrome/error pages do not trigger).
           4. The body does not look like a generic error/debug page where the request
-             URI is just echoed back (Laravel debugbar, Django debug, etc.).
+             URI is just echoed back (Laravel debugbar, Django debug, Express stack
+             trace echoing route.js line numbers, etc.).
         """
         if not expected or expected not in (body or ""):
             return False
         # 2. Payload echoed verbatim → not evaluated.
         if payload and payload in body:
             return False
-        # 3. More occurrences than baseline.
-        baseline_count = (baseline_body or "").count(expected)
-        body_count = body.count(expected)
-        if body_count <= baseline_count:
+        # 1. Token boundary: reject when `expected` is sandwiched between digits or
+        # word chars (so "49" doesn't match inside "149", "496", "v49abc", etc.).
+        token_re = re.compile(r"(?<![\w.])" + re.escape(expected) + r"(?![\w.])")
+        body_token_count = len(token_re.findall(body))
+        if body_token_count == 0:
             return False
-        # 4. Don't trust 500 debug pages echoing the URI.
+        # 3. More token-boundary occurrences than baseline.
+        baseline_token_count = len(token_re.findall(baseline_body or ""))
+        if body_token_count <= baseline_token_count:
+            return False
+        # 4. Don't trust debug / framework error pages.
         debug_signatures = (
             "_debugbar", "whoops!", "stack trace", "Symfony\\Component",
             "Illuminate\\", "Whoops\\", "django.views.debug",
             "Werkzeug Debugger", "Flask Debugger",
+            "/node_modules/express/", "express/lib/router/",
+            "TypeError:", "ReferenceError:", "SyntaxError:",
+            "at Layer.handle", "at Function.handle",
+            "Error: Unexpected path",
+            "Error: Unrecognized target",
+            "Cannot GET ", "Cannot POST ",
         )
         if any(sig in body for sig in debug_signatures):
             return False
@@ -266,7 +316,22 @@ class InjectionProbeModule(BaseModule):
     def _probe_ssrf_inband(self, targets: list[dict], cfg: dict) -> list[dict]:
         findings: list[dict] = []
         timeout = float(cfg.get("timeout", self.config.get("scan", {}).get("timeout", 15)))
-        markers = ("ami-id", "instance-id", "metadata", "redis_version", "ssh-")
+        # Markers grouped by service for clearer attribution in evidence.
+        markers = (
+            # AWS EC2 IMDS
+            "ami-id", "instance-id", "security-credentials",
+            # GCP
+            "computemetadata/v1", "project-id", "service-accounts",
+            # Azure IMDS
+            "azenvironment", "ostype",
+            # Alibaba
+            "eipv4", "region-id",
+            # Kubernetes / Consul / etcd / Docker
+            "kubernetes.io", "serviceaccount", "datacenter",
+            "etcdserver", "\"apiversion\"",
+            # Loopback services
+            "redis_version", "ssh-",
+        )
         for target in targets[: int(cfg.get("max_inband_targets", 10))]:
             for param in target.get("params", []):
                 for payload in self.SSRF_PATHS:

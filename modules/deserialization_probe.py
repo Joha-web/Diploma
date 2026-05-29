@@ -13,16 +13,32 @@ from modules.base import BaseModule
 
 JAVA_MAGIC = "rO0AB"
 DOTNET_VIEWSTATE_RE = re.compile(r'name=["\']__VIEWSTATE["\'][^>]*value=["\']([^"\']+)', re.I)
+# PHP serialize signatures: object O:N:"ClassName":..., array a:N:{}, string s:N:"..."
+PHP_SERIALIZE_RE = re.compile(r'^(?:O:\d+:"|a:\d+:\{|s:\d+:")')
+# Ruby Marshal binary header: \x04\x08 followed by Marshal type byte.
+# Ruby Marshal hex-base64 starts with "BAg" (base64 of \x04\x08).
+RUBY_MARSHAL_PREFIXES = ("BAg",)
+# Node.js node-serialize signature — starts with _$$ND_FUNC$$_ for function payloads.
+NODE_SERIALIZE_MARK = "_$$ND_FUNC$$_"
 ERROR_SIGNATURES = (
-    "java.io.ObjectInputStream",
-    "StreamCorruptedException",
-    "InvalidClassException",
-    "ViewStateException",
-    "Validation of viewstate MAC failed",
-    "LosFormatter",
-    "ObjectStateFormatter",
-    "pickle.UnpicklingError",
-    "yaml.constructor",
+    # Java
+    "java.io.ObjectInputStream", "StreamCorruptedException", "InvalidClassException",
+    "ClassNotFoundException", "OptionalDataException", "NotSerializableException",
+    # ASP.NET ViewState / LosFormatter / BinaryFormatter
+    "ViewStateException", "Validation of viewstate MAC failed",
+    "LosFormatter", "ObjectStateFormatter", "BinaryFormatter",
+    # Python
+    "pickle.UnpicklingError", "_pickle.UnpicklingError",
+    "yaml.constructor", "yaml.YAMLError",
+    "ModuleNotFoundError: No module named",
+    "jsonpickle.unpickler",
+    # PHP
+    "PHP Notice:  unserialize()", "PHP Warning:  unserialize()",
+    "unserialize(): Error at offset",
+    # Ruby
+    "Marshal.load", "Psych::SyntaxError",
+    # Node.js
+    "node-serialize", "SyntaxError: Unexpected token in JSON",
 )
 
 
@@ -93,18 +109,31 @@ class DeserializationProbeModule(BaseModule):
     @staticmethod
     def _serialized_marker(value: str) -> str:
         value = str(value or "")
+        # Java — base64-encoded ObjectOutputStream
         if value.startswith(JAVA_MAGIC):
             return "java_serialized_base64"
+        # Java — raw binary in URL-decoded form (rare)
         try:
             decoded = base64.b64decode(value[:128] + "==", validate=False)
             if decoded.startswith(b"\xac\xed\x00\x05"):
                 return "java_serialized_binary"
         except Exception:
             pass
-        if value.startswith(("gAS", "gAJ", "cos\n", "c__builtin__")):
+        # Python pickle — common base64-encoded markers + bare cos\n header
+        if value.startswith(("gAS", "gAJ", "gAR", "cos\n", "c__builtin__", "ccopy_reg")):
             return "python_pickle"
+        # ASP.NET ViewState — usually starts with /w
         if value.startswith("/w"):
             return "aspnet_viewstate_like"
+        # PHP serialize() — O:N:"X":, a:N:{, s:N:"
+        if PHP_SERIALIZE_RE.match(value):
+            return "php_serialized"
+        # Ruby Marshal — \x04\x08 header (base64 "BAg")
+        if any(value.startswith(prefix) for prefix in RUBY_MARSHAL_PREFIXES):
+            return "ruby_marshal"
+        # Node.js node-serialize package
+        if NODE_SERIALIZE_MARK in value:
+            return "node_serialize_function"
         return ""
 
     def _urls(self) -> list[str]:

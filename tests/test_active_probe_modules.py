@@ -151,12 +151,77 @@ def test_host_header_detects_reset_poisoning_indicator(tmp_path, monkeypatch):
 
 def test_prototype_pollution_query_reflection(tmp_path, monkeypatch):
     module = PrototypePollutionModule("example.com", str(tmp_path), {})
-    responses = [Response("baseline"), Response(f"ok {module.marker_value}")]
-    monkeypatch.setattr(module, "http_get", lambda *args, **kwargs: responses.pop(0))
+    # _probe_query now issues an additional benign control request between the
+    # baseline and the payload probe so generic framework errors that fire on any
+    # unknown route can be filtered out. Provide a response for that control too.
+    responses = [
+        Response("baseline"),
+        Response("control body"),
+        Response(f"ok {module.marker_value}"),
+    ]
+    monkeypatch.setattr(module, "http_get", lambda *args, **kwargs: responses.pop(0) if responses else Response(""))
 
     findings = module._probe_query("https://example.com/api/search", object(), {})
 
     assert findings[0]["id"] == "sspp_qs_reflection"
+
+
+def test_prototype_pollution_suppresses_uri_echo_in_404_title(tmp_path, monkeypatch):
+    """Express returns 404 pages whose <title> echoes the URL — including any
+    __proto__[...]=marker payload. That is NOT prototype pollution and must not
+    be reported.
+    """
+    module = PrototypePollutionModule("example.com", str(tmp_path), {})
+
+    def fake_get(url, **kwargs):
+        # Baseline: no marker.
+        if "__proto__" not in url and "reconx_probe_normal" not in url:
+            return Response("clean baseline body")
+        # Control & payload both look like Express 404 pages that echo the URL in <title>.
+        title_url = url.replace("https://example.com", "").replace("[", "%5B").replace("]", "%5D")
+        body = (
+            "<html><head><meta charset='utf-8'>"
+            f"<title>Error: Unexpected path: {title_url}</title>"
+            "</head><body>not found</body></html>"
+        )
+        return Response(body)
+
+    monkeypatch.setattr(module, "http_get", fake_get)
+
+    findings = module._probe_query("https://example.com/api/Addresss", object(), {})
+    assert findings == [], (
+        f"Marker echoed inside <title>Error: Unexpected path: ...?__proto__[...]=marker</title> "
+        f"must be filtered as URI echo; got: {findings}"
+    )
+
+
+def test_prototype_pollution_suppresses_generic_express_typeerror(tmp_path, monkeypatch):
+    """Express's default 404 handler emits "Cannot read properties of" stack traces on
+    ANY unknown route, with or without a __proto__ payload. The control probe must
+    catch that and suppress the finding.
+    """
+    module = PrototypePollutionModule("example.com", str(tmp_path), {})
+
+    express_404 = (
+        "<html><body>"
+        "<pre>TypeError: Cannot read properties of undefined (reading 'foo')\n"
+        "    at /app/routes/index.js:42:13</pre>"
+        "</body></html>"
+    )
+
+    def fake_get(url, **kwargs):
+        # Baseline (no query) returns a clean page; everything else returns the same
+        # generic Express TypeError so the control == payload error and finding is dropped.
+        if "?" not in url:
+            return Response("<html><body>clean</body></html>")
+        return Response(express_404)
+
+    monkeypatch.setattr(module, "http_get", fake_get)
+    findings = module._probe_query("https://example.com/api/Addresss", object(), {})
+    assert findings == [], (
+        f"Generic TypeError that fires on any unknown route must be filtered by the "
+        f"control probe; got: {findings}"
+    )
 
 
 def test_xxe_payload_and_oob_matching(tmp_path):
@@ -184,6 +249,111 @@ def test_graphql_audit_detects_batching(tmp_path, monkeypatch):
     findings = module._check_batching("https://example.com/graphql", object(), {"batch_size": 2})
 
     assert findings[0]["id"] == "graphql_batching_enabled"
+
+
+def test_graphql_audit_detects_field_suggestions(tmp_path, monkeypatch):
+    """Did-you-mean style field suggestions leak schema even with introspection off."""
+    module = GraphQLAuditModule("example.com", str(tmp_path), {})
+    body = (
+        '{"errors":[{"message":"Cannot query field \\"reconxNonExistentField0123\\" '
+        'on type \\"Query\\". Did you mean \\"user\\" or \\"users\\"?"}]}'
+    )
+    monkeypatch.setattr(module, "http_post", lambda *a, **k: Response(text=body, status_code=400))
+
+    findings = module._check_field_suggestions("https://example.com/graphql", object(), {})
+
+    assert findings, "expected a field-suggestion finding"
+    assert findings[0]["id"] == "graphql_field_suggestions_enabled"
+    assert "user" in findings[0]["evidence"]["suggestions"]
+
+
+def test_graphql_audit_field_suggestions_silent_when_clean(tmp_path, monkeypatch):
+    """If the server's error has no 'Did you mean', do not fire."""
+    module = GraphQLAuditModule("example.com", str(tmp_path), {})
+    body = '{"errors":[{"message":"Cannot query field on type Query."}]}'
+    monkeypatch.setattr(module, "http_post", lambda *a, **k: Response(text=body, status_code=400))
+
+    assert module._check_field_suggestions("https://example.com/graphql", object(), {}) == []
+
+
+def test_graphql_audit_detects_alias_amplification(tmp_path, monkeypatch):
+    """If the server resolves all N aliased fields with no rate-limit warning,
+    flag the amplification vector.
+    """
+    module = GraphQLAuditModule("example.com", str(tmp_path), {})
+    # Build a fake response where every aliased field resolves.
+    alias_count = 5
+    data = {f"a{i}": "Query" for i in range(alias_count)}
+    monkeypatch.setattr(
+        module, "http_post",
+        lambda *a, **k: Response(data={"data": data}, status_code=200),
+    )
+
+    findings = module._check_alias_amplification(
+        "https://example.com/graphql", object(),
+        {"alias_count": alias_count},
+    )
+
+    assert findings, "expected an alias-amplification finding"
+    assert findings[0]["id"] == "graphql_alias_amplification"
+    assert findings[0]["evidence"]["resolved_count"] == alias_count
+
+
+def test_graphql_audit_alias_amplification_silent_when_rate_limited(tmp_path, monkeypatch):
+    """If the server returns a complexity / rate-limit error, do not fire."""
+    module = GraphQLAuditModule("example.com", str(tmp_path), {})
+    monkeypatch.setattr(
+        module, "http_post",
+        lambda *a, **k: Response(text='{"errors":[{"message":"Query complexity too high"}]}', status_code=400),
+    )
+
+    findings = module._check_alias_amplification(
+        "https://example.com/graphql", object(),
+        {"alias_count": 10},
+    )
+
+    assert findings == []
+
+
+def test_graphql_audit_detects_mutation_over_get(tmp_path, monkeypatch):
+    """A mutation resolved via GET is a CSRF vector."""
+    module = GraphQLAuditModule("example.com", str(tmp_path), {})
+    monkeypatch.setattr(
+        module, "http_get",
+        lambda *a, **k: Response(data={"data": {"__typename": "Mutation"}}, status_code=200),
+    )
+
+    findings = module._check_get_mutation("https://example.com/graphql", object(), {})
+
+    assert findings and findings[0]["id"] == "graphql_mutation_over_get"
+
+
+def test_graphql_audit_get_mutation_silent_when_server_rejects(tmp_path, monkeypatch):
+    """If the server says mutations must use POST, do not fire."""
+    module = GraphQLAuditModule("example.com", str(tmp_path), {})
+    monkeypatch.setattr(
+        module, "http_get",
+        lambda *a, **k: Response(text='{"errors":[{"message":"Mutations are not supported over GET"}]}', status_code=400),
+    )
+
+    assert module._check_get_mutation("https://example.com/graphql", object(), {}) == []
+
+
+def test_graphql_audit_detects_exposed_graphiql_ide(tmp_path, monkeypatch):
+    """Probing for /graphiql, /playground, etc. and matching IDE bootstrap markers."""
+    module = GraphQLAuditModule("example.com", str(tmp_path), {})
+
+    def fake_get(url, *a, **k):
+        if url.endswith("/graphiql"):
+            return Response(text="<html><body>GraphiQL bootstrap</body></html>", status_code=200)
+        return Response(status_code=404)
+
+    monkeypatch.setattr(module, "http_get", fake_get)
+
+    findings = module._check_ide_exposure("https://example.com/graphql", object(), {})
+
+    assert findings and findings[0]["id"] == "graphql_ide_exposed"
+    assert "GraphiQL" in findings[0]["evidence"]["ide_markers"]
 
 
 def test_race_condition_candidates_from_keywords(tmp_path):
@@ -437,3 +607,55 @@ def test_js_security_audit_finds_common_static_risks(tmp_path):
     assert "js_postmessage_missing_origin_check" in ids
     assert "js_hardcoded_graphql_endpoint" in ids
     assert "js_unsafe_redirect" in ids
+
+
+def test_js_security_audit_ignores_cross_function_redirect_in_minified_bundle(tmp_path):
+    """In a minified Angular bundle, `location.replace("/profile")` is often followed
+    *in a different function on the same long line* by `window.location.assign(...)`.
+    The redirect regex must not bridge across the `}` separating those functions.
+    """
+    module = JSSecurityAuditModule("example.com", str(tmp_path), {})
+    # Reproduce the Juice Shop pattern: constant-URL redirect, then a SEPARATE
+    # function that also touches location. There is no tainted source inside the
+    # actual redirect call, so no js_unsafe_redirect must fire.
+    one_liner = (
+        'function a(){location.replace(Z.hostServer+"/profile")}'
+        'function b(){window.location.assign("/x")}'
+    )
+    findings = module._redirect_findings("https://example.com/main.js", one_liner)
+    assert findings == [], f"redirect FP across function boundary: {findings}"
+
+
+def test_js_security_audit_redirect_still_fires_on_tainted_source(tmp_path):
+    """Sanity check: a true tainted-source redirect must still fire."""
+    module = JSSecurityAuditModule("example.com", str(tmp_path), {})
+    content = "location.replace(location.hash.slice(1));"
+    findings = module._redirect_findings("https://example.com/main.js", content)
+    assert findings and findings[0]["id"] == "js_unsafe_redirect"
+
+
+def test_js_security_audit_minified_detector_catches_small_bundles(tmp_path):
+    """A 11KB / 3-line confetti-style minified bundle must be detected as minified
+    so its findings get downgraded.
+    """
+    confetti_like = ("a" * 3700) + "\n" + ("b" * 3700) + "\n" + ("c" * 3700)
+    assert JSSecurityAuditModule._is_minified_bundle(confetti_like) is True
+
+    # Plain config or short multi-line file is NOT minified.
+    not_min = "export const a = 1;\nexport const b = 2;\n"
+    assert JSSecurityAuditModule._is_minified_bundle(not_min) is False
+
+
+def test_js_security_audit_minified_bundle_downgrades_postmessage_to_low(tmp_path):
+    """In a minified bundle, a postMessage finding fires at LOW (not MEDIUM)."""
+    module = JSSecurityAuditModule("example.com", str(tmp_path), {})
+    # Build a minified-bundle-shape content with an unguarded message handler.
+    handler = (
+        "x.addEventListener('message',function(e){window.parent.postMessage(e.data,'*');});"
+    )
+    big = ("x" * 4000) + "\n" + handler + "\n" + ("y" * 4000)
+    findings = module._analyse_js("https://example.com/confetti.js", big)
+    pm = [f for f in findings if f["id"] == "js_postmessage_missing_origin_check"]
+    assert pm, "expected a postMessage finding to fire"
+    assert pm[0]["severity"] == "LOW", pm[0]
+    assert pm[0]["evidence"]["minified"] is True

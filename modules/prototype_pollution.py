@@ -68,11 +68,24 @@ class PrototypePollutionModule(BaseModule):
     def _probe_query(self, url: str, session: requests.Session, cfg: dict) -> list[dict]:
         baseline = self.http_get(url, session=session, timeout=float(cfg.get("timeout", 10)), verify=False)
         baseline_body = baseline.text or "" if baseline else ""
+        # Control probe: same shape as a pollution payload but using a benign param
+        # name so framework 404 / not-found error pages that always emit a generic
+        # "Cannot read properties of" signature don't get classified as pollution.
+        control_param = f"reconx_probe_normal_{self.marker_key}"
+        control_url = self._append_qs(url, control_param, self.marker_value)
+        control_resp = self.http_get(control_url, session=session, timeout=float(cfg.get("timeout", 10)), verify=False)
+        control_body = (control_resp.text or "") if control_resp is not None else ""
+        control_error = self._match_error(control_body)
+        # Payload variants from PayloadsAllTheThings/Prototype Pollution. Each tries
+        # a different syntax recognised by qs / express-query / lodash-style mergers.
         payloads = [
             (f"__proto__[{self.marker_key}]", self.marker_value),
             (f"__proto__.{self.marker_key}", self.marker_value),
             (f"constructor[prototype][{self.marker_key}]", self.marker_value),
             (f"constructor.prototype.{self.marker_key}", self.marker_value),
+            # Deep / chained access patterns observed in real-world exploits.
+            (f"a[constructor][prototype][{self.marker_key}]", self.marker_value),
+            (f"__proto__[constructor][prototype][{self.marker_key}]", self.marker_value),
         ]
         for param, value in payloads:
             probe_url = self._append_qs(url, param, value)
@@ -81,9 +94,9 @@ class PrototypePollutionModule(BaseModule):
                 continue
             body = resp.text or ""
             if self.marker_value in body and self.marker_value not in baseline_body:
-                if self._reflection_is_uri_echo_only(body, self.marker_value, param):
+                if self._reflection_is_uri_echo_only(body, self.marker_value, param, probe_url):
                     # Marker only appears as the request URI echoed back inside an error
-                    # page / debug response (e.g. Laravel debugbar JSON). Not pollution.
+                    # page / debug response (e.g. Laravel debugbar JSON, Express 404). Not pollution.
                     continue
                 return [self._finding("sspp_qs_reflection", "HIGH", probe_url, "Prototype pollution marker reflected from query string", {
                     "param": param,
@@ -93,16 +106,30 @@ class PrototypePollutionModule(BaseModule):
                     "excerpt": self._excerpt(body, self.marker_value),
                 })]
             error = self._match_error(body)
-            if error and error not in baseline_body:
+            # Only fire on an error signature that is specific to the probe — i.e. NOT
+            # present in either the unmodified baseline OR the benign-param control
+            # response. This filters out framework default error pages (Express 404,
+            # NestJS unhandled route, etc.) that emit the same TypeError regardless.
+            if error and error not in baseline_body and error != control_error:
                 return [self._finding("sspp_qs_error", "MEDIUM", probe_url, "Prototype pollution error signature from query string", {
                     "param": param,
                     "value": value,
                     "vector": "query_string",
                     "error_signature": error,
+                    "control_url": control_url,
                 })]
         return []
 
     def _probe_json_body(self, url: str, session: requests.Session, cfg: dict) -> list[dict]:
+        # Baseline POST to know the response status against an unpolluted body.
+        baseline = self.http_request(
+            "POST", url, session=session, safe_readonly=True,
+            headers={"Content-Type": "application/json"},
+            data="{}",
+            timeout=float(cfg.get("timeout", 10)), verify=False,
+        )
+        baseline_status = baseline.status_code if baseline is not None else 0
+
         payloads = [
             {"__proto__": {self.marker_key: self.marker_value}},
             {"constructor": {"prototype": {self.marker_key: self.marker_value}}},
@@ -131,6 +158,32 @@ class PrototypePollutionModule(BaseModule):
                     "vector": "json_body",
                     "error_signature": error,
                 })]
+
+        # Status-code-change probe: Express respects Object.prototype.status when set
+        # via prototype pollution. Sending `{"__proto__":{"status":510}}` and observing
+        # the response come back as 510 is a strong, high-confidence pollution signal.
+        # Reference: PayloadsAllTheThings/Prototype Pollution#prototype-pollution-payloads.
+        if baseline_status and 200 <= baseline_status < 300:
+            status_payload = {"__proto__": {"status": 510}}
+            resp = self.http_request(
+                "POST", url, session=session, safe_readonly=True,
+                headers={"Content-Type": "application/json"},
+                data=json.dumps(status_payload),
+                timeout=float(cfg.get("timeout", 10)), verify=False,
+            )
+            if resp is not None and resp.status_code == 510 and baseline_status != 510:
+                return [self._finding(
+                    "sspp_json_status_change",
+                    "HIGH",
+                    url,
+                    "Prototype pollution reflected as HTTP status override",
+                    {
+                        "payload": status_payload,
+                        "vector": "json_body_status",
+                        "baseline_status": baseline_status,
+                        "polluted_status": resp.status_code,
+                    },
+                )]
         return []
 
     def _probe_form_body(self, url: str, session: requests.Session, cfg: dict) -> list[dict]:
@@ -190,18 +243,25 @@ class PrototypePollutionModule(BaseModule):
         return body[max(0, idx - radius): idx + len(marker) + radius]
 
     @staticmethod
-    def _reflection_is_uri_echo_only(body: str, marker: str, param: str) -> bool:
+    def _reflection_is_uri_echo_only(body: str, marker: str, param: str, probe_url: str = "") -> bool:
         r"""Return True if every occurrence of the marker is just the request URI being
-        echoed back (debug bars, JSON 404 responses, access-log style traces).
+        echoed back (debug bars, JSON 404 responses, access-log style traces, framework
+        "Not Found" pages that print the request path).
 
-        We look at a short window of bytes immediately before each marker hit and detect
-        signatures like "uri":"\/...?param=...", request_uri=..., GET /path?param=...
-        If at least one occurrence is in a meaningful context (HTML body, JSON property
-        value bound to a real key), we keep the finding.
+        Strategy: for each marker hit, look at a short window of bytes immediately
+        before it and decide whether the marker is part of an echo of the request URI.
+        Signals we accept:
+          * The literal probe URL or its path+query appears in the window (raw or
+            URL-encoded form).
+          * The param=marker pair appears in the window AND the window contains a
+            known URI-echo token (`"uri"`, `request_uri`, `GET /`, error-page phrases
+            like `Unexpected path`, `Cannot GET`, `Not Found:`, etc).
+
+        If at least one occurrence is in a meaningful context (HTML body text, JSON
+        property value bound to a real key, etc.) we keep the finding.
         """
         if not body or marker not in body:
             return False
-        body_l = body
         idx = 0
         any_match = False
         # Tokens that strongly suggest a URI echo (the marker is part of the request path/query).
@@ -214,23 +274,61 @@ class PrototypePollutionModule(BaseModule):
             "GET /", "POST /", "PUT /", "PATCH /", "DELETE /",
             "HTTP_REQUEST_URI", "fullUrl", '"originalUrl"',
             '"requestUri"', "request-uri",
+            # Express / NestJS / generic framework 404 phrasing
+            "Unexpected path", "Cannot GET", "Cannot POST", "Cannot PUT",
+            "Cannot DELETE", "Cannot PATCH",
+            "Not Found:", "Not found:", "<title>Error",
+            "ENOENT", "ENOTFOUND",
         )
-        # The marker key (e.g. "__proto__[reconx_pp_probe]") inside an HTML link or a
-        # rendered error trace looking like ?__proto__[...]=... — typical URI echo.
-        # Build a list of param-related substrings to check appears right before the marker.
+        # Build a set of URI fragments derived from the actual probe URL — both raw
+        # and percent-encoded variants. If any of these appear in the window before
+        # the marker, treat the marker as a URI echo. We deliberately build fragments
+        # WITHOUT the marker value because the window stops just before the marker,
+        # so a fragment that ends with the marker would never match. We instead look
+        # for the prefix "..path?...param=" which sits immediately to the left of
+        # the marker when the request URL is echoed back.
+        uri_fragments: list[str] = []
+        if probe_url:
+            try:
+                parsed = urlparse(probe_url)
+                if parsed.path:
+                    uri_fragments.append(parsed.path)
+                    # Path with the param= prefix, both raw and percent-encoded for [].
+                    prefix = parsed.path + "?" + param + "="
+                    uri_fragments.append(prefix)
+                    uri_fragments.append(quote(prefix, safe="/?&=[]."))
+                    uri_fragments.append(quote(prefix, safe="/?&="))
+            except Exception:
+                pass
+        # Also include the param=  prefix on its own (in raw + percent-encoded forms),
+        # so a stripped-down echo like ?__proto__%5B...%5D=marker still matches.
+        prefix2 = param + "="
+        uri_fragments.append(prefix2)
+        uri_fragments.append(quote(prefix2, safe="[]=."))
+        uri_fragments.append(quote(prefix2, safe="="))
         param_l = param
         while True:
-            pos = body_l.find(marker, idx)
+            pos = body.find(marker, idx)
             if pos < 0:
                 break
             any_match = True
-            window_start = max(0, pos - 300)
-            window = body_l[window_start: pos]
-            # If the marker is preceded (within ~300 chars) by the param= or %5D= pattern
-            # AND the window contains a uri-echo signature, treat this occurrence as echo.
-            param_seen = (f"{param_l}=" in window) or (f"%5D={marker[:1]}" in window and "%5B" in window) or (param_l in window)
+            window_start = max(0, pos - 400)
+            window = body[window_start: pos]
+            # Strong signal: an adjacent URI fragment ends exactly where the marker
+            # starts. In a URL echo the bytes immediately preceding the marker are
+            # the request URL with the param= prefix (raw or percent-encoded). A real
+            # pollution would typically emit the marker tied to a JSON property name
+            # or HTML attribute, not as a continuation of the request URI.
+            adjacent_uri_echo = any(frag and window.endswith(frag) for frag in uri_fragments)
+            # Weaker signal: the param= appears anywhere in the window AND the window
+            # carries a known URI-echo phrase (error page / access log style).
+            param_seen = (
+                f"{param_l}=" in window
+                or (f"%5D={marker[:1]}" in window and "%5B" in window)
+                or param_l in window
+            )
             echo_seen = any(tok in window for tok in uri_echo_tokens)
-            if param_seen and echo_seen:
+            if adjacent_uri_echo or (param_seen and echo_seen):
                 idx = pos + len(marker)
                 continue
             return False

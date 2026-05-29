@@ -9,8 +9,29 @@ import requests
 from modules.base import BaseModule
 
 
-REDIRECT_PARAMS = ("next", "url", "redirect", "redirect_url", "return", "returnUrl", "continue", "dest", "destination")
+# Common redirect-parameter names — superset of PayloadsAllTheThings/Open Redirect.
+REDIRECT_PARAMS = (
+    "next", "url", "redirect", "redirect_uri", "redirect_url",
+    "return", "returnto", "return_to", "returnurl", "return_url",
+    "continue", "dest", "destination", "forward", "forwardurl",
+    "goto", "go", "target", "view", "image_url",
+    "rurl", "out", "link", "site", "to",
+)
 REDIRECT_PARAM_NAMES = {name.lower() for name in REDIRECT_PARAMS}
+
+# Payload variants — each tries a common filter-bypass technique. The detector
+# verifies success by checking that the response Location header resolves to the
+# attacker domain. Reference: PayloadsAllTheThings/Open Redirect#filter-bypass.
+ATTACKER_HOST = "attacker.reconx.invalid"
+REDIRECT_PAYLOADS = (
+    f"https://{ATTACKER_HOST}/",
+    f"//{ATTACKER_HOST}/",         # scheme-relative
+    f"////{ATTACKER_HOST}/",       # multi-slash bypass
+    f"https:{ATTACKER_HOST}/",     # missing slashes
+    f"/\\{ATTACKER_HOST}/",        # backslash bypass
+    f"//{ATTACKER_HOST}\\@example.com/",  # @-bypass — attacker is the actual host
+    f"https://example.com@{ATTACKER_HOST}/",  # userinfo @-bypass
+)
 
 
 class OpenRedirectProbeModule(BaseModule):
@@ -50,21 +71,24 @@ class OpenRedirectProbeModule(BaseModule):
             names = [name for name in REDIRECT_PARAMS if name.lower() in parsed.path.lower()]
         if not names:
             return None
+        max_payloads = int(cfg.get("max_payloads_per_param", len(REDIRECT_PAYLOADS)))
         for name in names[:3]:
-            probe_url = self._replace_or_add(url, name, "https://attacker.reconx.invalid/")
-            resp = self.http_get(
-                probe_url, session=session, allow_redirects=False,
-                timeout=float(cfg.get("timeout", 8)), verify=False,
-            )
-            if resp is None:
-                continue
-            location = resp.headers.get("Location", "")
-            if self._location_is_attacker(location):
-                return self._finding("open_redirect", "HIGH", probe_url, "Open redirect parameter accepted", {
-                    "param": name,
-                    "location": location,
-                    "status_code": resp.status_code,
-                })
+            for payload in REDIRECT_PAYLOADS[:max_payloads]:
+                probe_url = self._replace_or_add(url, name, payload)
+                resp = self.http_get(
+                    probe_url, session=session, allow_redirects=False,
+                    timeout=float(cfg.get("timeout", 8)), verify=False,
+                )
+                if resp is None:
+                    continue
+                location = resp.headers.get("Location", "")
+                if self._location_is_attacker(location):
+                    return self._finding("open_redirect", "HIGH", probe_url, "Open redirect parameter accepted", {
+                        "param": name,
+                        "payload": payload,
+                        "location": location,
+                        "status_code": resp.status_code,
+                    })
         return None
 
     def _targets(self) -> list[str]:

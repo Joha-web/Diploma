@@ -175,6 +175,8 @@ class HTMLReportGenerator:
         cve.setdefault("cves", [])
         cve.setdefault("technology_matches", [])
 
+        recon_coverage = self._build_recon_coverage(recon)
+
         summary = {
             "subdomains":      recon.get("subdomains_total", 0),
             "live_hosts":      len(web.get("live_urls") or recon.get("live_http", [])),
@@ -195,10 +197,18 @@ class HTMLReportGenerator:
             "takeover_findings": takeover.get("total", len(takeover.get("findings", []))),
             "parameters":      params.get("total", 0),
             "correlated":      corr.get("total", 0),
-            "screenshots":     len(web.get("screenshots", [])),
+            "screenshots":     len(web.get("screenshots", [])) + recon_coverage["screenshots"],
             "finding_severity": severity_counts,
             "verdict_counts":  verdict_counts,
             "risk_level":      self._risk_level(severity_counts),
+            "sibling_domains":   recon_coverage["sibling_domains"],
+            "cloud_bucket_hits": recon_coverage["cloud_bucket_hits"],
+            "cloud_bucket_listable": recon_coverage["cloud_bucket_listable"],
+            "origin_candidates": recon_coverage["origin_candidates"],
+            "cert_san_groups":   recon_coverage["cert_san_groups"],
+            "cert_san_new_subs": recon_coverage["cert_san_new_subs"],
+            "well_known_urls":   recon_coverage["well_known_urls"],
+            "asset_graph_nodes": recon_coverage["asset_graph_nodes"],
         }
 
         # Render AI analysis from Markdown to HTML
@@ -208,6 +218,12 @@ class HTMLReportGenerator:
 
         # Embed screenshots as base64 for portable HTML
         screenshots_b64 = self._embed_screenshots(web.get("screenshots", []))
+        recon_shots = recon.get("screenshots", {}) or {}
+        if recon_shots.get("files"):
+            shot_dir = Path(recon_shots.get("directory", "")) if recon_shots.get("directory") else None
+            if shot_dir and shot_dir.exists():
+                recon_paths = [str(shot_dir / name) for name in recon_shots["files"]]
+                screenshots_b64 = screenshots_b64 + self._embed_screenshots(recon_paths)
         interesting_screenshots_b64 = self._embed_screenshots(
             fuzz.get("interesting_screenshots", [])
         )
@@ -245,6 +261,7 @@ class HTMLReportGenerator:
             "corr":        corr,
             "asset_risk":  asset_risk,
             "email_security": email_security,
+            "recon_coverage": recon_coverage,
             "extra_finding_sections": extra_finding_sections,
             "active_probe_sections": active_probe_sections,
             "finding_filter_modules": finding_filter_modules,
@@ -456,6 +473,56 @@ class HTMLReportGenerator:
         for f in cve.get("cves", []) or []:
             add(f)
         return counts
+
+    @staticmethod
+    def _build_recon_coverage(recon: dict) -> dict:
+        """Extract compact stats + lists from new recon fields for the template."""
+        siblings = (recon.get("reverse_whois") or {}).get("sibling_domains") or {}
+        cloud = recon.get("cloud_buckets") or {}
+        cloud_by_provider = (cloud.get("by_provider") or {}) if isinstance(cloud, dict) else {}
+        cloud_flat: list[dict] = []
+        for provider, hits in cloud_by_provider.items():
+            for hit in (hits or []):
+                cloud_flat.append({**hit, "provider": provider})
+        cloud_listable = sum(1 for h in cloud_flat if h.get("status") == "listable")
+
+        origin = recon.get("origin_discovery") or {}
+        origin_candidates = origin.get("origin_candidates") or []
+
+        cert_sans = recon.get("cert_sans") or {}
+        cert_groups = cert_sans.get("groups") or []
+        cert_new_subs = cert_sans.get("new_subdomains") or []
+        cert_sibling_doms = cert_sans.get("sibling_domains") or []
+
+        well_known_urls = (recon.get("urls") or {}).get("all_urls") or []
+
+        asset_summary = recon.get("asset_graph_summary") or {}
+
+        recon_shots = recon.get("screenshots") or {}
+        recon_shot_count = int(recon_shots.get("count", 0)) if isinstance(recon_shots, dict) else 0
+
+        sibling_items_list = (
+            sorted(siblings.items())[:60] if isinstance(siblings, dict) else []
+        )
+
+        return {
+            "sibling_domains": len(siblings),
+            "sibling_domain_items": sibling_items_list,
+            "cloud_bucket_hits": int(cloud.get("total_hits", len(cloud_flat))),
+            "cloud_bucket_listable": cloud_listable,
+            "cloud_bucket_items": cloud_flat[:80],
+            "origin_candidates": len(origin_candidates),
+            "origin_items": origin_candidates[:60],
+            "origin_cdn_fronted": len(origin.get("cdn_fronted_hosts") or []),
+            "cert_san_groups": len(cert_groups),
+            "cert_san_items": cert_groups[:30],
+            "cert_san_new_subs": len(cert_new_subs),
+            "cert_san_siblings": cert_sibling_doms[:30],
+            "well_known_urls": len(well_known_urls),
+            "asset_graph_nodes": int(asset_summary.get("node_count", 0)),
+            "asset_graph_summary": asset_summary,
+            "screenshots": recon_shot_count,
+        }
 
     @staticmethod
     def _risk_level(severity_counts: dict) -> str:

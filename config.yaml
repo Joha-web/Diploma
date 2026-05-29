@@ -104,6 +104,37 @@ scan:
     max_asn_lookups: 40
     asn_lookup_delay: 1.0       # seconds between ipinfo lookups
     exclude_cdn_ips: true       # when ASN lookup is enabled, keep CDN/cloud IPs out of portscan
+    # altdns-style permutation brute-force (requires dnsx; gotator optional)
+    use_permutations: false
+    permutation_extra_words: []  # extra keywords to mix into permutation set
+    permutation_max: 5000        # cap candidates before dnsx validation
+    permutation_threads: 100
+    permutation_timeout: 600
+    # origin-IP discovery for hosts behind a CDN/WAF (uses SecurityTrails when key set)
+    use_origin_discovery: false
+    origin_max_lookups: 50
+    # extended URL harvesting per live host
+    use_katana: false           # active crawl with katana (chrome headless)
+    katana_depth: 2
+    katana_timeout: 300
+    use_well_known: true        # passive: robots, sitemap, security.txt, /.well-known/*
+    well_known_max_hosts: 50
+    well_known_timeout: 10
+    # reverse-WHOIS / org-pivoting via crt.sh ?O= search (needs Organization in WHOIS)
+    use_reverse_whois: false
+    reverse_whois_max_domains: 100
+    # active S3/GCS/Azure bucket guessing seeded from domain + sub labels + WHOIS org
+    use_cloud_buckets: false
+    cloud_bucket_extra_words: []
+    cloud_bucket_max: 2000
+    cloud_bucket_threads: 20
+    cloud_bucket_timeout: 5
+    # collect TLS-cert SANs per live host; same-domain SANs auto-merge into subdomains
+    use_cert_san_graph: false
+    cert_san_max_hosts: 80
+    cert_san_timeout: 5
+    # synthesis step: tie sub ↔ IP ↔ ASN ↔ cert ↔ tech ↔ endpoints into asset_graph.json
+    build_asset_graph: true
 
   # GitHub repository secret scanning
   secret_scanner:
@@ -124,7 +155,9 @@ scan:
   http:
     follow_redirects: true
     tech_detect:      true
-    screenshots:      false     # requires gowitness
+    screenshots:      false     # requires gowitness; output under recon/screenshots/
+    screenshot_threads: 5
+    screenshot_timeout: 600
 
   # Directory fuzzing
   fuzzing:

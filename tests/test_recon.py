@@ -208,14 +208,40 @@ def test_active_dns_bruteforce_uses_dnsx_wordlist_domain_flags(tmp_path, monkeyp
     assert "-a" in captured["cmd"]
 
 
-def test_email_security_generates_requested_findings(tmp_path):
+def test_email_security_generates_combined_finding_when_both_missing(tmp_path):
+    """When SPF AND DMARC are both absent we emit one combined finding instead of two,
+    so the same posture is not triple-counted (recon + recon + correlator).
+    """
     module = ReconModule("example.com", str(tmp_path), {})
 
     result = module._analyze_email_security({})
 
-    names = {finding["name"] for finding in result["findings"]}
-    assert "Email spoofing possible" in names
-    assert "Phishing risk" in names
+    ids = {finding["id"] for finding in result["findings"]}
+    assert ids == {"missing_spf_and_dmarc"}, ids
+
+
+def test_email_security_emits_individual_finding_for_just_spf(tmp_path):
+    module = ReconModule("example.com", str(tmp_path), {})
+
+    # DMARC present but SPF missing -> only missing_spf fires.
+    result = module._analyze_email_security({
+        "DMARC_TXT": ["v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com"],
+    })
+
+    ids = {finding["id"] for finding in result["findings"]}
+    assert "missing_spf" in ids and "missing_dmarc" not in ids and "missing_spf_and_dmarc" not in ids
+
+
+def test_email_security_emits_individual_finding_for_just_dmarc(tmp_path):
+    module = ReconModule("example.com", str(tmp_path), {})
+
+    # SPF present but DMARC missing -> only missing_dmarc fires.
+    result = module._analyze_email_security({
+        "TXT": ["v=spf1 include:_spf.google.com ~all"],
+    })
+
+    ids = {finding["id"] for finding in result["findings"]}
+    assert "missing_dmarc" in ids and "missing_spf" not in ids and "missing_spf_and_dmarc" not in ids
 
 
 def test_dns_record_cleaner_drops_dig_resolver_errors(tmp_path):
