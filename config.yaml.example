@@ -446,6 +446,23 @@ scan:
     enumerate: "ap,at,tt,cb,dbe,u,m"   # wpscan -e: full enumeration set
     plugins_detection: ""              # "", "passive", "mixed" or "aggressive" (aggressive = slow)
 
+  # Server-side error surface: aggregates 5xx and 401 responses per host from the
+  # audit log (passive) and detects SQL errors / stack traces leaked in responses
+  # (baseline scan + a small error-provoking probe on parameterised endpoints).
+  error_analyzer:
+    enabled: true
+    scan_baseline: true        # scan plain responses for naturally-leaking errors
+    probe_errors: true         # send a lone-quote probe to trigger SQL errors
+    probe_debug: true          # trigger a random path per host to detect DEBUG=True
+    max_baseline: 40
+    max_targets: 40
+    max_debug_hosts: 20        # hosts to probe for framework debug mode
+    max_params_per_target: 3
+    max_requests: 150          # global request budget for the probe
+    min_5xx: 3                 # per-host 5xx count to raise a hotspot finding
+    min_401: 5                 # per-host 401 count to raise a hotspot finding
+    max_sample_urls: 15
+
   cve_check:
     enabled: true
     searchsploit: true

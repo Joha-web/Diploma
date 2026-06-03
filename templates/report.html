@@ -514,6 +514,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   {% if takeover.findings %}<a href="#takeover"><span class="dot"></span> Takeover</a>{% endif %}
   {% if corr.findings %}<a href="#correlator"><span class="dot"></span> Correlation</a>{% endif %}
   {% if cms.scans %}<a href="#cms"><span class="dot"></span> CMS Scan</a>{% endif %}
+  {% if errors.debug_modes or errors.sql_errors or errors.server_errors or (errors.status_5xx and errors.status_5xx.hosts) or (errors.status_401 and errors.status_401.hosts) %}<a href="#server-errors"><span class="dot"></span> Server-Side Errors</a>{% endif %}
   <a href="#ssl"><span class="dot"></span> SSL / Headers</a>
 
   <div class="sidebar-section">Info</div>
@@ -1323,6 +1324,119 @@ function applyAllFindingsFilter() {
     </div>
   </details>
   {% endfor %}
+</div>
+{% endif %}
+
+<!-- Server-Side Errors -->
+{% if errors.debug_modes or errors.sql_errors or errors.server_errors or (errors.status_5xx and errors.status_5xx.hosts) or (errors.status_401 and errors.status_401.hosts) %}
+<div class="section" id="server-errors">
+  <div class="section-header">
+    <div class="section-title">🧯 Server-Side Errors
+      <span class="count-badge">{{ (errors.debug_modes | length) + (errors.sql_errors | length) + (errors.server_errors | length) }}</span>
+    </div>
+  </div>
+
+  {% if errors.debug_modes %}
+  <details open>
+    <summary>⚠ Framework debug mode enabled <span class="count-badge">{{ errors.debug_modes | length }}</span></summary>
+    <div class="detail-body">
+      <table>
+        <thead><tr><th>Framework</th><th>URL</th><th>Evidence</th></tr></thead>
+        <tbody>
+          {% for e in errors.debug_modes %}
+          <tr>
+            <td><span class="badge badge-HIGH">{{ e.framework }}</span></td>
+            <td><code>{{ e.url }}</code></td>
+            <td style="font-size:.8em;color:var(--muted)"><code>{{ e.snippet }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+
+  {% if errors.sql_errors %}
+  <details open>
+    <summary>SQL error disclosure <span class="count-badge">{{ errors.sql_errors | length }}</span></summary>
+    <div class="detail-body">
+      <table>
+        <thead><tr><th>DBMS</th><th>URL</th><th>Param</th><th>Error snippet</th></tr></thead>
+        <tbody>
+          {% for e in errors.sql_errors %}
+          <tr>
+            <td><span class="badge badge-HIGH">{{ e.dbms }}</span></td>
+            <td><code>{{ e.url }}</code></td>
+            <td><code>{{ e.param or '—' }}</code></td>
+            <td style="font-size:.8em;color:var(--muted)"><code>{{ e.snippet }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+
+  {% if errors.server_errors %}
+  <details {% if not errors.sql_errors %}open{% endif %}>
+    <summary>Stack traces / verbose errors <span class="count-badge">{{ errors.server_errors | length }}</span></summary>
+    <div class="detail-body">
+      <table>
+        <thead><tr><th>Stack</th><th>URL</th><th>Snippet</th></tr></thead>
+        <tbody>
+          {% for e in errors.server_errors %}
+          <tr>
+            <td><span class="badge badge-MEDIUM">{{ e.stack }}</span></td>
+            <td><code>{{ e.url }}</code></td>
+            <td style="font-size:.8em;color:var(--muted)"><code>{{ e.snippet }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+
+  {% if errors.status_5xx and errors.status_5xx.hosts %}
+  <details open>
+    <summary>5xx server-error hotspots <span class="count-badge">{{ errors.status_5xx.total }}</span></summary>
+    <div class="detail-body">
+      <table>
+        <thead><tr><th>Host</th><th>5xx count</th><th>Status breakdown</th><th>Sample URLs</th></tr></thead>
+        <tbody>
+          {% for h in errors.status_5xx.hosts %}
+          <tr>
+            <td><code>{{ h.host }}</code></td>
+            <td><span class="badge badge-MEDIUM">{{ h.count }}</span></td>
+            <td style="font-size:.8em">{% for s, c in (h.statuses or {}).items() %}{{ s }}×{{ c }} {% endfor %}</td>
+            <td style="font-size:.78em;color:var(--muted)"><code>{{ h.sample_urls[:5] | join('\n') }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+
+  {% if errors.status_401 and errors.status_401.hosts %}
+  <details>
+    <summary>401 Unauthorized hotspots <span class="count-badge">{{ errors.status_401.total }}</span></summary>
+    <div class="detail-body">
+      <table>
+        <thead><tr><th>Host</th><th>401 count</th><th>Sample URLs</th></tr></thead>
+        <tbody>
+          {% for h in errors.status_401.hosts %}
+          <tr>
+            <td><code>{{ h.host }}</code></td>
+            <td><span class="badge badge-INFO">{{ h.count }}</span></td>
+            <td style="font-size:.78em;color:var(--muted)"><code>{{ h.sample_urls[:5] | join('\n') }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
 </div>
 {% endif %}
 

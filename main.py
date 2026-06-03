@@ -88,6 +88,7 @@ PIPELINE: list[dict] = [
     {"name": "vulnscan",    "group": 11},
     {"name": "ssrf_probe",  "group": 11},
     {"name": "cve_check",   "group": 12},
+    {"name": "error_analyzer", "group": 12},
     {"name": "correlator",  "group": 13},
     # group 14: reasoning pass over all findings (after correlator, before
     # asset_risk/ai_report so their output reflects triaged verdicts)
@@ -134,6 +135,7 @@ CLASS_MAP = {
     "sql_injection": ("modules.sql_injection", "SQLInjectionModule"),
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
     "cve_check":   ("modules.cve_check",    "CVECheckModule"),
+    "error_analyzer": ("modules.error_analyzer", "ErrorAnalyzerModule"),
     "correlator":  ("modules.correlator",   "CorrelatorModule"),
     "fp_triage":   ("modules.fp_triage",    "FPTriageModule"),
     "asset_risk":  ("modules.asset_risk",   "AssetRiskModule"),
@@ -179,6 +181,7 @@ MODULE_LABELS = {
     "sql_injection": "SQL Injection Testing (sqlmap)",
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
     "cve_check":   "CVE & ExploitDB Correlation",
+    "error_analyzer": "Server-Side Error Surface",
     "correlator":  "Cross-Finding Correlation",
     "fp_triage":   "AI False-Positive Triage",
     "asset_risk":  "Per-Asset Risk Ranking",
@@ -191,7 +194,7 @@ ACTIVE_PROBE_MODULES = (
     "deserialization_probe", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe",
     "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
-    "xss", "sql_injection", "ssrf_probe",
+    "xss", "sql_injection", "ssrf_probe", "error_analyzer",
 )
 
 CONFIG_PRESETS = {
@@ -391,6 +394,10 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
         kwargs["injection_results"] = all_results.get("injection_probe", {})
+    elif name == "error_analyzer":
+        kwargs["live_hosts"] = live
+        kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
     elif name == "vulnscan":
         kwargs["live_hosts"] = live
         kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
@@ -456,6 +463,10 @@ def _module_summary(name: str, result: dict) -> str:
         summary = result.get("summary", {})
         return (f"{summary.get('total_cves', 0)} CVEs, "
                 f"{summary.get('with_exploitdb', 0)} ExploitDB match(es)")
+    elif name == "error_analyzer":
+        return (f"{len(result.get('sql_errors', []))} SQL/error leak(s), "
+                f"{result.get('status_5xx', {}).get('total', 0)} 5xx, "
+                f"{result.get('status_401', {}).get('total', 0)} 401")
     elif name == "correlator":
         return f"{result.get('total', 0)} correlated priority item(s)"
     elif name == "fp_triage":
@@ -1148,7 +1159,8 @@ def _persist_snapshot(target: str, all_results: dict) -> Path | None:
             "race_condition", "open_redirect_probe",
             "api_key_validator", "idor_probe", "jwt_audit", "websocket_probe",
             "api_schema_audit", "js_security_audit", "sourcemap_analyzer",
-            "endpoint_harvester", "ssrf_probe", "takeover_checker", "correlator",
+            "endpoint_harvester", "ssrf_probe", "error_analyzer",
+            "takeover_checker", "correlator",
         ):
             findings = all_results.get(module_name, {}).get("findings", [])
             if findings:

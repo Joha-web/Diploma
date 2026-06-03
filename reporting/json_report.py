@@ -17,7 +17,7 @@ ACTIVE_FINDING_MODULES = (
     "deserialization_probe", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe", "ssrf_probe",
     "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
-    "sourcemap_analyzer", "endpoint_harvester",
+    "sourcemap_analyzer", "endpoint_harvester", "error_analyzer",
     "takeover_checker", "correlator",
 )
 

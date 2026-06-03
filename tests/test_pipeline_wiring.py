@@ -21,6 +21,7 @@ def test_new_modules_are_wired_into_pipeline():
         "js_security_audit": ("modules.js_security_audit", "JSSecurityAuditModule"),
         "endpoint_harvester": ("modules.endpoint_harvester", "EndpointHarvesterModule"),
         "ssrf_probe": ("modules.ssrf_probe", "SSRFProbeModule"),
+        "error_analyzer": ("modules.error_analyzer", "ErrorAnalyzerModule"),
     }
     post_parameter_modules = {
         "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),
