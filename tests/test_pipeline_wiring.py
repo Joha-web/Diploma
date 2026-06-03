@@ -13,7 +13,6 @@ def test_new_modules_are_wired_into_pipeline():
         "prototype_pollution": ("modules.prototype_pollution", "PrototypePollutionModule"),
         "xxe_probe": ("modules.xxe_probe", "XXEProbeModule"),
         "deserialization_probe": ("modules.deserialization_probe", "DeserializationProbeModule"),
-        "graphql_audit": ("modules.graphql_audit", "GraphQLAuditModule"),
         "race_condition": ("modules.race_condition", "RaceConditionModule"),
         "open_redirect_probe": ("modules.open_redirect_probe", "OpenRedirectProbeModule"),
         "api_key_validator": ("modules.api_key_validator", "APIKeyValidatorModule"),
@@ -21,6 +20,7 @@ def test_new_modules_are_wired_into_pipeline():
         "websocket_probe": ("modules.websocket_probe", "WebSocketProbeModule"),
         "api_schema_audit": ("modules.api_schema_audit", "APISchemaAuditModule"),
         "js_security_audit": ("modules.js_security_audit", "JSSecurityAuditModule"),
+        "endpoint_harvester": ("modules.endpoint_harvester", "EndpointHarvesterModule"),
     }
     post_parameter_modules = {
         "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),
@@ -56,7 +56,8 @@ def test_new_modules_are_wired_into_pipeline():
     assert groups["prototype_pollution"] == 8
     assert groups["deserialization_probe"] == 8
     assert groups["race_condition"] == 8
-    assert groups["graphql_audit"] == 8
+
+    assert groups["endpoint_harvester"] == 5
 
     assert groups["api_key_validator"] == 9
     assert groups["xxe_probe"] == 9
@@ -117,6 +118,11 @@ def test_active_probe_kwargs_use_prior_results():
     assert _build_kwargs("oauth_probe", all_results)["live_hosts"] == ["https://example.com"]
     assert _build_kwargs("idor_probe", all_results)["openapi_results"] is all_results["openapi_parser"]
     assert _build_kwargs("api_schema_audit", all_results)["openapi_results"] is all_results["openapi_parser"]
+
+    harvester_kwargs = _build_kwargs("endpoint_harvester", all_results)
+    assert harvester_kwargs["live_hosts"] == ["https://example.com"]
+    assert harvester_kwargs["fuzzer_results"] is all_results["fuzzer"]
+    assert _build_kwargs("parameter_discovery", all_results)["endpoint_results"] == {}
 
 
 def test_new_module_summaries():

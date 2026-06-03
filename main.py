@@ -56,6 +56,7 @@ PIPELINE: list[dict] = [
     {"name": "cors_checker","group": 4},
     {"name": "auth_probe",  "group": 4},
     {"name": "cmscan",      "group": 5},
+    {"name": "endpoint_harvester", "group": 5},
     {"name": "sourcemap_analyzer", "group": 5},
     {"name": "vhost_enum",  "group": 5},
     {"name": "takeover_checker", "group": 5},
@@ -76,7 +77,6 @@ PIPELINE: list[dict] = [
     {"name": "prototype_pollution",    "group": 8},
     {"name": "deserialization_probe",  "group": 8},
     {"name": "race_condition",         "group": 8},
-    {"name": "graphql_audit",          "group": 8},
     # group 9: remaining validators
     {"name": "api_key_validator", "group": 9},
     {"name": "xxe_probe",         "group": 9},
@@ -108,6 +108,7 @@ CLASS_MAP = {
     "cors_checker":("modules.cors_checker", "CORSCheckerModule"),
     "auth_probe":  ("modules.auth_probe",   "AuthProbeModule"),
     "cmscan":      ("modules.cmscan",       "CMSScanModule"),
+    "endpoint_harvester": ("modules.endpoint_harvester", "EndpointHarvesterModule"),
     "sourcemap_analyzer": ("modules.sourcemap_analyzer", "SourceMapAnalyzerModule"),
     "vhost_enum":  ("modules.vhost_enum",   "VHostEnumModule"),
     "takeover_checker": ("modules.takeover_checker", "TakeoverCheckerModule"),
@@ -121,7 +122,6 @@ CLASS_MAP = {
     "prototype_pollution": ("modules.prototype_pollution", "PrototypePollutionModule"),
     "xxe_probe": ("modules.xxe_probe", "XXEProbeModule"),
     "deserialization_probe": ("modules.deserialization_probe", "DeserializationProbeModule"),
-    "graphql_audit": ("modules.graphql_audit", "GraphQLAuditModule"),
     "race_condition": ("modules.race_condition", "RaceConditionModule"),
     "open_redirect_probe": ("modules.open_redirect_probe", "OpenRedirectProbeModule"),
     "api_key_validator": ("modules.api_key_validator", "APIKeyValidatorModule"),
@@ -153,6 +153,7 @@ MODULE_LABELS = {
     "cors_checker":"CORS Misconfiguration Scanner",
     "auth_probe":  "JWT & Cookie Security Checks",
     "cmscan":      "CMS Vulnerability Scanning",
+    "endpoint_harvester": "Endpoint Harvesting",
     "sourcemap_analyzer": "JavaScript Source Map Analysis",
     "vhost_enum":  "Virtual Host Enumeration",
     "takeover_checker": "Subdomain Takeover Checks",
@@ -166,7 +167,6 @@ MODULE_LABELS = {
     "prototype_pollution": "Server-Side Prototype Pollution",
     "xxe_probe": "OOB XXE Detection",
     "deserialization_probe": "Deserialization Indicators",
-    "graphql_audit": "GraphQL Abuse Audit",
     "race_condition": "Race Condition Candidates",
     "open_redirect_probe": "Open Redirect Detection",
     "api_key_validator": "API Key Leak Validation",
@@ -188,7 +188,7 @@ MODULE_LABELS = {
 ACTIVE_PROBE_MODULES = (
     "injection_probe", "http_smuggling", "oauth_probe", "cache_poison",
     "host_header_injection", "prototype_pollution", "xxe_probe",
-    "deserialization_probe", "graphql_audit", "race_condition",
+    "deserialization_probe", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe",
     "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
     "xss", "sql_injection",
@@ -223,6 +223,7 @@ CONFIG_PRESETS = {
             "xss": {"max_targets": 120, "max_requests": 300, "max_payloads": 4, "use_dalfox": True},
             "race_condition": {"active_probe": False},
             "api_key_validator": {"live_validation": False},
+            "endpoint_harvester": {"cariddi_intensive": True},
         },
     },
     "deep": {
@@ -237,6 +238,7 @@ CONFIG_PRESETS = {
             "js_security_audit": {"max_js": 300},
             "xss": {"max_targets": 250, "max_requests": 700, "max_payloads": 5, "use_dalfox": True},
             "race_condition": {"active_probe": False},
+            "endpoint_harvester": {"cariddi_intensive": True, "kiterunner": True, "max_seeds": 400},
         },
     },
     "intrusive": {
@@ -249,6 +251,9 @@ CONFIG_PRESETS = {
             "xss": {"max_targets": 300, "max_requests": 900, "max_payloads": 5, "use_dalfox": True},
             "race_condition": {"active_probe": True},
             "api_key_validator": {"live_validation": True},
+            "endpoint_harvester": {"cariddi_intensive": True, "kiterunner": True,
+                                   "kiterunner_intensive": True, "max_seeds": 600,
+                                   "retain_raw_secrets": True},
             "fuzzing": {"retain_raw_secrets": True},
             "secret_scanner": {"retain_raw_secrets": True},
             "sourcemap_analyzer": {"retain_raw_secrets": True},
@@ -321,6 +326,10 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["live_hosts"] = live
     elif name == "cmscan":
         kwargs["tech_results"] = all_results.get("techstack", {})
+    elif name == "endpoint_harvester":
+        kwargs["live_hosts"] = live
+        kwargs["recon_results"] = recon
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
     elif name == "sourcemap_analyzer":
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
     elif name == "vhost_enum":
@@ -331,6 +340,7 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
     elif name == "parameter_discovery":
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
         kwargs["openapi_results"] = all_results.get("openapi_parser", {})
+        kwargs["endpoint_results"] = all_results.get("endpoint_harvester", {})
     elif name == "injection_probe":
         kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
@@ -348,9 +358,6 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
         kwargs["openapi_results"] = all_results.get("openapi_parser", {})
     elif name == "deserialization_probe":
-        kwargs["live_hosts"] = live
-        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
-    elif name == "graphql_audit":
         kwargs["live_hosts"] = live
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
     elif name == "race_condition":
@@ -455,10 +462,14 @@ def _module_summary(name: str, result: dict) -> str:
                 f"crit={tier.get('critical', 0)}, high={tier.get('high', 0)}")
     elif name == "cmscan":
         return f"{result.get('total_findings', 0)} findings"
+    elif name == "endpoint_harvester":
+        return (f"{result.get('total_endpoints', 0)} endpoints, "
+                f"{len(result.get('parameters', []))} params, "
+                f"{len(result.get('secrets', []))} secret(s)")
     elif name in (
         "cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker",
         "http_smuggling", "oauth_probe", "cache_poison", "host_header_injection",
-        "prototype_pollution", "xxe_probe", "deserialization_probe", "graphql_audit",
+        "prototype_pollution", "xxe_probe", "deserialization_probe",
         "race_condition", "open_redirect_probe", "api_key_validator", "idor_probe",
         "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
         "xss", "sql_injection",
@@ -1127,10 +1138,10 @@ def _persist_snapshot(target: str, all_results: dict) -> Path | None:
             "injection_probe", "xss", "sql_injection", "http_smuggling",
             "oauth_probe", "cache_poison", "host_header_injection",
             "prototype_pollution", "xxe_probe", "deserialization_probe",
-            "graphql_audit", "race_condition", "open_redirect_probe",
+            "race_condition", "open_redirect_probe",
             "api_key_validator", "idor_probe", "jwt_audit", "websocket_probe",
             "api_schema_audit", "js_security_audit", "sourcemap_analyzer",
-            "takeover_checker", "correlator",
+            "endpoint_harvester", "takeover_checker", "correlator",
         ):
             findings = all_results.get(module_name, {}).get("findings", [])
             if findings:

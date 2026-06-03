@@ -212,6 +212,10 @@ REFERENCE_SETS = {
         "https://portswigger.net/web-security/cross-site-scripting",
         "https://owasp.org/www-community/attacks/xss/",
     ),
+    "endpoint": (
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/01-Information_Gathering/",
+        "https://cheatsheetseries.owasp.org/cheatsheets/Attack_Surface_Analysis_Cheat_Sheet.html",
+    ),
 }
 
 
@@ -534,6 +538,50 @@ FINDING_DEFINITIONS: dict[str, FindingDefinition] = {
         REFERENCE_SETS["xss"],
         "confirmed",
         ("xss", "reflected", "dalfox"),
+    ),
+    "endpoint_secret_exposed": FindingDefinition(
+        "endpoint_secret_exposed",
+        "Secret exposed in crawled response",
+        "HIGH",
+        0.78,
+        "endpoint",
+        "Endpoint harvesting crawled a response that contained a credential or token pattern.",
+        REFERENCE_SETS["endpoint"],
+        "candidate",
+        ("endpoint", "secret"),
+    ),
+    "endpoint_admin_surface": FindingDefinition(
+        "endpoint_admin_surface",
+        "Administrative / management endpoints discovered",
+        "MEDIUM",
+        0.65,
+        "endpoint",
+        "Endpoint harvesting surfaced admin or management routes that should not be externally reachable.",
+        REFERENCE_SETS["endpoint"],
+        "candidate",
+        ("endpoint", "admin", "attack-surface"),
+    ),
+    "endpoint_sensitive_file_reference": FindingDefinition(
+        "endpoint_sensitive_file_reference",
+        "References to sensitive files discovered",
+        "MEDIUM",
+        0.55,
+        "endpoint",
+        "Endpoint harvesting found references to backup, config, VCS or archive files. Existence is unverified.",
+        REFERENCE_SETS["endpoint"],
+        "candidate",
+        ("endpoint", "sensitive-file", "attack-surface"),
+    ),
+    "endpoint_api_surface": FindingDefinition(
+        "endpoint_api_surface",
+        "API attack surface discovered",
+        "INFO",
+        0.70,
+        "endpoint",
+        "Endpoint harvesting mapped API routes. Informational — review for missing authn/authz.",
+        REFERENCE_SETS["endpoint"],
+        "passive",
+        ("endpoint", "api", "attack-surface"),
     ),
 }
 

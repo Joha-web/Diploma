@@ -224,7 +224,6 @@ class AIReportModule(BaseModule):
             ("Open Redirect", "open_redirect_probe"),
             ("XXE", "xxe_probe"),
             ("Deserialization", "deserialization_probe"),
-            ("GraphQL", "graphql_audit"),
             ("Race Condition", "race_condition"),
             ("WebSocket", "websocket_probe"),
             ("API Schema", "api_schema_audit"),

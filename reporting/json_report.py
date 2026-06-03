@@ -14,10 +14,10 @@ ACTIVE_FINDING_MODULES = (
     "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
     "injection_probe", "xss", "sql_injection", "http_smuggling", "oauth_probe", "cache_poison",
     "host_header_injection", "prototype_pollution", "xxe_probe",
-    "deserialization_probe", "graphql_audit", "race_condition",
+    "deserialization_probe", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe",
     "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
-    "sourcemap_analyzer",
+    "sourcemap_analyzer", "endpoint_harvester",
     "takeover_checker", "correlator",
 )
 
@@ -137,7 +137,7 @@ def _summary(results: dict) -> dict:
     active_probe_modules = (
         "injection_probe", "xss", "sql_injection", "http_smuggling", "oauth_probe", "cache_poison",
         "host_header_injection", "prototype_pollution", "xxe_probe",
-        "deserialization_probe", "graphql_audit", "race_condition",
+        "deserialization_probe", "race_condition",
         "open_redirect_probe", "api_key_validator", "idor_probe",
         "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
     )
@@ -192,6 +192,8 @@ def _assets(results: dict) -> dict:
         "sourcemaps": results.get("sourcemap_analyzer", {}).get("maps", []),
         "cloud_assets": results.get("fuzzer", {}).get("cloud_assets", []),
         "graphql": results.get("fuzzer", {}).get("graphql_details", []),
+        "harvested_endpoints": results.get("endpoint_harvester", {}).get("all_endpoints", []),
+        "harvested_parameters": results.get("endpoint_harvester", {}).get("parameters", []),
         "screenshots": web.get("screenshots", []),
     }
 

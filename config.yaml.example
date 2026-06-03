@@ -168,6 +168,34 @@ scan:
     reuse_host_outputs: true
     extensions: [".php", ".asp", ".aspx", ".jsp", ".html", ".js", ".json"]
 
+  # Endpoint harvesting — wraps cariddi, LinkFinder, xnLinkFinder and kiterunner.
+  # gau / waybackurls run in the recon module, so passive harvesting is not
+  # duplicated here. Each tool is optional; a missing binary is skipped.
+  endpoint_harvester:
+    enabled: true
+    max_seeds: 200              # cap seed URLs fed to the crawlers
+    timeout: 300
+    reuse_outputs: true
+    # cariddi (crawl + secrets + params + juicy info)
+    cariddi: true
+    cariddi_intensive: false    # deeper same-domain crawl (bug_bounty+ presets)
+    cariddi_concurrency: 20
+    cariddi_collect_secrets: true
+    # LinkFinder (endpoints from JS bundles)
+    linkfinder: true
+    linkfinder_path: ""         # override path to linkfinder.py if not on PATH
+    max_js: 100                 # cap JS bundles scanned
+    # xnLinkFinder (endpoints + params from the seed list)
+    xnlinkfinder: true
+    xnlinkfinder_path: ""       # override path to xnLinkFinder.py if not on PATH
+    # kiterunner (aggressive API route brute-force) — off by default,
+    # enabled by the deep / intrusive presets.
+    kiterunner: false
+    kiterunner_intensive: false # use the larger apiroutes-large wordlist
+    kiterunner_concurrency: 10
+    kiterunner_wordlist: ""     # path to a .txt/.kite wordlist; empty → -A alias
+    kiterunner_max_routes: 0    # 0 = tool default
+
   cors_checker:
     enabled: true
     max_urls: 200
@@ -278,13 +306,6 @@ scan:
   deserialization_probe:
     enabled: true
     max_urls: 100
-    timeout: 10
-
-  graphql_audit:
-    enabled: true
-    max_endpoints: 30
-    batch_size: 8
-    depth: 12
     timeout: 10
 
   race_condition:

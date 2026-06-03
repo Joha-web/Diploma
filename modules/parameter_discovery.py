@@ -16,10 +16,12 @@ class ParameterDiscoveryModule(BaseModule):
 
     def __init__(self, target: str, output_dir: str, config: dict,
                  fuzzer_results: dict | None = None,
-                 openapi_results: dict | None = None):
+                 openapi_results: dict | None = None,
+                 endpoint_results: dict | None = None):
         super().__init__(target, output_dir, config)
         self.fuzzer_results = fuzzer_results or {}
         self.openapi_results = openapi_results or {}
+        self.endpoint_results = endpoint_results or {}
 
     def run(self) -> dict:
         cfg = self.config.get("scan", {}).get("parameter_discovery", {})
@@ -62,10 +64,16 @@ class ParameterDiscoveryModule(BaseModule):
         }
 
     def _select_targets(self) -> list[str]:
-        classified = self.fuzzer_results.get("classified", {}) or {}
         candidates: set[str] = set()
-        for category in ("auth", "api", "with_params"):
-            candidates.update(str(url) for url in classified.get(category, []) or [])
+        # fuzzer and endpoint_harvester both expose a same-shaped `classified` dict
+        for results in (self.fuzzer_results, self.endpoint_results):
+            classified = results.get("classified", {}) or {}
+            for category in ("auth", "api", "with_params"):
+                candidates.update(str(url) for url in classified.get(category, []) or [])
+        # harvested request parameters point at directly parameterised URLs
+        for item in self.endpoint_results.get("parameters", []) or []:
+            if item.get("url"):
+                candidates.add(str(item["url"]))
         for endpoint in self.openapi_results.get("endpoints", []) or []:
             if endpoint.get("url"):
                 candidates.add(endpoint["url"])

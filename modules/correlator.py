@@ -359,12 +359,12 @@ class CorrelatorModule(BaseModule):
     def _evidence_strings(self) -> list[str]:
         values: list[str] = []
         for module_name in (
-            "portscan", "webdetect", "fuzzer", "vulnscan", "cve_check",
+            "portscan", "webdetect", "fuzzer", "endpoint_harvester", "vulnscan", "cve_check",
             "takeover_checker", "openapi_parser", "parameter_discovery",
             "cors_checker", "auth_probe", "xss", "sql_injection",
             "host_header_injection", "idor_probe", "jwt_audit",
             "oauth_probe", "http_smuggling", "cache_poison",
-            "prototype_pollution", "xxe_probe", "graphql_audit",
+            "prototype_pollution", "xxe_probe",
             "injection_probe", "api_key_validator",
         ):
             data = self.all_results.get(module_name, {})

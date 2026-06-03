@@ -99,6 +99,8 @@ GO_TOOLS=(
     "github.com/tomnomnom/waybackurls@latest"
     "github.com/lc/gau/v2/cmd/gau@latest"
     "github.com/sensepost/gowitness@latest"
+    "github.com/edoardottt/cariddi/cmd/cariddi@latest"
+    "github.com/assetnote/kiterunner/cmd/kiterunner@latest"
 )
 
 info "Installing Go security tools..."
@@ -132,6 +134,30 @@ if pip3 install droopescan -q --break-system-packages 2>/dev/null || pip3 instal
     success "droopescan installed"
 else
     warn "droopescan — failed"
+fi
+
+# ═════════════════════════════════════════════════════════════
+# 3b. Endpoint-discovery tools: LinkFinder + xnLinkFinder
+# ═════════════════════════════════════════════════════════════
+info "Installing xnLinkFinder (pip)..."
+if pip3 install xnLinkFinder -q --break-system-packages 2>/dev/null || pip3 install xnLinkFinder -q 2>/dev/null; then
+    success "xnLinkFinder installed"
+else
+    warn "xnLinkFinder — failed"
+fi
+
+LINKFINDER_DIR="/opt/LinkFinder"
+if [[ ! -d "$LINKFINDER_DIR" ]]; then
+    info "Cloning LinkFinder..."
+    if git clone --depth 1 https://github.com/GerbenJavado/LinkFinder "$LINKFINDER_DIR" 2>/dev/null; then
+        pip3 install -r "$LINKFINDER_DIR/requirements.txt" -q --break-system-packages 2>/dev/null \
+            || pip3 install -r "$LINKFINDER_DIR/requirements.txt" -q 2>/dev/null || true
+        success "LinkFinder → $LINKFINDER_DIR (set scan.endpoint_harvester.linkfinder_path if needed)"
+    else
+        warn "LinkFinder clone failed"
+    fi
+else
+    success "LinkFinder already at $LINKFINDER_DIR"
 fi
 
 # ═════════════════════════════════════════════════════════════
@@ -201,6 +227,7 @@ TOOLS=(
     nmap masscan subfinder amass assetfinder dnsx httpx
     nuclei interactsh-client katana ffuf whatweb wafw00f wpscan joomscan
     droopescan arjun gowitness waybackurls gau ollama
+    cariddi kiterunner xnLinkFinder
 )
 
 FOUND=0; MISSING=0

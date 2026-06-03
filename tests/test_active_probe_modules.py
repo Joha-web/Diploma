@@ -4,7 +4,6 @@ from modules.api_key_validator import APIKeyValidatorModule
 from modules.api_schema_audit import APISchemaAuditModule
 from modules.cache_poison import CachePoisonModule
 from modules.deserialization_probe import DeserializationProbeModule
-from modules.graphql_audit import GraphQLAuditModule
 from modules.host_header_injection import HostHeaderInjectionModule
 from modules.http_smuggling import HTTPSmugglingModule
 from modules.idor_probe import IDORProbeModule
@@ -240,120 +239,6 @@ def test_deserialization_detects_serialized_parameter(tmp_path):
     marker = module._serialized_marker("rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA==")
 
     assert marker == "java_serialized_base64"
-
-
-def test_graphql_audit_detects_batching(tmp_path, monkeypatch):
-    module = GraphQLAuditModule("example.com", str(tmp_path), {})
-    monkeypatch.setattr(module, "http_post", lambda *args, **kwargs: Response(data=[{"data": {"__typename": "Query"}}] * 2))
-
-    findings = module._check_batching("https://example.com/graphql", object(), {"batch_size": 2})
-
-    assert findings[0]["id"] == "graphql_batching_enabled"
-
-
-def test_graphql_audit_detects_field_suggestions(tmp_path, monkeypatch):
-    """Did-you-mean style field suggestions leak schema even with introspection off."""
-    module = GraphQLAuditModule("example.com", str(tmp_path), {})
-    body = (
-        '{"errors":[{"message":"Cannot query field \\"reconxNonExistentField0123\\" '
-        'on type \\"Query\\". Did you mean \\"user\\" or \\"users\\"?"}]}'
-    )
-    monkeypatch.setattr(module, "http_post", lambda *a, **k: Response(text=body, status_code=400))
-
-    findings = module._check_field_suggestions("https://example.com/graphql", object(), {})
-
-    assert findings, "expected a field-suggestion finding"
-    assert findings[0]["id"] == "graphql_field_suggestions_enabled"
-    assert "user" in findings[0]["evidence"]["suggestions"]
-
-
-def test_graphql_audit_field_suggestions_silent_when_clean(tmp_path, monkeypatch):
-    """If the server's error has no 'Did you mean', do not fire."""
-    module = GraphQLAuditModule("example.com", str(tmp_path), {})
-    body = '{"errors":[{"message":"Cannot query field on type Query."}]}'
-    monkeypatch.setattr(module, "http_post", lambda *a, **k: Response(text=body, status_code=400))
-
-    assert module._check_field_suggestions("https://example.com/graphql", object(), {}) == []
-
-
-def test_graphql_audit_detects_alias_amplification(tmp_path, monkeypatch):
-    """If the server resolves all N aliased fields with no rate-limit warning,
-    flag the amplification vector.
-    """
-    module = GraphQLAuditModule("example.com", str(tmp_path), {})
-    # Build a fake response where every aliased field resolves.
-    alias_count = 5
-    data = {f"a{i}": "Query" for i in range(alias_count)}
-    monkeypatch.setattr(
-        module, "http_post",
-        lambda *a, **k: Response(data={"data": data}, status_code=200),
-    )
-
-    findings = module._check_alias_amplification(
-        "https://example.com/graphql", object(),
-        {"alias_count": alias_count},
-    )
-
-    assert findings, "expected an alias-amplification finding"
-    assert findings[0]["id"] == "graphql_alias_amplification"
-    assert findings[0]["evidence"]["resolved_count"] == alias_count
-
-
-def test_graphql_audit_alias_amplification_silent_when_rate_limited(tmp_path, monkeypatch):
-    """If the server returns a complexity / rate-limit error, do not fire."""
-    module = GraphQLAuditModule("example.com", str(tmp_path), {})
-    monkeypatch.setattr(
-        module, "http_post",
-        lambda *a, **k: Response(text='{"errors":[{"message":"Query complexity too high"}]}', status_code=400),
-    )
-
-    findings = module._check_alias_amplification(
-        "https://example.com/graphql", object(),
-        {"alias_count": 10},
-    )
-
-    assert findings == []
-
-
-def test_graphql_audit_detects_mutation_over_get(tmp_path, monkeypatch):
-    """A mutation resolved via GET is a CSRF vector."""
-    module = GraphQLAuditModule("example.com", str(tmp_path), {})
-    monkeypatch.setattr(
-        module, "http_get",
-        lambda *a, **k: Response(data={"data": {"__typename": "Mutation"}}, status_code=200),
-    )
-
-    findings = module._check_get_mutation("https://example.com/graphql", object(), {})
-
-    assert findings and findings[0]["id"] == "graphql_mutation_over_get"
-
-
-def test_graphql_audit_get_mutation_silent_when_server_rejects(tmp_path, monkeypatch):
-    """If the server says mutations must use POST, do not fire."""
-    module = GraphQLAuditModule("example.com", str(tmp_path), {})
-    monkeypatch.setattr(
-        module, "http_get",
-        lambda *a, **k: Response(text='{"errors":[{"message":"Mutations are not supported over GET"}]}', status_code=400),
-    )
-
-    assert module._check_get_mutation("https://example.com/graphql", object(), {}) == []
-
-
-def test_graphql_audit_detects_exposed_graphiql_ide(tmp_path, monkeypatch):
-    """Probing for /graphiql, /playground, etc. and matching IDE bootstrap markers."""
-    module = GraphQLAuditModule("example.com", str(tmp_path), {})
-
-    def fake_get(url, *a, **k):
-        if url.endswith("/graphiql"):
-            return Response(text="<html><body>GraphiQL bootstrap</body></html>", status_code=200)
-        return Response(status_code=404)
-
-    monkeypatch.setattr(module, "http_get", fake_get)
-
-    findings = module._check_ide_exposure("https://example.com/graphql", object(), {})
-
-    assert findings and findings[0]["id"] == "graphql_ide_exposed"
-    assert "GraphiQL" in findings[0]["evidence"]["ide_markers"]
 
 
 def test_race_condition_candidates_from_keywords(tmp_path):

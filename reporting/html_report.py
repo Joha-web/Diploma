@@ -95,7 +95,6 @@ class HTMLReportGenerator:
             ("prototype-pollution", "Prototype Pollution Findings", r.get("prototype_pollution", {})),
             ("xxe-probe", "XXE Findings", r.get("xxe_probe", {})),
             ("deserialization-probe", "Deserialization Findings", r.get("deserialization_probe", {})),
-            ("graphql-audit", "GraphQL Audit Findings", r.get("graphql_audit", {})),
             ("race-condition", "Race Condition Findings", r.get("race_condition", {})),
             ("open-redirect-probe", "Open Redirect Findings", r.get("open_redirect_probe", {})),
             ("api-key-validator", "API Key Validation Findings", r.get("api_key_validator", {})),
@@ -108,6 +107,8 @@ class HTMLReportGenerator:
         extra_finding_sections = [
             ("secret-scanner", "Git Secret Findings", secret.get("findings", [])),
             ("fuzzer-findings", "Fuzzer Findings", fuzz.get("findings", [])),
+            ("endpoint-harvester", "Endpoint Harvester Findings",
+             r.get("endpoint_harvester", {}).get("findings", [])),
             ("email-security", "Email DNS Security", email_security.get("findings", [])),
             ("cors", "CORS Findings", cors.get("findings", [])),
             ("auth", "Auth Findings", auth.get("findings", [])),
