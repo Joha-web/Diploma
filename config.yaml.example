@@ -246,15 +246,15 @@ scan:
 
   # SSRF: scores every discovered parameter for SSRF likelihood (name + value
   # shape + endpoint context) — always on, non-intrusive — then confirms the
-  # high-scoring ones with SSRFmap. SSRFmap is ACTIVE (it makes the server hit
-  # internal services / cloud metadata), so it runs only under the intrusive
-  # preset (allow_write) or scan.ssrf_probe.force: true.
+  # high-scoring ones with SSRFmap. SSRFmap runs AUTOMATICALLY whenever it is
+  # installed; it is ACTIVE (makes the server reach internal services / cloud
+  # metadata) against in-scope scored targets. Set use_ssrfmap: false to score
+  # candidates only without running SSRFmap.
   ssrf_probe:
     enabled: true
     possible_threshold: 0.35   # score to report a candidate
     strong_threshold: 0.6      # score to hand to SSRFmap
-    use_ssrfmap: true
-    force: false               # run SSRFmap even without allow_write (opt-in)
+    use_ssrfmap: true          # run SSRFmap automatically on high-scoring candidates
     max_targets: 15            # cap SSRFmap runs (high-scoring candidates)
     ssrfmap_path: ""           # override path to ssrfmap.py if not /opt/SSRFmap
     ssrfmap_modules: "portscan,readfiles,aws,gce,alibaba,digitalocean"

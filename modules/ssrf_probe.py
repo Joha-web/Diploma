@@ -12,9 +12,10 @@ Two layers:
 
   2. **Confirm with SSRFmap.** For the high-scoring candidates, generate a raw
      HTTP request file and run SSRFmap (swisskyrepo/SSRFmap) against the target
-     parameter. This is active/intrusive (it makes the server hit internal
-     services and cloud metadata), so it only runs under the intrusive preset
-     (`scan.allow_write`) or an explicit opt-in. The scoring layer always runs.
+     parameter. This runs automatically whenever SSRFmap is installed and the
+     module is enabled (set `scan.ssrf_probe.use_ssrfmap: false` to score
+     candidates only). It is active — it makes the server reach internal
+     services and cloud metadata — but only against in-scope, scored targets.
 """
 
 from __future__ import annotations
@@ -100,18 +101,17 @@ class SSRFProbeModule(ActiveProbeBase):
 
         findings: list[dict] = [self._candidate_finding(c, strong) for c in scored]
 
-        # SSRFmap confirmation — active, gated.
+        # SSRFmap confirmation — runs automatically whenever it is enabled and
+        # the tool is installed (set use_ssrfmap: false to score candidates only).
         ssrfmap_runs: list[dict] = []
-        allow_write = self.config.get("scan", {}).get("allow_write", False)
-        run_ssrfmap = cfg.get("use_ssrfmap", True) and (allow_write or cfg.get("force", False))
+        run_ssrfmap = cfg.get("use_ssrfmap", True)
         ssrfmap_cmd = self._ssrfmap_command(cfg) if run_ssrfmap else None
 
         if scored and run_ssrfmap and not ssrfmap_cmd:
             self.info("SSRFmap not found (set scan.ssrf_probe.ssrfmap_path or /opt/SSRFmap) "
                       "— reporting scored candidates only")
         elif scored and not run_ssrfmap:
-            self.info(f"{len(scored)} SSRF candidate(s) scored; SSRFmap skipped "
-                      "(needs intrusive preset / allow_write)")
+            self.info(f"{len(scored)} SSRF candidate(s) scored; SSRFmap disabled (use_ssrfmap: false)")
         elif ssrfmap_cmd:
             strong_candidates = [c for c in scored if c["score"] >= strong]
             targets = self.limit(strong_candidates, "max_targets", 15)
@@ -130,7 +130,6 @@ class SSRFProbeModule(ActiveProbeBase):
             "candidate_count": len(scored),
             "ssrfmap_runs": ssrfmap_runs,
             "ssrfmap_used": bool(ssrfmap_cmd),
-            "intrusive_enabled": allow_write,
         }
 
     def summary(self) -> str:

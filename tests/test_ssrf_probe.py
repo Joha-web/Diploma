@@ -61,18 +61,37 @@ def test_injection_probe_findings_force_promoted(tmp_path):
     assert weird["forced"] is True
 
 
-def test_run_scores_candidates_but_skips_ssrfmap_without_allow_write(tmp_path):
+def test_run_scores_candidates_and_reports_when_ssrfmap_missing(tmp_path, monkeypatch):
     module = SSRFProbeModule(
         "example.com", str(tmp_path),
-        {"scope": {"enforce": False}, "scan": {"allow_write": False, "ssrf_probe": {}}},
+        {"scope": {"enforce": False}, "scan": {"ssrf_probe": {}}},
         parameter_results={"parameters": [
             {"url": "https://example.com/proxy?url=https://intra", "param": "url"},
         ]},
     )
+    # SSRFmap not installed → still scores + reports candidates.
+    monkeypatch.setattr(module, "_ssrfmap_command", lambda cfg: None)
     result = module.run()
     assert result["candidate_count"] == 1
     assert result["ssrfmap_used"] is False
     assert result["findings"][0]["id"] == "ssrf_candidate_parameter"
+
+
+def test_run_skips_ssrfmap_when_use_ssrfmap_false(tmp_path, monkeypatch):
+    module = SSRFProbeModule(
+        "example.com", str(tmp_path),
+        {"scope": {"enforce": False}, "scan": {"ssrf_probe": {"use_ssrfmap": False}}},
+        parameter_results={"parameters": [
+            {"url": "https://example.com/proxy?url=https://intra", "param": "url"},
+        ]},
+    )
+    # Even if SSRFmap is installed, use_ssrfmap:false must not run it.
+    monkeypatch.setattr(module, "_ssrfmap_command", lambda cfg: ["python3", "/opt/SSRFmap/ssrfmap.py"])
+    called = {"exec": False}
+    monkeypatch.setattr(module, "exec", lambda *a, **k: called.__setitem__("exec", True))
+    result = module.run()
+    assert called["exec"] is False
+    assert result["ssrfmap_used"] is False
 
 
 def test_raw_request_contains_param_and_host(tmp_path):
