@@ -12,32 +12,42 @@ import os
 import re
 from modules.base import BaseModule
 
+# wpscan -e value enumerating everything: all plugins/themes, timthumbs,
+# config backups, db exports, users and media IDs. Aggressive but thorough.
+WPSCAN_FULL_ENUMERATE = "ap,at,tt,cb,dbe,u,m"
+
 CMS_SCANNERS: dict[str, dict] = {
     "WordPress": {
         "tool": "wpscan",
         "build": lambda url, cfg: [
             "wpscan", "--url", url,
-            "--enumerate", cfg.get("enumerate", "vp,vt,u,tt"),
+            # -e with the full enumeration set (configurable via scan.cms.enumerate)
+            "-e", cfg.get("enumerate", WPSCAN_FULL_ENUMERATE),
             "--random-user-agent", "--no-banner",
             "--format", "json",
+            *(["--plugins-detection", cfg["plugins_detection"]]
+              if cfg.get("plugins_detection") else []),
+            # Pull live vulnerability data from the WPScan API when a token exists.
             *(["--api-token", cfg["wpscan_api_token"]]
               if cfg.get("wpscan_api_token") else []),
         ],
     },
     "Joomla": {
         "tool": "joomscan",
-        "build": lambda url, cfg: ["joomscan", "-u", url],
+        # -ec → full component enumeration
+        "build": lambda url, cfg: ["joomscan", "-u", url, "-ec"],
     },
     "Drupal": {
         "tool": "droopescan",
+        # -e a → enumerate all (version, plugins, themes, interesting URLs)
         "build": lambda url, cfg: [
-            "droopescan", "scan", "drupal", "-u", url, "-t", "8"
+            "droopescan", "scan", "drupal", "-u", url, "-e", "a", "-t", "8"
         ],
     },
     "Moodle": {
         "tool": "droopescan",
         "build": lambda url, cfg: [
-            "droopescan", "scan", "moodle", "-u", url, "-t", "8"
+            "droopescan", "scan", "moodle", "-u", url, "-e", "a", "-t", "8"
         ],
     },
 }
@@ -63,6 +73,10 @@ class CMSScanModule(BaseModule):
         wpscan_token = self._wpscan_api_token(cms_cfg)
         if wpscan_token:
             cms_cfg["wpscan_api_token"] = wpscan_token
+        wordpress_detected = "WordPress" in cms_targets
+        if wordpress_detected and not wpscan_token:
+            self.warn("No WPScan API token — CVE/vulnerability data will be limited "
+                      "(set api_keys.wpscan, WPSCAN_API_TOKEN, or scan.cms.wpscan_api_token)")
         scans: list[dict] = []
 
         for cms_name, urls in cms_targets.items():
@@ -83,12 +97,17 @@ class CMSScanModule(BaseModule):
                 raw.write_text(result.stdout or "", encoding="utf-8")
 
                 findings = self._parse(cms_name, info["tool"], result.stdout or "", url)
+                # Surface the missing-token limitation directly in the report.
+                if cms_name == "WordPress" and not wpscan_token:
+                    findings.insert(0, self._no_token_finding())
+
                 scans.append({
                     "cms":            cms_name,
                     "url":            url,
                     "tool":           info["tool"],
                     "findings":       findings,
                     "findings_count": len(findings),
+                    "api_token_used": bool(wpscan_token) if cms_name == "WordPress" else None,
                 })
 
                 if findings:
@@ -101,7 +120,24 @@ class CMSScanModule(BaseModule):
         if total:
             self.warn(f"⚠  Total CMS findings: {total}")
 
-        return {"scans": scans, "total_findings": total}
+        return {
+            "scans": scans,
+            "total_findings": total,
+            "wordpress_detected": wordpress_detected,
+            "wpscan_api_token_used": bool(wpscan_token),
+        }
+
+    @staticmethod
+    def _no_token_finding() -> dict:
+        return {
+            "type": "wpscan_no_api_token",
+            "severity": "INFO",
+            "name": "WPScan API token",
+            "title": ("No WPScan API token configured — wpscan ran without the WPScan "
+                      "Vulnerability Database, so plugin/theme/core CVE data is limited. "
+                      "Set api_keys.wpscan, the WPSCAN_API_TOKEN env var, or "
+                      "scan.cms.wpscan_api_token to enable full vulnerability lookups."),
+        }
 
     # ── CMS detection ─────────────────────────────────────────────────────────
 

@@ -408,8 +408,11 @@ scan:
     enabled: true
 
   cms:
+    # WordPress → wpscan, Joomla → joomscan -ec, Drupal/Moodle → droopescan -e a.
+    # wpscan uses the API token for live CVE data; if none is set the report says so.
     wpscan_api_token: ""  # optional override; falls back to api_keys.wpscan / WPSCAN_API_TOKEN
-    enumerate: "vp,vt,u,tt"
+    enumerate: "ap,at,tt,cb,dbe,u,m"   # wpscan -e: full enumeration set
+    plugins_detection: ""              # "", "passive", "mixed" or "aggressive" (aggressive = slow)
 
   cve_check:
     enabled: true

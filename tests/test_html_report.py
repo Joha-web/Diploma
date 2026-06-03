@@ -102,3 +102,35 @@ def test_report_shows_sourcemap_and_apikey_evidence(tmp_path):
     # #1 attack-simulation policy text is gone, #4 cache poisoning section is gone
     assert "Attack simulation policy" not in html
     assert "Cache Poisoning Findings" not in html
+
+
+def test_report_shows_wpscan_missing_token_banner(tmp_path):
+    generator = HTMLReportGenerator(str(tmp_path), "wp.example.com", "0m 1s")
+    generator.generate({
+        "cmscan": {
+            "total_findings": 1, "wordpress_detected": True, "wpscan_api_token_used": False,
+            "scans": [{
+                "cms": "WordPress", "url": "https://wp.example.com", "tool": "wpscan",
+                "findings_count": 1,
+                "findings": [{"type": "wpscan_no_api_token", "severity": "INFO",
+                              "name": "WPScan API token",
+                              "title": "No WPScan API token configured — vulnerability data limited."}],
+            }],
+        }
+    })
+    html = tmp_path.joinpath("report.html").read_text(encoding="utf-8")
+    assert "No WPScan API token configured" in html   # section banner
+    assert "wpscan_no_api_token" in html              # per-scan notice row
+
+
+def test_report_no_banner_when_wpscan_token_present(tmp_path):
+    generator = HTMLReportGenerator(str(tmp_path), "wp.example.com", "0m 1s")
+    generator.generate({
+        "cmscan": {
+            "total_findings": 0, "wordpress_detected": True, "wpscan_api_token_used": True,
+            "scans": [{"cms": "WordPress", "url": "https://wp.example.com", "tool": "wpscan",
+                       "findings_count": 0, "findings": []}],
+        }
+    })
+    html = tmp_path.joinpath("report.html").read_text(encoding="utf-8")
+    assert "No WPScan API token configured" not in html

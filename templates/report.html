@@ -1289,6 +1289,14 @@ function applyAllFindingsFilter() {
       <span class="count-badge">{{ cms.total_findings }}</span>
     </div>
   </div>
+  {% if cms.wordpress_detected and not cms.wpscan_api_token_used %}
+  <div style="margin-bottom:12px;padding:10px 14px;background:var(--surface);border-radius:8px;font-size:.84em;border-left:3px solid var(--orange,#e0a458)">
+    ⚠ <strong>No WPScan API token configured.</strong> wpscan ran without the WPScan
+    Vulnerability Database, so WordPress plugin/theme/core CVE results are limited.
+    Set <code>api_keys.wpscan</code>, the <code>WPSCAN_API_TOKEN</code> env var, or
+    <code>scan.cms.wpscan_api_token</code> for full vulnerability lookups.
+  </div>
+  {% endif %}
   {% for s in cms.scans %}
   <details {% if s.findings_count > 0 %}open{% endif %}>
     <summary>
