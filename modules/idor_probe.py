@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 from difflib import SequenceMatcher
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from modules.active_probe_base import ActiveProbeBase
 
@@ -25,7 +25,9 @@ HIGH_VALUE_PARAM_RE = re.compile(
     re.I,
 )
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
-INTEGER_ID_RE = re.compile(r"^[1-9][0-9]{0,11}$")
+# Recognise integer IDs including 0 and negatives (e.g. id=0, id=-1) so they are
+# not silently ignored as IDOR candidates.
+INTEGER_ID_RE = re.compile(r"^-?[0-9]{1,12}$")
 PATH_ID_RE = re.compile(r"/([a-z0-9_-]{2,40})/([0-9]{1,12}|[0-9a-f-]{24,36})(?=/|$|\?)", re.I)
 OPENAPI_PARAM_RE = re.compile(r"\{([^}]+)\}")
 SENSITIVE_RESOURCE_RE = re.compile(
@@ -97,6 +99,8 @@ class IDORProbeModule(ActiveProbeBase):
         if self.module_config().get("check_anonymous", False):
             anon_findings = self._check_anonymous_access(candidates)
             findings.extend(anon_findings)
+        if self.module_config().get("enumerate_ids", False):
+            findings.extend(self._enumerate_ids(candidates, self.module_config()))
 
         findings = self.dedup_findings(findings)
         self.save_json(candidates, "idor_candidates.json")
@@ -189,6 +193,7 @@ class IDORProbeModule(ActiveProbeBase):
                     "url": url,
                     "kind": "query",
                     "param": param,
+                    "value": value,
                     "value_shape": self._value_shape(value),
                     "source": source,
                     "method": method,
@@ -210,6 +215,7 @@ class IDORProbeModule(ActiveProbeBase):
                     "url": url,
                     "kind": "path",
                     "resource": resource,
+                    "value": value,
                     "value_shape": shape,
                     "source": source,
                     "method": method,
@@ -313,6 +319,145 @@ class IDORProbeModule(ActiveProbeBase):
                     "body_sha256": self._body_hash(resp.text or ""),
                 },
             ))
+        return findings
+
+    # ── Numeric ID enumeration (the IDOR "wordlist") ────────────────────────────
+    @staticmethod
+    def _id_value_set(baseline: int | None, cfg: dict) -> list[str]:
+        """The set of integer IDs to substitute. ALWAYS includes 0 and negatives.
+
+        "Try all numbers" is unbounded, so this is a configurable but exhaustive
+        sweep: zero, a run of negatives, a low run from 1, the baseline's mirror
+        (-baseline), and a window around the observed baseline. Order puts the
+        interesting edge cases (0, negatives) first.
+        """
+        low = max(0, int(cfg.get("enum_low_range", 25)))
+        window = max(0, int(cfg.get("enum_window", 5)))
+        neg = max(0, int(cfg.get("enum_negative_count", 10)))
+        cap = max(1, int(cfg.get("max_ids_per_candidate", 60)))
+
+        ordered: list[int] = [0]
+        ordered += [-i for i in range(1, neg + 1)]          # -1 .. -neg
+        ordered += list(range(1, low + 1))                  # 1 .. low
+        if baseline is not None:
+            ordered.append(-baseline)                       # mirror of the real id
+            ordered += list(range(max(0, baseline - window), baseline + window + 1))
+
+        seen: set[int] = set()
+        uniq: list[int] = []
+        for value in ordered:
+            if value not in seen:
+                seen.add(value)
+                uniq.append(value)
+        return [str(value) for value in uniq[:cap]]
+
+    @staticmethod
+    def _sub_query_value(url: str, param: str, value: str) -> str:
+        parsed = urlparse(url)
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        names = {key for key, _ in pairs}
+        updated = [(key, value if key == param else existing) for key, existing in pairs]
+        if param not in names:
+            updated.append((param, value))
+        return urlunparse(parsed._replace(query=urlencode(updated, doseq=True)))
+
+    @staticmethod
+    def _sub_path_value(url: str, old_value: str, value: str) -> str:
+        parsed = urlparse(url)
+        new_path = re.sub(rf"/{re.escape(str(old_value))}(?=/|$)",
+                          f"/{value}", parsed.path, count=1)
+        return urlunparse(parsed._replace(path=new_path))
+
+    def _enumerate_ids(self, candidates: list[dict], cfg: dict) -> list[dict]:
+        """Substitute a full integer sweep (0, negatives, ...) into integer-ID
+        candidates and flag endpoints whose object space is walkable."""
+        profile = (self.profile_names_with_auth() or ["anonymous"])[0]
+        max_candidates = int(cfg.get("max_enum_candidates", 10))
+        max_requests = int(cfg.get("max_enum_requests", 200))
+        min_distinct = int(cfg.get("enum_min_distinct", 2))
+        guard_id = str(cfg.get("enum_guard_id", 988776655))
+        timeout = self.request_timeout()
+
+        enum_targets = [
+            item for item in candidates
+            if item.get("value_shape") == "integer"
+            and re.fullmatch(r"-?\d{1,12}", str(item.get("value", "")))
+            and str(item.get("method", "GET")).upper() in ("GET", "HEAD")
+            and item.get("kind") in ("query", "path")
+        ]
+        if not enum_targets:
+            return []
+        self.info(f"ID enumeration over {min(len(enum_targets), max_candidates)} "
+                  "integer candidate(s) (0, negatives, range)")
+
+        findings: list[dict] = []
+        sent = 0
+        for item in enum_targets[:max_candidates]:
+            if sent >= max_requests:
+                break
+            baseline = int(item["value"])
+
+            def make_url(value: str) -> str:
+                if item["kind"] == "query":
+                    return self._sub_query_value(item["url"], item["param"], value)
+                return self._sub_path_value(item["url"], item["value"], value)
+
+            # Guard: a near-certainly-nonexistent ID to learn the not-found page.
+            guard_resp = self.get_with_profile(make_url(guard_id), profile, timeout=timeout, verify=False)
+            sent += 1
+            guard_ok = guard_resp is not None and self._successful(guard_resp)
+            guard_hash = self._body_hash(guard_resp.text or "") if guard_resp is not None else ""
+
+            accessible: list[dict] = []
+            body_hashes: set[str] = set()
+            for value in self._id_value_set(baseline, cfg):
+                if sent >= max_requests:
+                    break
+                resp = self.get_with_profile(make_url(value), profile, timeout=timeout, verify=False)
+                self.jitter_sleep()
+                sent += 1
+                if resp is None or not self._successful(resp):
+                    continue
+                body_hash = self._body_hash(resp.text or "")
+                # A 2xx that's byte-identical to the nonexistent-ID page is the
+                # generic not-found/SPA shell, not a real object — skip it.
+                if guard_ok and body_hash == guard_hash:
+                    continue
+                accessible.append({
+                    "id": value, "status": resp.status_code,
+                    "length": len(resp.text or ""), "body_sha256": body_hash,
+                })
+                body_hashes.add(body_hash)
+
+            # Enumerable when distinct objects appear across the sweep, or any
+            # object is reachable while the nonexistent guard ID is not.
+            if accessible and (len(body_hashes) >= min_distinct or not guard_ok):
+                negatives_hit = [a["id"] for a in accessible if a["id"].startswith("-")]
+                subject = str(item.get("param") or item.get("resource") or "")
+                high_value = bool(HIGH_VALUE_PARAM_RE.search(subject)
+                                  or SENSITIVE_RESOURCE_RE.search(subject))
+                findings.append(self.make_finding(
+                    "idor_enumerable_object",
+                    make_url(str(baseline)),
+                    evidence={
+                        "kind": item.get("kind"),
+                        "param": item.get("param"),
+                        "resource": item.get("resource"),
+                        "baseline_id": baseline,
+                        "profile": profile,
+                        "ids_tried": len(self._id_value_set(baseline, cfg)) + 1,
+                        "accessible_count": len(accessible),
+                        "distinct_objects": len(body_hashes),
+                        "zero_accessible": any(a["id"] == "0" for a in accessible),
+                        "negative_ids_accessible": negatives_hit[:10],
+                        "accessible_sample": accessible[:15],
+                        "guard_id": guard_id,
+                        "guard_successful": guard_ok,
+                    },
+                    severity="HIGH" if high_value else "MEDIUM",
+                    confidence=min(0.88, 0.55 + 0.05 * len(body_hashes)),
+                    exploitability="active",
+                ))
         return findings
 
     @staticmethod

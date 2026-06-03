@@ -1,4 +1,5 @@
 import json
+import re
 
 from modules.api_key_validator import APIKeyValidatorModule
 from modules.api_schema_audit import APISchemaAuditModule
@@ -364,6 +365,70 @@ def test_idor_profile_similarity_uses_json_values_not_only_keys(tmp_path):
     similarity = module._response_similarity(resp_a, resp_b)
 
     assert similarity < 0.92
+
+
+def test_idor_id_value_set_includes_zero_and_negatives(tmp_path):
+    module = IDORProbeModule("example.com", str(tmp_path), {})
+    values = module._id_value_set(42, {"enum_low_range": 5, "enum_negative_count": 3, "enum_window": 1})
+    assert "0" in values            # zero included
+    assert "-1" in values           # negatives included
+    assert "-42" in values          # mirror of the baseline
+    assert "1" in values and "5" in values   # low range
+    assert "41" in values and "43" in values # window around baseline
+
+
+def test_idor_integer_shape_recognises_zero_and_negative(tmp_path):
+    module = IDORProbeModule("example.com", str(tmp_path), {})
+    assert module._value_shape("0") == "integer"
+    assert module._value_shape("-7") == "integer"
+
+
+def test_idor_sub_query_and_path_substitution(tmp_path):
+    module = IDORProbeModule("example.com", str(tmp_path), {})
+    assert module._sub_query_value("https://x.com/a?id=42&p=1", "id", "-1") == "https://x.com/a?id=-1&p=1"
+    assert module._sub_path_value("https://x.com/users/42/profile", "42", "0") == "https://x.com/users/0/profile"
+
+
+def test_idor_enumerate_ids_flags_walkable_object_space(tmp_path, monkeypatch):
+    module = IDORProbeModule(
+        "example.com", str(tmp_path),
+        {"scan": {"idor_probe": {"enumerate_ids": True}}},
+        parameter_results={"parameterized_targets": ["https://example.com/api/users?user_id=10"]},
+    )
+    cfg = {"enum_low_range": 4, "enum_negative_count": 2, "enum_window": 1,
+           "enum_guard_id": 999999, "enum_min_distinct": 2}
+
+    def fake_get(url, profile, **kwargs):
+        # nonexistent guard id → 404; real ids (incl 0 / negatives) → distinct bodies
+        m = re.search(r"user_id=(-?\d+)", url)
+        rid = m.group(1) if m else ""
+        if rid == "999999":
+            return Response(status_code=404, text="not found")
+        return Response(status_code=200, text=f"user object {rid}")
+
+    monkeypatch.setattr(module, "get_with_profile", fake_get)
+    candidates = module._candidates()
+    findings = module._enumerate_ids(candidates, cfg)
+
+    assert len(findings) == 1
+    ev = findings[0]["evidence"]
+    assert findings[0]["id"] == "idor_enumerable_object"
+    assert ev["zero_accessible"] is True
+    assert ev["negative_ids_accessible"]          # negatives returned objects
+    assert ev["guard_successful"] is False
+
+
+def test_idor_enumerate_ids_silent_when_everything_is_notfound_page(tmp_path, monkeypatch):
+    module = IDORProbeModule(
+        "example.com", str(tmp_path),
+        {"scan": {"idor_probe": {"enumerate_ids": True}}},
+        parameter_results={"parameterized_targets": ["https://example.com/api/users?user_id=10"]},
+    )
+    # Every id (including the guard) returns the same 200 SPA shell → not walkable.
+    monkeypatch.setattr(module, "get_with_profile",
+                        lambda url, profile, **kw: Response(status_code=200, text="<html>app shell</html>"))
+    findings = module._enumerate_ids(module._candidates(), {"enum_low_range": 4})
+    assert findings == []
 
 
 def test_jwt_audit_flags_weak_secret_and_header_issues(tmp_path):

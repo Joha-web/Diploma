@@ -346,6 +346,19 @@ scan:
     max_anonymous_requests: 20
     similarity_threshold: 0.92
     timeout: 10
+    # Active numeric ID enumeration: substitute a full integer sweep into
+    # integer-ID candidates — ALWAYS includes 0 and negative IDs — and flag
+    # endpoints whose object space is walkable. Off by default (active/noisy);
+    # enabled by the deep / intrusive presets.
+    enumerate_ids: false
+    enum_low_range: 25          # also try 1..25
+    enum_window: 5              # and baseline-5 .. baseline+5
+    enum_negative_count: 10     # and -1 .. -10
+    max_ids_per_candidate: 60   # cap on the per-candidate sweep
+    max_enum_candidates: 10     # cap on how many endpoints to enumerate
+    max_enum_requests: 200      # global request budget for enumeration
+    enum_min_distinct: 2        # distinct accessible objects required to flag
+    enum_guard_id: 988776655    # near-certainly-nonexistent ID for the baseline
 
   jwt_audit:
     enabled: true

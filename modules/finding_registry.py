@@ -249,6 +249,19 @@ FINDING_DEFINITIONS: dict[str, FindingDefinition] = {
         "candidate",
         ("idor", "bola", "openapi"),
     ),
+    "idor_enumerable_object": FindingDefinition(
+        "idor_enumerable_object",
+        "Object IDs are enumerable (IDOR/BOLA)",
+        "HIGH",
+        0.70,
+        "idor",
+        "Substituting a sweep of integer IDs (including 0 and negatives) returned distinct "
+        "accessible objects, indicating the object identifier space is walkable without "
+        "object-level authorization checks.",
+        REFERENCE_SETS["idor"],
+        "active",
+        ("idor", "bola", "enumeration"),
+    ),
     "idor_anonymous_object_access": FindingDefinition(
         "idor_anonymous_object_access",
         "Object endpoint accessible anonymously",
