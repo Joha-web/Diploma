@@ -20,6 +20,7 @@ def test_new_modules_are_wired_into_pipeline():
         "api_schema_audit": ("modules.api_schema_audit", "APISchemaAuditModule"),
         "js_security_audit": ("modules.js_security_audit", "JSSecurityAuditModule"),
         "endpoint_harvester": ("modules.endpoint_harvester", "EndpointHarvesterModule"),
+        "ssrf_probe": ("modules.ssrf_probe", "SSRFProbeModule"),
     }
     post_parameter_modules = {
         "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),
@@ -107,6 +108,7 @@ def test_active_probe_kwargs_use_prior_results():
         "fuzzer": {"classified": {}},
         "openapi_parser": {"endpoints": []},
         "secret_scanner": {"findings": []},
+        "parameter_discovery": {"parameters": []},
         "webdetect": {"live_urls": ["https://example.com"]},
     }
 
@@ -121,6 +123,10 @@ def test_active_probe_kwargs_use_prior_results():
     assert harvester_kwargs["live_hosts"] == ["https://example.com"]
     assert harvester_kwargs["fuzzer_results"] is all_results["fuzzer"]
     assert _build_kwargs("parameter_discovery", all_results)["endpoint_results"] == {}
+
+    ssrf_kwargs = _build_kwargs("ssrf_probe", all_results)
+    assert ssrf_kwargs["parameter_results"] is all_results["parameter_discovery"]
+    assert ssrf_kwargs["fuzzer_results"] is all_results["fuzzer"]
 
 
 def test_new_module_summaries():

@@ -228,6 +228,7 @@ class AIReportModule(BaseModule):
             ("API Schema", "api_schema_audit"),
             ("JS Security", "js_security_audit"),
             ("Injection Probe", "injection_probe"),
+            ("SSRF", "ssrf_probe"),
         ]
         active_crits: list[str] = []
         active_mediums: list[str] = []

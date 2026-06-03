@@ -181,6 +181,23 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════
+# 3d. SSRFmap (SSRF scanner)
+# ═════════════════════════════════════════════════════════════
+SSRFMAP_DIR="/opt/SSRFmap"
+if [[ ! -d "$SSRFMAP_DIR" ]]; then
+    info "Cloning SSRFmap..."
+    if git clone --depth 1 https://github.com/swisskyrepo/SSRFmap "$SSRFMAP_DIR" 2>/dev/null; then
+        pip3 install -r "$SSRFMAP_DIR/requirements.txt" -q --break-system-packages 2>/dev/null \
+            || pip3 install -r "$SSRFMAP_DIR/requirements.txt" -q 2>/dev/null || true
+        success "SSRFmap → $SSRFMAP_DIR (set scan.ssrf_probe.ssrfmap_path if needed)"
+    else
+        warn "SSRFmap clone failed"
+    fi
+else
+    success "SSRFmap already at $SSRFMAP_DIR"
+fi
+
+# ═════════════════════════════════════════════════════════════
 # 4. Nuclei templates
 # ═════════════════════════════════════════════════════════════
 if command -v nuclei &>/dev/null; then

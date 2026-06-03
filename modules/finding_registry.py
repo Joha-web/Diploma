@@ -212,6 +212,11 @@ REFERENCE_SETS = {
         "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/01-Information_Gathering/",
         "https://cheatsheetseries.owasp.org/cheatsheets/Attack_Surface_Analysis_Cheat_Sheet.html",
     ),
+    "ssrf": (
+        "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/",
+        "https://portswigger.net/web-security/ssrf",
+        "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html",
+    ),
 }
 
 
@@ -613,6 +618,28 @@ FINDING_DEFINITIONS: dict[str, FindingDefinition] = {
         REFERENCE_SETS["endpoint"],
         "candidate",
         ("endpoint", "sensitive-file", "attack-surface"),
+    ),
+    "ssrf_candidate_parameter": FindingDefinition(
+        "ssrf_candidate_parameter",
+        "Probable SSRF parameter",
+        "MEDIUM",
+        0.60,
+        "ssrf",
+        "A parameter scored as a likely SSRF sink from its name, value shape and endpoint context. Unconfirmed.",
+        REFERENCE_SETS["ssrf"],
+        "candidate",
+        ("ssrf", "candidate"),
+    ),
+    "ssrfmap_confirmed": FindingDefinition(
+        "ssrfmap_confirmed",
+        "Server-Side Request Forgery confirmed by SSRFmap",
+        "HIGH",
+        0.85,
+        "ssrf",
+        "SSRFmap reached an internal service or cloud metadata endpoint through the parameter.",
+        REFERENCE_SETS["ssrf"],
+        "confirmed",
+        ("ssrf", "confirmed", "ssrfmap"),
     ),
     "endpoint_api_surface": FindingDefinition(
         "endpoint_api_surface",

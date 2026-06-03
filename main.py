@@ -84,8 +84,9 @@ PIPELINE: list[dict] = [
     {"name": "xss",             "group": 10},
     {"name": "sql_injection",   "group": 10},
     {"name": "idor_probe",      "group": 10},
-    # group 11: nuclei alone — avoids interfering with sqlmap timing
+    # group 11: nuclei + SSRFmap — separate from sqlmap timing in group 10
     {"name": "vulnscan",    "group": 11},
+    {"name": "ssrf_probe",  "group": 11},
     {"name": "cve_check",   "group": 12},
     {"name": "correlator",  "group": 13},
     # group 14: reasoning pass over all findings (after correlator, before
@@ -124,6 +125,7 @@ CLASS_MAP = {
     "open_redirect_probe": ("modules.open_redirect_probe", "OpenRedirectProbeModule"),
     "api_key_validator": ("modules.api_key_validator", "APIKeyValidatorModule"),
     "idor_probe": ("modules.idor_probe", "IDORProbeModule"),
+    "ssrf_probe": ("modules.ssrf_probe", "SSRFProbeModule"),
     "jwt_audit": ("modules.jwt_audit", "JWTAuditModule"),
     "websocket_probe": ("modules.websocket_probe", "WebSocketProbeModule"),
     "api_schema_audit": ("modules.api_schema_audit", "APISchemaAuditModule"),
@@ -168,6 +170,7 @@ MODULE_LABELS = {
     "open_redirect_probe": "Open Redirect Detection",
     "api_key_validator": "API Key Leak Validation",
     "idor_probe": "IDOR / BOLA Candidate Analysis",
+    "ssrf_probe": "SSRF Scoring & SSRFmap",
     "jwt_audit": "Deep JWT Security Audit",
     "websocket_probe": "WebSocket Security Checks",
     "api_schema_audit": "OpenAPI Security Schema Audit",
@@ -188,7 +191,7 @@ ACTIVE_PROBE_MODULES = (
     "deserialization_probe", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe",
     "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
-    "xss", "sql_injection",
+    "xss", "sql_injection", "ssrf_probe",
 )
 
 CONFIG_PRESETS = {
@@ -383,6 +386,11 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
     elif name == "js_security_audit":
         kwargs["live_hosts"] = live
         kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+    elif name == "ssrf_probe":
+        kwargs["live_hosts"] = live
+        kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
+        kwargs["fuzzer_results"] = all_results.get("fuzzer", {})
+        kwargs["injection_results"] = all_results.get("injection_probe", {})
     elif name == "vulnscan":
         kwargs["live_hosts"] = live
         kwargs["parameter_results"] = all_results.get("parameter_discovery", {})
@@ -480,6 +488,8 @@ def _module_summary(name: str, result: dict) -> str:
         return f"{result.get('total', 0)} parameters"
     elif name == "injection_probe":
         return f"{result.get('total', 0)} injection finding(s)"
+    elif name == "ssrf_probe":
+        return f"{result.get('candidate_count', 0)} SSRF candidate(s), {result.get('total', 0)} finding(s)"
     elif name == "ssl_checker":
         return (f"{len(result.get('ssl_issues', []))} SSL issues, "
                 f"{result.get('total_missing_headers', 0)} missing headers")
@@ -1138,7 +1148,7 @@ def _persist_snapshot(target: str, all_results: dict) -> Path | None:
             "race_condition", "open_redirect_probe",
             "api_key_validator", "idor_probe", "jwt_audit", "websocket_probe",
             "api_schema_audit", "js_security_audit", "sourcemap_analyzer",
-            "endpoint_harvester", "takeover_checker", "correlator",
+            "endpoint_harvester", "ssrf_probe", "takeover_checker", "correlator",
         ):
             findings = all_results.get(module_name, {}).get("findings", [])
             if findings:
