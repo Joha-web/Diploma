@@ -263,6 +263,25 @@ scan:
     lhost: ""                  # optional reachable host for blind/OOB SSRF
     lport: 8080
 
+  # LFI / RFI: fuzzes file-inclusion-prone parameters with ffuf + SecLists LFI
+  # wordlists, matching real file content (root:x:0:0:, win.ini, PHP source).
+  # RFI/URL-wrapper inclusion is probed infra-free with a data:// marker.
+  file_inclusion:
+    enabled: true
+    lfi: true
+    rfi: true
+    fuzz_all_params: false     # true = fuzz every param, not just file-inclusion-prone names
+    max_targets: 30
+    max_params_per_target: 3
+    max_rfi_requests: 80
+    threads: 30
+    rate: 0                    # 0 = ffuf default (unthrottled); set to cap req/s
+    request_timeout: 10
+    ffuf_timeout: 300
+    lfi_wordlists:
+      - /usr/share/wordlists/seclists/Fuzzing/LFI/LFI-Jhaddix.txt
+      - /usr/share/wordlists/seclists/Fuzzing/LFI/LFI-linux-and-windows_by-1N3@CrowdShield.txt
+
   sql_injection:
     enabled: true
     max_targets: 10

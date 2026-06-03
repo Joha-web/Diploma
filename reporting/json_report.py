@@ -16,6 +16,7 @@ ACTIVE_FINDING_MODULES = (
     "host_header_injection", "prototype_pollution", "xxe_probe",
     "deserialization_probe", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe", "ssrf_probe",
+    "file_inclusion",
     "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
     "sourcemap_analyzer", "endpoint_harvester", "error_analyzer",
     "takeover_checker", "correlator",
@@ -139,6 +140,7 @@ def _summary(results: dict) -> dict:
         "host_header_injection", "prototype_pollution", "xxe_probe",
         "deserialization_probe", "race_condition",
         "open_redirect_probe", "api_key_validator", "idor_probe", "ssrf_probe",
+        "file_inclusion",
         "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
     )
     active_probe_findings = sum(

@@ -43,6 +43,8 @@ CWE_BY_TYPE: dict[str, str] = {
     "server_5xx_hotspot": "CWE-388",
     "server_401_hotspot": "CWE-285",
     "framework_debug_enabled": "CWE-489",
+    "lfi_detected": "CWE-22",
+    "rfi_detected": "CWE-98",
     "idor": "CWE-639",
     "jwt": "CWE-345",
     "ssrf": "CWE-918",
@@ -224,6 +226,10 @@ REFERENCE_SETS = {
     "error_disclosure": (
         "https://owasp.org/www-community/Improper_Error_Handling",
         "https://cwe.mitre.org/data/definitions/209.html",
+    ),
+    "file_inclusion": (
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/11.1-Testing_for_Local_File_Inclusion",
+        "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/11.2-Testing_for_Remote_File_Inclusion",
     ),
 }
 
@@ -648,6 +654,28 @@ FINDING_DEFINITIONS: dict[str, FindingDefinition] = {
         REFERENCE_SETS["ssrf"],
         "confirmed",
         ("ssrf", "confirmed", "ssrfmap"),
+    ),
+    "lfi_detected": FindingDefinition(
+        "lfi_detected",
+        "Local File Inclusion confirmed",
+        "HIGH",
+        0.85,
+        "lfi_detected",
+        "A file-inclusion payload returned real file content (e.g. /etc/passwd), confirming LFI.",
+        REFERENCE_SETS["file_inclusion"],
+        "confirmed",
+        ("lfi", "file-inclusion", "path-traversal"),
+    ),
+    "rfi_detected": FindingDefinition(
+        "rfi_detected",
+        "Remote / URL-wrapper file inclusion",
+        "HIGH",
+        0.80,
+        "rfi_detected",
+        "A URL-wrapper (data://) payload was reflected, showing the parameter includes remote/URL content.",
+        REFERENCE_SETS["file_inclusion"],
+        "confirmed",
+        ("rfi", "file-inclusion"),
     ),
     "framework_debug_enabled": FindingDefinition(
         "framework_debug_enabled",

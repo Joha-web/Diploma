@@ -22,6 +22,7 @@ def test_new_modules_are_wired_into_pipeline():
         "endpoint_harvester": ("modules.endpoint_harvester", "EndpointHarvesterModule"),
         "ssrf_probe": ("modules.ssrf_probe", "SSRFProbeModule"),
         "error_analyzer": ("modules.error_analyzer", "ErrorAnalyzerModule"),
+        "file_inclusion": ("modules.file_inclusion", "FileInclusionModule"),
     }
     post_parameter_modules = {
         "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),
