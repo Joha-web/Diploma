@@ -7,6 +7,7 @@ from __future__ import annotations
 import html
 import re
 import uuid
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
@@ -102,47 +103,81 @@ class XSSModule(ActiveProbeBase):
         self.save_json(targets, "xss_targets.json")
 
         findings: list[dict] = []
-        dalfox_runs: list[dict] = []
+        tool_runs: list[dict] = []
         requests_sent = 0
-        dalfox_missing = False
+        missing_tools: list[str] = []
+        ran_any_tool = False
 
+        # Heavier external scanners (XSStrike / XSSer) crawl and fuzz per target,
+        # so cap them independently of the dalfox/reflection target budget.
+        tool_targets = targets[: int(cfg.get("max_tool_targets", 20))]
+
+        # 1. dalfox (fast, low FP) — over the full target set
         if cfg.get("use_dalfox", True):
             if self.has_tool("dalfox"):
+                ran_any_tool = True
                 for index, target in enumerate(targets, start=1):
                     target_findings, run = self._run_dalfox(target, cfg, index)
                     findings.extend(target_findings)
-                    dalfox_runs.append(run)
+                    tool_runs.append(run)
             else:
-                dalfox_missing = True
-                self.warn("dalfox not available in PATH; using reflection fallback if enabled")
+                missing_tools.append("dalfox")
 
+        # 2. XSStrike — intelligent payload generation / reflection analysis
+        if cfg.get("use_xsstrike", True):
+            xsstrike_cmd = self._xsstrike_command(cfg)
+            if xsstrike_cmd:
+                ran_any_tool = True
+                for index, target in enumerate(tool_targets, start=1):
+                    target_findings, run = self._run_xsstrike(xsstrike_cmd, target, cfg, index)
+                    findings.extend(target_findings)
+                    tool_runs.append(run)
+            else:
+                missing_tools.append("xsstrike")
+
+        # 3. XSSer — classic injection fuzzer
+        if cfg.get("use_xsser", True):
+            if self.has_tool("xsser"):
+                ran_any_tool = True
+                for index, target in enumerate(tool_targets, start=1):
+                    target_findings, run = self._run_xsser(target, cfg, index)
+                    findings.extend(target_findings)
+                    tool_runs.append(run)
+            else:
+                missing_tools.append("xsser")
+
+        if missing_tools:
+            self.warn(f"XSS tools not in PATH: {', '.join(missing_tools)} "
+                      "(using reflection fallback / remaining tools)")
+
+        # 4. Built-in reflection probe — fallback / always-available baseline
         if cfg.get("fallback_reflection", True):
             fallback_findings, requests_sent = self._run_reflection_probe(targets, cfg)
             findings.extend(fallback_findings)
-        elif dalfox_missing:
+        elif not ran_any_tool:
             return {
                 "findings": [],
                 "targets": targets,
                 "runs": [],
                 "total": 0,
                 "status": "skipped",
-                "missing_tools": ["dalfox"],
+                "missing_tools": missing_tools,
             }
 
         findings = self.dedup_findings(findings)
         self.save_json(findings, "xss_findings.json")
-        if dalfox_runs:
-            self.save_json(dalfox_runs, "dalfox_runs.json")
+        if tool_runs:
+            self.save_json(tool_runs, "xss_tool_runs.json")
         result = {
             "findings": findings,
             "targets": targets,
-            "runs": dalfox_runs,
+            "runs": tool_runs,
             "total": len(findings),
             "tested": len(targets),
             "requests_sent": requests_sent,
         }
-        if dalfox_missing:
-            result["missing_tools"] = ["dalfox"]
+        if missing_tools:
+            result["missing_tools"] = missing_tools
         return result
 
     def _run_reflection_probe(self, targets: list[dict], cfg: dict) -> tuple[list[dict], int]:
@@ -255,6 +290,131 @@ class XSSModule(ActiveProbeBase):
                 },
             ))
         return findings
+
+    # ── XSStrike ────────────────────────────────────────────────────────────────
+    def _xsstrike_command(self, cfg: dict) -> list[str] | None:
+        """Resolve XSStrike to an on-PATH binary or a `python3 xsstrike.py` call."""
+        if self.has_tool("xsstrike"):
+            return ["xsstrike"]
+        configured = str(cfg.get("xsstrike_path", "")).strip()
+        for path in [configured, "/opt/XSStrike/xsstrike.py", "/usr/share/XSStrike/xsstrike.py"]:
+            if path and Path(path).exists():
+                return ["python3", path]
+        return None
+
+    def _run_xsstrike(self, base_cmd: list[str], target: dict, cfg: dict, index: int) -> tuple[list[dict], dict]:
+        # --skip suppresses the interactive update prompt; XSStrike tests the GET
+        # parameters already present in the URL.
+        cmd = base_cmd + [
+            "-u", target["url"], "--skip",
+            "--timeout", str(self._bounded_int(cfg.get("request_timeout", 10), 1, 120)),
+        ]
+        for arg in cfg.get("xsstrike_extra_args", []) or []:
+            if isinstance(arg, str) and arg.strip():
+                cmd.append(arg.strip())
+        timeout = int(cfg.get("xsstrike_timeout", cfg.get("timeout", 600)))
+        result = self.exec(cmd, timeout=timeout, label=f"xsstrike {target['url']}")
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        stdout_file = f"xsstrike_run_{index:03d}.txt"
+        self.save_text(output, stdout_file)
+        findings = self._parse_xsstrike(output, target, stdout_file, index)
+        return findings, {
+            "tool": "xsstrike", "url": target["url"], "params": target.get("params", []),
+            "returncode": result.returncode, "stdout_file": stdout_file, "findings": len(findings),
+        }
+
+    def _parse_xsstrike(self, output: str, target: dict, stdout_file: str, index: int) -> list[dict]:
+        # XSStrike has no machine output; a working vector is reported as a
+        # "Payload: …" line, with "Efficiency: 100" denoting an unfiltered hit.
+        payload_lines: list[str] = []
+        efficiency = 0
+        for line in (output or "").splitlines():
+            stripped = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()  # strip ANSI colour
+            low = stripped.lower()
+            if "payload:" in low:
+                payload_lines.append(stripped)
+            m = re.search(r"efficiency:\s*(\d+)", low)
+            if m:
+                efficiency = max(efficiency, int(m.group(1)))
+        if not payload_lines:
+            return []
+        confirmed = efficiency >= 100
+        return [self.make_finding(
+            "xss_xsstrike_confirmed" if confirmed else "xss_xsstrike_reported",
+            target["url"],
+            title="XSStrike reported a working XSS payload" if confirmed
+                  else "XSStrike reported a candidate XSS reflection",
+            description=(
+                "XSStrike generated a payload that the page reflected. "
+                f"Max efficiency {efficiency}%. Validate manually before exploitation."
+            ),
+            severity="HIGH" if confirmed else "MEDIUM",
+            confidence=0.82 if confirmed else 0.6,
+            finding_type="xss",
+            references=["https://github.com/s0md3v/XSStrike",
+                        "https://owasp.org/www-community/attacks/xss/"],
+            exploitability="active",
+            evidence={
+                "tool": "xsstrike", "param": self._matching_param(target["url"], target.get("params", [])),
+                "efficiency": efficiency, "payload": payload_lines[0][:200],
+                "run_index": index, "stdout_file": stdout_file, "sources": target.get("sources", []),
+            },
+        )]
+
+    # ── XSSer ─────────────────────────────────────────────────────────────────────
+    def _run_xsser(self, target: dict, cfg: dict, index: int) -> tuple[list[dict], dict]:
+        cmd = [
+            "xsser", "--url", target["url"], "--auto", "--no-head",
+            "--threads", str(self._bounded_int(cfg.get("xsser_threads", 3), 1, 20)),
+            "--timeout", str(self._bounded_int(cfg.get("request_timeout", 10), 1, 120)),
+        ]
+        for arg in cfg.get("xsser_extra_args", []) or []:
+            if isinstance(arg, str) and arg.strip():
+                cmd.append(arg.strip())
+        timeout = int(cfg.get("xsser_timeout", cfg.get("timeout", 600)))
+        result = self.exec(cmd, timeout=timeout, label=f"xsser {target['url']}")
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        stdout_file = f"xsser_run_{index:03d}.txt"
+        self.save_text(output, stdout_file)
+        findings = self._parse_xsser(output, target, stdout_file, index)
+        return findings, {
+            "tool": "xsser", "url": target["url"], "params": target.get("params", []),
+            "returncode": result.returncode, "stdout_file": stdout_file, "findings": len(findings),
+        }
+
+    def _parse_xsser(self, output: str, target: dict, stdout_file: str, index: int) -> list[dict]:
+        # XSSer prints a final tally; only act when it reports a successful
+        # injection, and attach the injection line(s) it listed as evidence.
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", output or "")
+        successful = 0
+        m = re.search(r"Successful:\s*(\d+)", clean, re.I)
+        if m:
+            successful = int(m.group(1))
+        injection_lines = [ln.strip() for ln in clean.splitlines()
+                           if re.search(r"\binjection[:s]?\b.*https?://", ln, re.I)
+                           or ln.strip().lower().startswith("[+] injection")]
+        if successful <= 0 and not injection_lines:
+            return []
+        return [self.make_finding(
+            "xss_xsser_reported",
+            target["url"],
+            title="XSSer reported a successful XSS injection",
+            description=(
+                f"XSSer reported {successful or 'an'} successful injection(s). "
+                "XSSer is prone to false positives — confirm the payload manually."
+            ),
+            severity="MEDIUM",
+            confidence=0.58,
+            finding_type="xss",
+            references=["https://xsser.03c8.net/",
+                        "https://owasp.org/www-community/attacks/xss/"],
+            exploitability="active",
+            evidence={
+                "tool": "xsser", "param": self._matching_param(target["url"], target.get("params", [])),
+                "successful": successful, "lines": injection_lines[:3],
+                "run_index": index, "stdout_file": stdout_file, "sources": target.get("sources", []),
+            },
+        )]
 
     def _probe_param(
         self,

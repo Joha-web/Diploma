@@ -986,16 +986,6 @@ function applyAllFindingsFilter() {
     </div>
   </details>
   {% endif %}
-
-  <details>
-    <summary>Attack simulation policy</summary>
-    <div class="detail-body">
-      <p style="color:var(--muted);font-size:.85em">
-        ReconX records exploit availability and dry-run validation context, but does not execute public exploit code automatically.
-        Intrusive validation should be performed manually only inside the written scope or a lab replica.
-      </p>
-    </div>
-  </details>
 </div>
 {% endif %}
 
@@ -1030,7 +1020,17 @@ function applyAllFindingsFilter() {
           </td>
           <td>{{ f.title or f.name or f.type }}</td>
           <td><code>{{ f.url or f.matched_url }}</code></td>
-          <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
+          <td style="font-size:.82em;color:var(--muted);max-width:340px">
+            {{ f.description[:150] if f.description else '' }}
+            {% set ev = f.evidence | evidence_summary %}
+            {% if ev %}
+            <div style="margin-top:6px;display:flex;flex-direction:column;gap:2px">
+              {% for item in ev %}
+              <div style="font-size:.78em"><span style="color:var(--muted)">{{ item.label }}:</span> <code>{{ item.value }}</code></div>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -1079,7 +1079,17 @@ function applyAllFindingsFilter() {
               <code title="{{ fu }}">{{ fu }}</code>
             {% endif %}
           </td>
-          <td style="font-size:.82em;color:var(--muted);max-width:300px">{{ f.description[:150] if f.description else '' }}</td>
+          <td style="font-size:.82em;color:var(--muted);max-width:340px">
+            {{ f.description[:150] if f.description else '' }}
+            {% set ev = f.evidence | evidence_summary %}
+            {% if ev %}
+            <div style="margin-top:6px;display:flex;flex-direction:column;gap:2px">
+              {% for item in ev %}
+              <div style="font-size:.78em"><span style="color:var(--muted)">{{ item.label }}:</span> <code>{{ item.value }}</code></div>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

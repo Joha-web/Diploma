@@ -2,7 +2,6 @@ import json
 
 from modules.api_key_validator import APIKeyValidatorModule
 from modules.api_schema_audit import APISchemaAuditModule
-from modules.cache_poison import CachePoisonModule
 from modules.deserialization_probe import DeserializationProbeModule
 from modules.host_header_injection import HostHeaderInjectionModule
 from modules.http_smuggling import HTTPSmugglingModule
@@ -122,20 +121,6 @@ def test_oauth_state_and_pkce_checks_handle_relative_callback(tmp_path, monkeypa
 
     assert state_findings[0]["id"] == "oauth_missing_state"
     assert pkce_findings[0]["id"] == "oauth_pkce_not_required"
-
-
-def test_cache_poison_detects_reflected_unkeyed_header(tmp_path, monkeypatch):
-    module = CachePoisonModule("example.com", str(tmp_path), {})
-    responses = [
-        Response("baseline"),
-        Response(f"<a href='https://{module.marker}/'>x</a>", headers={"X-Cache": "MISS"}),
-    ]
-    monkeypatch.setattr(module, "http_get", lambda *args, **kwargs: responses.pop(0))
-
-    finding = module._probe_header("https://example.com", object(), {}, {"cache_detected": False}, "X-Forwarded-Host", "host")
-
-    assert finding["id"] == "cache_poisoning_unkeyed_header"
-    assert finding["evidence"]["header"] == "X-Forwarded-Host"
 
 
 def test_host_header_detects_reset_poisoning_indicator(tmp_path, monkeypatch):

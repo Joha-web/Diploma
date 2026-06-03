@@ -12,7 +12,7 @@ from modules.finding_registry import risk_score
 
 ACTIVE_FINDING_MODULES = (
     "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
-    "injection_probe", "xss", "sql_injection", "http_smuggling", "oauth_probe", "cache_poison",
+    "injection_probe", "xss", "sql_injection", "http_smuggling", "oauth_probe",
     "host_header_injection", "prototype_pollution", "xxe_probe",
     "deserialization_probe", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe",
@@ -135,7 +135,7 @@ def _summary(results: dict) -> dict:
     secret = results.get("secret_scanner", {})
     injection = results.get("injection_probe", {})
     active_probe_modules = (
-        "injection_probe", "xss", "sql_injection", "http_smuggling", "oauth_probe", "cache_poison",
+        "injection_probe", "xss", "sql_injection", "http_smuggling", "oauth_probe",
         "host_header_injection", "prototype_pollution", "xxe_probe",
         "deserialization_probe", "race_condition",
         "open_redirect_probe", "api_key_validator", "idor_probe",

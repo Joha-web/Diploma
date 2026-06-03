@@ -220,7 +220,6 @@ class AIReportModule(BaseModule):
             ("Prototype Pollution", "prototype_pollution"),
             ("HTTP Smuggling", "http_smuggling"),
             ("OAuth", "oauth_probe"),
-            ("Cache Poisoning", "cache_poison"),
             ("Open Redirect", "open_redirect_probe"),
             ("XXE", "xxe_probe"),
             ("Deserialization", "deserialization_probe"),

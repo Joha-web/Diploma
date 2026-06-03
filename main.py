@@ -71,7 +71,6 @@ PIPELINE: list[dict] = [
     {"name": "js_security_audit","group": 7},
     # group 8: medium-traffic active probes
     {"name": "oauth_probe",            "group": 8},
-    {"name": "cache_poison",           "group": 8},
     {"name": "host_header_injection",  "group": 8},
     {"name": "open_redirect_probe",    "group": 8},
     {"name": "prototype_pollution",    "group": 8},
@@ -117,7 +116,6 @@ CLASS_MAP = {
     "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),
     "http_smuggling": ("modules.http_smuggling", "HTTPSmugglingModule"),
     "oauth_probe": ("modules.oauth_probe", "OAuthProbeModule"),
-    "cache_poison": ("modules.cache_poison", "CachePoisonModule"),
     "host_header_injection": ("modules.host_header_injection", "HostHeaderInjectionModule"),
     "prototype_pollution": ("modules.prototype_pollution", "PrototypePollutionModule"),
     "xxe_probe": ("modules.xxe_probe", "XXEProbeModule"),
@@ -162,7 +160,6 @@ MODULE_LABELS = {
     "injection_probe": "SSRF / SSTI / XXE Detection",
     "http_smuggling": "HTTP Request Smuggling",
     "oauth_probe": "OAuth / OIDC Audit",
-    "cache_poison": "Web Cache Poisoning",
     "host_header_injection": "Host Header Injection",
     "prototype_pollution": "Server-Side Prototype Pollution",
     "xxe_probe": "OOB XXE Detection",
@@ -186,7 +183,7 @@ MODULE_LABELS = {
 }
 
 ACTIVE_PROBE_MODULES = (
-    "injection_probe", "http_smuggling", "oauth_probe", "cache_poison",
+    "injection_probe", "http_smuggling", "oauth_probe",
     "host_header_injection", "prototype_pollution", "xxe_probe",
     "deserialization_probe", "race_condition",
     "open_redirect_probe", "api_key_validator", "idor_probe",
@@ -322,7 +319,7 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["resolved_ips"] = recon.get("scan_ips") or recon.get("resolved_ips", [])
     elif name in ("webdetect", "techstack", "spa_crawler", "fuzzer", "ssl_checker",
                   "cors_checker", "auth_probe", "openapi_parser",
-                  "http_smuggling", "oauth_probe", "cache_poison"):
+                  "http_smuggling", "oauth_probe"):
         kwargs["live_hosts"] = live
     elif name == "cmscan":
         kwargs["tech_results"] = all_results.get("techstack", {})
@@ -468,7 +465,7 @@ def _module_summary(name: str, result: dict) -> str:
                 f"{len(result.get('secrets', []))} secret(s)")
     elif name in (
         "cors_checker", "auth_probe", "sourcemap_analyzer", "takeover_checker",
-        "http_smuggling", "oauth_probe", "cache_poison", "host_header_injection",
+        "http_smuggling", "oauth_probe", "host_header_injection",
         "prototype_pollution", "xxe_probe", "deserialization_probe",
         "race_condition", "open_redirect_probe", "api_key_validator", "idor_probe",
         "jwt_audit", "websocket_probe", "api_schema_audit", "js_security_audit",
@@ -1136,7 +1133,7 @@ def _persist_snapshot(target: str, all_results: dict) -> Path | None:
         for module_name in (
             "secret_scanner", "fuzzer", "cors_checker", "auth_probe",
             "injection_probe", "xss", "sql_injection", "http_smuggling",
-            "oauth_probe", "cache_poison", "host_header_injection",
+            "oauth_probe", "host_header_injection",
             "prototype_pollution", "xxe_probe", "deserialization_probe",
             "race_condition", "open_redirect_probe",
             "api_key_validator", "idor_probe", "jwt_audit", "websocket_probe",

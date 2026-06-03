@@ -363,7 +363,7 @@ class CorrelatorModule(BaseModule):
             "takeover_checker", "openapi_parser", "parameter_discovery",
             "cors_checker", "auth_probe", "xss", "sql_injection",
             "host_header_injection", "idor_probe", "jwt_audit",
-            "oauth_probe", "http_smuggling", "cache_poison",
+            "oauth_probe", "http_smuggling",
             "prototype_pollution", "xxe_probe",
             "injection_probe", "api_key_validator",
         ):

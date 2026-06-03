@@ -265,6 +265,17 @@ scan:
     workers: 1
     dalfox_timeout: 600
     dalfox_extra_args: []
+    # Heavier external scanners — run when their binary is present, skipped
+    # gracefully otherwise. Capped by max_tool_targets (they crawl per target).
+    max_tool_targets: 20
+    use_xsstrike: true
+    xsstrike_path: ""          # override path to xsstrike.py if not on PATH
+    xsstrike_timeout: 600
+    xsstrike_extra_args: []
+    use_xsser: true
+    xsser_threads: 3
+    xsser_timeout: 600
+    xsser_extra_args: []
 
   http_smuggling:
     enabled: true
@@ -277,14 +288,6 @@ scan:
     enabled: true
     max_hosts: 40
     timeout: 8
-
-  cache_poison:
-    enabled: true
-    max_urls: 60
-    max_headers: 9
-    timeout: 10
-    confirm_cache: false
-    cache_wait: 1
 
   host_header_injection:
     enabled: true

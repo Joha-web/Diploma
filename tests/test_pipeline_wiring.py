@@ -8,7 +8,6 @@ def test_new_modules_are_wired_into_pipeline():
     active_modules = {
         "http_smuggling": ("modules.http_smuggling", "HTTPSmugglingModule"),
         "oauth_probe": ("modules.oauth_probe", "OAuthProbeModule"),
-        "cache_poison": ("modules.cache_poison", "CachePoisonModule"),
         "host_header_injection": ("modules.host_header_injection", "HostHeaderInjectionModule"),
         "prototype_pollution": ("modules.prototype_pollution", "PrototypePollutionModule"),
         "xxe_probe": ("modules.xxe_probe", "XXEProbeModule"),
@@ -50,7 +49,6 @@ def test_new_modules_are_wired_into_pipeline():
     assert groups["js_security_audit"] == 7
 
     assert groups["oauth_probe"] == 8
-    assert groups["cache_poison"] == 8
     assert groups["host_header_injection"] == 8
     assert groups["open_redirect_probe"] == 8
     assert groups["prototype_pollution"] == 8

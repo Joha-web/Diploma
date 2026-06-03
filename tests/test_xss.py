@@ -123,3 +123,80 @@ def test_xss_dalfox_mode_runs_and_parses_findings(tmp_path, monkeypatch):
     assert finding["evidence"]["tool"] == "dalfox"
     assert finding["evidence"]["param"] == "q"
     assert (tmp_path / "xss" / "dalfox_run_001.txt").exists()
+
+
+def _xss_module(tmp_path):
+    return XSSModule("example.com", str(tmp_path), {})
+
+
+def test_parse_xsstrike_confirms_on_full_efficiency(tmp_path):
+    module = _xss_module(tmp_path)
+    target = {"url": "https://example.com/s?q=1", "params": ["q"], "sources": ["fuzzer"]}
+    output = (
+        "[!] Testing parameter: q\n"
+        "[+] Reflections found: 1\n"
+        "[+] Payload: <svg/onload=alert(1)>\n"
+        "[+] Efficiency: 100\n"
+        "[+] Confidence: 10\n"
+    )
+    findings = module._parse_xsstrike(output, target, "xsstrike_run_001.txt", 1)
+    assert len(findings) == 1
+    assert findings[0]["id"] == "xss_xsstrike_confirmed"
+    assert findings[0]["severity"] == "HIGH"
+    assert findings[0]["evidence"]["efficiency"] == 100
+
+
+def test_parse_xsstrike_downgrades_partial_reflection(tmp_path):
+    module = _xss_module(tmp_path)
+    target = {"url": "https://example.com/s?q=1", "params": ["q"]}
+    output = "[+] Payload: <x>\n[+] Efficiency: 40\n"
+    findings = module._parse_xsstrike(output, target, "f.txt", 1)
+    assert findings[0]["id"] == "xss_xsstrike_reported"
+    assert findings[0]["severity"] == "MEDIUM"
+
+
+def test_parse_xsstrike_silent_without_payload(tmp_path):
+    module = _xss_module(tmp_path)
+    target = {"url": "https://example.com/s?q=1", "params": ["q"]}
+    assert module._parse_xsstrike("[~] No reflections\n", target, "f.txt", 1) == []
+
+
+def test_parse_xsser_reports_successful_injection(tmp_path):
+    module = _xss_module(tmp_path)
+    target = {"url": "https://example.com/s?q=1", "params": ["q"], "sources": ["fuzzer"]}
+    output = (
+        "[*] Final Results:\n- Injections: 5\n- Failed: 4\n- Successful: 1\n"
+        "[+] Injection: https://example.com/s?q=<script>alert(1)</script>\n"
+    )
+    findings = module._parse_xsser(output, target, "xsser_run_001.txt", 1)
+    assert len(findings) == 1
+    assert findings[0]["id"] == "xss_xsser_reported"
+    assert findings[0]["evidence"]["successful"] == 1
+    assert findings[0]["evidence"]["lines"]
+
+
+def test_parse_xsser_silent_when_no_success(tmp_path):
+    module = _xss_module(tmp_path)
+    target = {"url": "https://example.com/s?q=1", "params": ["q"]}
+    output = "[*] Final Results:\n- Injections: 5\n- Failed: 5\n- Successful: 0\n"
+    assert module._parse_xsser(output, target, "f.txt", 1) == []
+
+
+def test_xsstrike_command_resolves_pathless_binary(tmp_path, monkeypatch):
+    module = _xss_module(tmp_path)
+    monkeypatch.setattr(module, "has_tool", lambda tool: tool == "xsstrike")
+    assert module._xsstrike_command({}) == ["xsstrike"]
+
+
+def test_run_skips_when_no_tool_and_no_fallback(tmp_path, monkeypatch):
+    module = XSSModule(
+        "example.com", str(tmp_path),
+        {"scan": {"xss": {"use_dalfox": True, "use_xsstrike": True, "use_xsser": True,
+                          "fallback_reflection": False}}},
+        parameter_results={"parameterized_targets": ["https://example.com/s?q=1"]},
+    )
+    monkeypatch.setattr(module, "has_tool", lambda tool: False)
+    monkeypatch.setattr(module, "_xsstrike_command", lambda cfg: None)
+    result = module.run()
+    assert result["status"] == "skipped"
+    assert set(result["missing_tools"]) == {"dalfox", "xsstrike", "xsser"}

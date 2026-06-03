@@ -50,6 +50,7 @@ class HTMLReportGenerator:
             x, indent=2, ensure_ascii=False, default=str
         )
         env.filters["default_val"] = lambda x, d="": x if x is not None else d
+        env.filters["evidence_summary"] = self._evidence_summary
 
         template = env.get_template("report.html")
 
@@ -90,7 +91,6 @@ class HTMLReportGenerator:
             ("sql-injection", "SQL Injection Findings", r.get("sql_injection", {})),
             ("http-smuggling", "HTTP Smuggling Findings", r.get("http_smuggling", {})),
             ("oauth-probe", "OAuth / OIDC Findings", r.get("oauth_probe", {})),
-            ("cache-poison", "Cache Poisoning Findings", r.get("cache_poison", {})),
             ("host-header-injection", "Host Header Findings", r.get("host_header_injection", {})),
             ("prototype-pollution", "Prototype Pollution Findings", r.get("prototype_pollution", {})),
             ("xxe-probe", "XXE Findings", r.get("xxe_probe", {})),
@@ -535,6 +535,57 @@ class HTMLReportGenerator:
             return "MEDIUM"
         return "LOW"
 
+    # Evidence keys worth surfacing in finding tables, in display order.
+    # (label, evidence-key) — first present key per finding is shown.
+    _EVIDENCE_FIELDS = (
+        ("File", "source_path"),
+        ("File", "file"),
+        ("Location", "location"),
+        ("Line", "line"),
+        ("Match", "match"),
+        ("Value", "redacted"),
+        ("Key type", "key_type"),
+        ("Parameter", "param"),
+        ("Source", "source"),
+        ("Sink", "sink"),
+        ("Excerpt", "excerpt"),
+        ("Context", "context"),
+        ("Snippet", "snippet"),
+        ("Payload", "payload"),
+        ("PoC", "line"),
+    )
+
+    @staticmethod
+    def _evidence_summary(evidence) -> list[dict]:
+        """Compact, whitelist-only view of a finding's evidence for the report.
+
+        Surfaces *where* a secret/key was found and the redacted match, so rows
+        carry proof rather than just a URL. Values are truncated; rendering is
+        autoescaped by Jinja, so raw evidence text is safe to pass through.
+        """
+        if not isinstance(evidence, dict):
+            return []
+        items: list[dict] = []
+        seen_labels: set[str] = set()
+        for label, key in HTMLReportGenerator._EVIDENCE_FIELDS:
+            if label in seen_labels or key not in evidence:
+                continue
+            value = evidence.get(key)
+            if value in (None, "", [], {}):
+                continue
+            text = ", ".join(str(v) for v in value) if isinstance(value, (list, tuple)) else str(value)
+            text = text.strip()
+            if not text:
+                continue
+            items.append({"label": label, "value": text[:200]})
+            seen_labels.add(label)
+        # Live-key validation status, when present.
+        validation = evidence.get("validation")
+        if isinstance(validation, dict) and validation.get("status"):
+            verdict = "VALID" if validation.get("valid") else str(validation.get("status"))
+            items.append({"label": "Validation", "value": verdict[:60]})
+        return items
+
     @staticmethod
     def _render_markdown(text: str) -> str:
         """Convert markdown text to HTML. Falls back to <pre> if markdown lib is missing."""
@@ -600,7 +651,7 @@ class HTMLReportGenerator:
           * remediation — what to do about it
         """
         return {
-            "xss": {"title": "Cross-Site Scripting (XSS)", "impact": "Attackers can inject malicious scripts into web pages viewed by other users, potentially stealing session cookies, credentials, or performing actions on behalf of the victim.", "detection": "Reflection probes inject context-aware markers into each discovered parameter and re-render the response. When dalfox confirms an executable payload the finding is upgraded to HIGH with confidence 0.90; pure reflections without a working sink stay LOW.", "remediation": "Encode all user-controlled output. Use Content-Security-Policy headers. Validate and sanitize input."},
+            "xss": {"title": "Cross-Site Scripting (XSS)", "impact": "Attackers can inject malicious scripts into web pages viewed by other users, potentially stealing session cookies, credentials, or performing actions on behalf of the victim.", "detection": "Built-in reflection probes inject context-aware markers into each discovered parameter, complemented by external scanners when installed: dalfox (confirmed payloads → HIGH), XSStrike (efficiency-scored payloads) and XSSer (injection fuzzer, confirm manually). Pure reflections without a working sink stay LOW.", "remediation": "Encode all user-controlled output. Use Content-Security-Policy headers. Validate and sanitize input."},
             "sql_injection": {"title": "SQL Injection", "impact": "Attackers can manipulate database queries to read, modify, or delete data. May lead to full database compromise, authentication bypass, or remote code execution.", "detection": "sqlmap is run in --batch mode against parameters surfaced by parameter_discovery and fuzzer. A finding is emitted only when sqlmap prints an explicit injection point, so severity is fixed at HIGH with confidence 0.9.", "remediation": "Use parameterized queries/prepared statements. Apply input validation. Use least-privilege database accounts."},
             "injection_probe": {"title": "Server-Side Injection (SSTI/SSRF)", "impact": "Attackers can execute arbitrary code on the server (SSTI) or make the server send requests to internal services (SSRF), potentially accessing internal networks.", "detection": "Out-of-band markers and template tokens are sent through each parameter. SSTI is confirmed when an arithmetic payload renders the computed value; SSRF requires either an OOB callback or a known-private IP echo before being raised above LOW.", "remediation": "Sanitize template inputs. Restrict outbound network access. Use allowlists for URL parameters."},
             "cors_checker": {"title": "CORS Misconfiguration", "impact": "Overly permissive CORS policies can allow malicious websites to make authenticated requests to the application, stealing sensitive data.", "detection": "Each live URL is probed with five untrusted Origin headers. Reflection of the attacker origin with Access-Control-Allow-Credentials: true is CRITICAL; plain reflections or null-origin acceptance are HIGH; wildcard ACAO without credentials is MEDIUM.", "remediation": "Restrict Access-Control-Allow-Origin to trusted domains. Avoid wildcard origins with credentials."},

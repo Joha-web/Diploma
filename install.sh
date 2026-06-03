@@ -161,6 +161,26 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════
+# 3c. XSS scanners: XSStrike + XSSer
+# ═════════════════════════════════════════════════════════════
+info "Installing XSSer (apt)..."
+apt-get install -y -qq xsser 2>/dev/null && success "xsser installed" || warn "xsser — install manually if needed"
+
+XSSTRIKE_DIR="/opt/XSStrike"
+if [[ ! -d "$XSSTRIKE_DIR" ]]; then
+    info "Cloning XSStrike..."
+    if git clone --depth 1 https://github.com/s0md3v/XSStrike "$XSSTRIKE_DIR" 2>/dev/null; then
+        pip3 install -r "$XSSTRIKE_DIR/requirements.txt" -q --break-system-packages 2>/dev/null \
+            || pip3 install -r "$XSSTRIKE_DIR/requirements.txt" -q 2>/dev/null || true
+        success "XSStrike → $XSSTRIKE_DIR (set scan.xss.xsstrike_path if not on PATH)"
+    else
+        warn "XSStrike clone failed"
+    fi
+else
+    success "XSStrike already at $XSSTRIKE_DIR"
+fi
+
+# ═════════════════════════════════════════════════════════════
 # 4. Nuclei templates
 # ═════════════════════════════════════════════════════════════
 if command -v nuclei &>/dev/null; then
@@ -228,6 +248,7 @@ TOOLS=(
     nuclei interactsh-client katana ffuf whatweb wafw00f wpscan joomscan
     droopescan arjun gowitness waybackurls gau ollama
     cariddi kiterunner xnLinkFinder
+    dalfox xsser
 )
 
 FOUND=0; MISSING=0
