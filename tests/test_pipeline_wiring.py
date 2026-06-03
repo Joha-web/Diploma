@@ -23,6 +23,7 @@ def test_new_modules_are_wired_into_pipeline():
         "ssrf_probe": ("modules.ssrf_probe", "SSRFProbeModule"),
         "error_analyzer": ("modules.error_analyzer", "ErrorAnalyzerModule"),
         "file_inclusion": ("modules.file_inclusion", "FileInclusionModule"),
+        "command_injection": ("modules.command_injection", "CommandInjectionModule"),
     }
     post_parameter_modules = {
         "injection_probe": ("modules.injection_probe", "InjectionProbeModule"),

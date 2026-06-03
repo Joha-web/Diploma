@@ -282,6 +282,28 @@ scan:
       - /usr/share/wordlists/seclists/Fuzzing/LFI/LFI-Jhaddix.txt
       - /usr/share/wordlists/seclists/Fuzzing/LFI/LFI-linux-and-windows_by-1N3@CrowdShield.txt
 
+  # OS command injection: scores params (name + value + endpoint), then confirms
+  # likely ones with an in-band echo+arithmetic probe, commix (-p), and ffuf with
+  # the SecLists command-injection-commix wordlist.
+  command_injection:
+    enabled: true
+    possible_threshold: 0.3
+    strong_threshold: 0.5
+    exec_prescreen: true
+    prescreen_max_requests: 50
+    prescreen_min_score: 0.25
+    commix: true
+    commix_timeout: 300
+    commix_extra_args: []
+    level: 1
+    ffuf: true
+    ffuf_timeout: 300
+    threads: 30
+    request_timeout: 10
+    max_targets: 15
+    max_ffuf_hits: 5
+    wordlist: /usr/share/wordlists/seclists/Fuzzing/command-injection-commix.txt
+
   sql_injection:
     enabled: true
     max_targets: 10
