@@ -207,6 +207,8 @@ class FuzzerModule(BaseModule):
         self.live_hosts = live_hosts or []
         self.graphql_details: list[dict] = []
         self.cloud_assets: list[dict] = []
+        # URL → is-live cache shared across category liveness checks in one run.
+        self._status_cache: dict[str, bool] = {}
         for sub in ("crawl", "ferox", "ffuf", "js_mining", "graphql", "merged", "cloud", "well_known"):
             (self.module_dir / sub).mkdir(exist_ok=True)
 
@@ -824,19 +826,34 @@ class FuzzerModule(BaseModule):
                 result["interesting_directories"]
             )
 
-        # Verify admin panels — filter out static assets and check via HTTP
+        cfg = self.config.get("scan", {}).get("fuzzing", {})
+        verify = cfg.get("verify_endpoints", True)
+        self._status_cache = {}
+
+        # Verify admin panels — strip static assets / dedup, then status-filter.
         raw_admin = result.get("admin_panels", [])
         if raw_admin:
-            self.info(f"Verifying {len(raw_admin)} admin panel candidates...")
-            result["admin_panels"] = self._verify_admin_panels(raw_admin)
             result["admin_panels_unverified"] = len(raw_admin)
+            result["admin_panels"] = self._verify_admin_panels(raw_admin, cfg) if verify else raw_admin
 
-        # Verify sensitive files — check that they actually exist (return 200)
+        # Verify sensitive files — content-based existence check (returns the
+        # real file, not an SPA 200 fallback). Independent of the status filter.
         raw_sensitive = result.get("sensitive_files", [])
         if raw_sensitive:
             self.info(f"Verifying {len(raw_sensitive)} sensitive file candidates...")
             result["sensitive_files"] = self._verify_sensitive_files(raw_sensitive)
             result["sensitive_files_unverified"] = len(raw_sensitive)
+
+        # Liveness status filter: drop endpoints / dirs / param-URLs that return
+        # 404, 400, 429 or 403 (dead / blocked) so the report lists only routes
+        # that actually respond. Applied to every "Discovered Endpoints" category.
+        if verify:
+            for cat in ("api", "auth", "interesting_directories",
+                        "interesting_endpoints", "with_params"):
+                items = result.get(cat, [])
+                if items:
+                    result.setdefault(f"{cat}_unverified", len(items))
+                    result[cat] = self._filter_live_urls(items, cat, cfg)
 
         for cat in CLASSIFY_PATTERNS:
             items = result.get(cat, [])
@@ -845,26 +862,69 @@ class FuzzerModule(BaseModule):
                 self.success(f"  {cat}: {len(items)}")
         return result
 
-    def _verify_admin_panels(self, urls: list[str]) -> list[str]:
-        """Filter admin panel URLs to only those that are actual admin pages.
+    # Status codes that mean "dead or blocked" — endpoints returning any of
+    # these are dropped from the discovered-endpoint categories.
+    DEAD_STATUS = frozenset({400, 403, 404, 429})
 
-        Removes:
-        - Static assets (CSS, JS, images, fonts)
-        - URLs that are just subdomains with 'admin' in hostname pointing to normal pages
-        - URLs that don't respond with HTML containing login/dashboard indicators
+    def _filter_live_urls(self, urls: list[str], label: str, cfg: dict) -> list[str]:
+        """Keep only URLs that respond with a status outside DEAD_STATUS.
+
+        Probes concurrently (scope- and rate-limited via http_get), does not
+        follow redirects (a 301/302 is a live route and is kept), and caches
+        per-URL results so a URL shared across categories is probed once.
+        Unreachable URLs are treated as dead and dropped.
         """
+        cap = int(cfg.get("verify_max_per_category", 500))
+        threads = max(1, int(cfg.get("verify_threads", 10)))
+        timeout = int(cfg.get("verify_timeout", 8))
+        candidates = self.filter_in_scope_urls(urls)
+        if not candidates:
+            return []
+        if len(candidates) > cap:
+            self.warn(f"  {label}: status-checking first {cap} of {len(candidates)} "
+                      "(raise scan.fuzzing.verify_max_per_category to check more)")
+            candidates = candidates[:cap]
+
+        cache = self._status_cache
+        to_probe = [u for u in candidates if u not in cache]
+        if to_probe:
+            self.info(f"Verifying {len(to_probe)} {label} (drop 400/403/404/429)…")
+            sess = requests.Session()
+            sess.verify = False
+            sess.headers["User-Agent"] = "Mozilla/5.0 ReconX/2.0"
+
+            def probe(url: str) -> tuple[str, bool]:
+                try:
+                    resp = self.http_get(url, session=sess, timeout=timeout,
+                                         verify=False, allow_redirects=False)
+                except Exception:
+                    return url, False
+                if resp is None:
+                    return url, False
+                return url, resp.status_code not in self.DEAD_STATUS
+
+            with ThreadPoolExecutor(max_workers=threads) as pool:
+                for url, alive in pool.map(probe, to_probe):
+                    cache[url] = alive
+
+        live = sorted(u for u in candidates if cache.get(u))
+        if len(live) < len(candidates):
+            self.warn(f"  {label}: {len(live)} live / {len(candidates)} checked "
+                      "(dropped dead/blocked responses)")
+        return live
+
+    def _verify_admin_panels(self, urls: list[str], cfg: dict) -> list[str]:
+        """Strip static assets, dedupe by origin, then keep only panels that
+        respond with a non-blocked status (drops 400/403/404/429)."""
         # Step 1: Filter out obvious static assets
         candidates: list[str] = []
         for url in urls:
             parsed = urlparse(url)
             path_lower = parsed.path.lower()
-            # Skip static assets
             if any(path_lower.endswith(ext) for ext in STATIC_ASSET_EXTENSIONS):
                 continue
-            # Skip paths that are clearly asset directories
             if re.search(r'/(assets|static|dist|build|node_modules|vendor|fonts|img|images|media|css|js)/', path_lower):
                 continue
-            # Skip URLs with typical asset patterns in the path
             if re.search(r'/[a-f0-9]{6,}\.(js|css|chunk|bundle)', path_lower):
                 continue
             candidates.append(url)
@@ -872,12 +932,11 @@ class FuzzerModule(BaseModule):
         if not candidates:
             return []
 
-        # Step 2: Deduplicate by origin — only probe unique root paths
+        # Step 2: Deduplicate by origin + first path segment
         seen_origins: set[str] = set()
         unique_candidates: list[str] = []
         for url in candidates:
             parsed = urlparse(url)
-            # Normalize to origin + first path segment
             segments = [s for s in parsed.path.strip('/').split('/') if s]
             key_path = '/' + segments[0] if segments else '/'
             origin_key = f"{parsed.scheme}://{parsed.netloc}{key_path}"
@@ -885,40 +944,8 @@ class FuzzerModule(BaseModule):
                 seen_origins.add(origin_key)
                 unique_candidates.append(url)
 
-        # Step 3: HTTP verification — probe top candidates
-        verified: list[str] = []
-        sess = requests.Session()
-        sess.verify = False
-        sess.headers["User-Agent"] = "Mozilla/5.0 ReconX/2.0"
-        probe_limit = min(len(unique_candidates), 50)  # cap probing
-
-        for url in unique_candidates[:probe_limit]:
-            try:
-                resp = self.http_get(url, session=sess, timeout=8, verify=False)
-                if resp is None:
-                    continue
-                if resp.status_code not in (200, 301, 302, 307, 308, 401, 403):
-                    continue
-                # 401/403 on admin path is likely a real admin panel
-                if resp.status_code in (401, 403):
-                    verified.append(url)
-                    continue
-                # Check content type — must be HTML
-                ct = resp.headers.get("content-type", "").lower()
-                if "text/html" not in ct and "application/xhtml" not in ct:
-                    continue
-                # Check body for admin panel indicators
-                body_lower = (resp.content or b"")[:5000].lower()
-                if any(indicator in body_lower for indicator in ADMIN_PANEL_INDICATORS):
-                    verified.append(url)
-            except Exception:
-                continue
-
-        if verified:
-            self.warn(f"  Verified admin panels: {len(verified)} / {len(urls)} candidates")
-        else:
-            self.info(f"  No verified admin panels (all {len(urls)} were false positives)")
-        return sorted(set(verified))
+        # Step 3: keep only panels with a live, non-blocked response
+        return self._filter_live_urls(unique_candidates, "admin panels", cfg)
 
     # Content-type fingerprints expected for a real exposure per file type.
     # If the server returns text/html for `.env` or `.git/HEAD`, it's almost

@@ -167,6 +167,13 @@ scan:
     cloud_listing_threads: 10
     reuse_host_outputs: true
     extensions: [".php", ".asp", ".aspx", ".jsp", ".html", ".js", ".json"]
+    # Liveness filter for the "Discovered Endpoints" categories (api, auth,
+    # admin_panels, interesting_directories, interesting_endpoints, with_params):
+    # probe each and drop the ones returning 404 / 400 / 429 / 403.
+    verify_endpoints: true
+    verify_threads: 10
+    verify_timeout: 8
+    verify_max_per_category: 500
 
   # Endpoint harvesting — wraps cariddi, LinkFinder, xnLinkFinder and kiterunner.
   # gau / waybackurls run in the recon module, so passive harvesting is not

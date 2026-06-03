@@ -3,9 +3,13 @@ import time
 
 from modules.fuzzer import FuzzerModule
 
+# Classification tests assert category contents, so disable the network-based
+# liveness filter — they verify the regex classifier, not reachability.
+NO_VERIFY = {"scan": {"fuzzing": {"verify_endpoints": False}}}
+
 
 def test_classify_patterns(tmp_path):
-    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    module = FuzzerModule("example.com", str(tmp_path), NO_VERIFY, live_hosts=[])
 
     classified = module._classify([
         "https://example.com/api/users",
@@ -30,7 +34,7 @@ def test_classify_recognises_modern_api_and_auth_surfaces(tmp_path):
     Salesforce-style /services/data, Rails Devise /users/sign_in, and SAML ACS,
     while NOT collateral-matching unrelated paths like /register_steps.
     """
-    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    module = FuzzerModule("example.com", str(tmp_path), NO_VERIFY, live_hosts=[])
 
     classified = module._classify([
         # api family
@@ -91,7 +95,7 @@ def test_classify_filters_modern_framework_build_paths(tmp_path):
 
 
 def test_classify_surfaces_interesting_directories_and_endpoints(tmp_path):
-    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    module = FuzzerModule("example.com", str(tmp_path), NO_VERIFY, live_hosts=[])
 
     classified = module._classify([
         "https://example.com/backup/",
@@ -371,3 +375,65 @@ def test_spa_endpoints_reads_session_file_and_filters_scope(tmp_path):
 def test_spa_endpoints_returns_empty_when_file_missing(tmp_path):
     module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
     assert module._spa_endpoints() == []
+
+
+class _StatusResp:
+    def __init__(self, code):
+        self.status_code = code
+
+
+def test_filter_live_urls_drops_blocked_statuses(tmp_path, monkeypatch):
+    module = FuzzerModule("example.com", str(tmp_path), {"scope": {"enforce": False}}, live_hosts=[])
+    status_map = {
+        "https://example.com/ok": 200,
+        "https://example.com/redirect": 302,
+        "https://example.com/auth": 401,
+        "https://example.com/err": 500,
+        "https://example.com/missing": 404,
+        "https://example.com/bad": 400,
+        "https://example.com/limited": 429,
+        "https://example.com/forbidden": 403,
+    }
+
+    def fake_get(url, **kwargs):
+        code = status_map.get(url)
+        return _StatusResp(code) if code is not None else None
+
+    monkeypatch.setattr(module, "http_get", fake_get)
+    urls = list(status_map) + ["https://example.com/unreachable"]  # → None
+    live = module._filter_live_urls(urls, "api", {"verify_threads": 4})
+
+    # Kept: 200, 302, 401, 500. Dropped: 404, 400, 429, 403, and unreachable.
+    assert set(live) == {
+        "https://example.com/ok",
+        "https://example.com/redirect",
+        "https://example.com/auth",
+        "https://example.com/err",
+    }
+
+
+def test_classify_drops_dead_endpoints_via_status_filter(tmp_path, monkeypatch):
+    module = FuzzerModule("example.com", str(tmp_path), {"scope": {"enforce": False}}, live_hosts=[])
+
+    def fake_get(url, **kwargs):
+        return _StatusResp(404 if "dead" in url else 200)
+
+    monkeypatch.setattr(module, "http_get", fake_get)
+    classified = module._classify([
+        "https://example.com/api/live",
+        "https://example.com/api/dead",
+        "https://example.com/items?id=1",
+    ])
+
+    assert "https://example.com/api/live" in classified["api"]
+    assert "https://example.com/api/dead" not in classified["api"]
+    assert classified["api_unverified"] == 2  # both candidates counted pre-filter
+    assert "https://example.com/items?id=1" in classified["with_params"]
+
+
+def test_classify_admin_panels_drops_403(tmp_path, monkeypatch):
+    """403 must be dropped from admin panels (previously it was kept)."""
+    module = FuzzerModule("example.com", str(tmp_path), {"scope": {"enforce": False}}, live_hosts=[])
+    monkeypatch.setattr(module, "http_get", lambda url, **k: _StatusResp(403))
+    classified = module._classify(["https://example.com/admin"])
+    assert classified["admin_panels"] == []
