@@ -285,6 +285,13 @@ scan:
   sql_injection:
     enabled: true
     max_targets: 10
+    # SQLi-likelihood scorer: ranks (url, param) by name + value shape + endpoint
+    # context, and sqlmap only targets the "likely" params (score >= strong).
+    possible_threshold: 0.3    # report a candidate at/above this score
+    strong_threshold: 0.5      # hand the param to sqlmap (-p) at/above this score
+    error_prescreen: true      # lone-quote probe; a SQL error force-promotes a param
+    prescreen_max_requests: 60
+    prescreen_min_score: 0.2
     timeout: 900
     level: 1
     risk: 1

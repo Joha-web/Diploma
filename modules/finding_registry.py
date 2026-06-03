@@ -655,6 +655,18 @@ FINDING_DEFINITIONS: dict[str, FindingDefinition] = {
         "confirmed",
         ("ssrf", "confirmed", "ssrfmap"),
     ),
+    "sqli_candidate_parameter": FindingDefinition(
+        "sqli_candidate_parameter",
+        "Probable SQL injection parameter",
+        "MEDIUM",
+        0.60,
+        "sql_injection",
+        "A parameter scored as a likely SQL injection point from its name, value shape and endpoint context.",
+        ("https://portswigger.net/web-security/sql-injection",
+         "https://owasp.org/www-community/attacks/SQL_Injection"),
+        "candidate",
+        ("sql-injection", "candidate"),
+    ),
     "lfi_detected": FindingDefinition(
         "lfi_detected",
         "Local File Inclusion confirmed",
