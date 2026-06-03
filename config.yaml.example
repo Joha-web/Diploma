@@ -53,7 +53,8 @@ ai:
   anthropic_model: "claude-sonnet-4-6"
   anthropic_base_url: "https://api.anthropic.com"
   temperature: 0.3
-  max_tokens: 4096
+  max_tokens: 6144                  # report length cap (Ollama num_predict)
+  num_ctx: 8192                     # Ollama context window — must fit the prompt
   language: "en"
   realtime_advice: false
   advise_on: [recon, portscan, techstack, fuzzer, vulnscan, cve_check]

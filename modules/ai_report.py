@@ -10,6 +10,29 @@ import re
 import requests
 from modules.base import BaseModule
 
+# Every finding-producing module, with a short label, so new modules are picked
+# up in the prompt automatically instead of via a stale hand-kept list.
+PROMPT_MODULE_LABELS = {
+    "secret_scanner": "Git Secret", "fuzzer": "Fuzzer", "cors_checker": "CORS",
+    "auth_probe": "Auth/Cookie", "host_header_injection": "Host Header",
+    "injection_probe": "SSRF/SSTI/XXE Probe", "xss": "XSS", "sql_injection": "SQL Injection",
+    "idor_probe": "IDOR/BOLA", "jwt_audit": "JWT", "prototype_pollution": "Prototype Pollution",
+    "http_smuggling": "HTTP Smuggling", "oauth_probe": "OAuth", "open_redirect_probe": "Open Redirect",
+    "xxe_probe": "XXE", "deserialization_probe": "Deserialization", "race_condition": "Race Condition",
+    "websocket_probe": "WebSocket", "api_schema_audit": "API Schema", "js_security_audit": "JS Security",
+    "ssrf_probe": "SSRF", "file_inclusion": "LFI/RFI", "command_injection": "Command Injection",
+    "error_analyzer": "Server Errors", "endpoint_harvester": "Endpoint Harvest",
+    "api_key_validator": "API Key Leak", "sourcemap_analyzer": "Source Map",
+    "takeover_checker": "Subdomain Takeover",
+}
+# Evidence keys worth handing to the model, in priority order.
+PROMPT_EVIDENCE_KEYS = (
+    "param", "payload", "dbms", "framework", "signature", "match", "redacted",
+    "location", "source_path", "marker", "wrapper", "hits", "reasons",
+    "value", "status", "tool", "header",
+)
+SEV_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
+
 
 class AIReportModule(BaseModule):
     name = "ai_report"
@@ -208,132 +231,185 @@ class AIReportModule(BaseModule):
         if missing_headers:
             blocks.append(f"\nMISSING SECURITY HEADERS: {missing_headers} total")
 
-        # ── Active probe findings (CORS, XSS, SQLi, JWT, etc.)
-        active_probe_modules = [
-            ("CORS", "cors_checker"),
-            ("Auth/Cookie", "auth_probe"),
-            ("Host Header Injection", "host_header_injection"),
-            ("XSS", "xss"),
-            ("SQL Injection", "sql_injection"),
-            ("IDOR/BOLA", "idor_probe"),
-            ("JWT", "jwt_audit"),
-            ("Prototype Pollution", "prototype_pollution"),
-            ("HTTP Smuggling", "http_smuggling"),
-            ("OAuth", "oauth_probe"),
-            ("Open Redirect", "open_redirect_probe"),
-            ("XXE", "xxe_probe"),
-            ("Deserialization", "deserialization_probe"),
-            ("Race Condition", "race_condition"),
-            ("WebSocket", "websocket_probe"),
-            ("API Schema", "api_schema_audit"),
-            ("JS Security", "js_security_audit"),
-            ("Injection Probe", "injection_probe"),
-            ("SSRF", "ssrf_probe"),
-        ]
-        active_crits: list[str] = []
-        active_mediums: list[str] = []
-        for label, mod_name in active_probe_modules:
-            mod_data = r.get(mod_name, {})
-            for f in (mod_data.get("findings", []) or [])[:10]:
-                sev = f.get("severity", "INFO")
-                line = f"  [{sev}] {label}: {f.get('title', '')} → {f.get('url', '')}"
-                if sev in ("CRITICAL", "HIGH"):
-                    active_crits.append(line)
-                elif sev == "MEDIUM":
-                    active_mediums.append(line)
-
-        if active_crits:
-            blocks.append(f"\nACTIVE PROBE FINDINGS ({len(active_crits)} critical/high):")
-            blocks.extend(active_crits[:25])
-        if active_mediums:
-            blocks.append(f"\nACTIVE PROBE MEDIUM FINDINGS ({len(active_mediums)}):")
-            blocks.extend(active_mediums[:15])
+        # ── All security findings WITH evidence, grouped so the model can write
+        # a detailed per-finding analysis (confirmed first, candidates separate).
+        confirmed, candidates, mediums = self._collect_findings_for_prompt(r)
+        if confirmed:
+            blocks.append(f"\nCONFIRMED FINDINGS ({len(confirmed)}) — proven/exploited; analyse each in full detail:")
+            blocks.extend(f"  {line}" for line in confirmed[:45])
+        if mediums:
+            blocks.append(f"\nMEDIUM-RISK FINDINGS ({len(mediums)}):")
+            blocks.extend(f"  {line}" for line in mediums[:25])
+        if candidates:
+            blocks.append(f"\nUNCONFIRMED HIGH/CRITICAL CANDIDATES ({len(candidates)}) — require manual verification:")
+            blocks.extend(f"  {line}" for line in candidates[:30])
 
         data = "\n".join(blocks)
 
         if lang == "ru":
-            return f"""Ты — опытный пентестер с 15 годами в AppSec и Red Team. \
-Проанализируй результаты автоматизированной разведки и дай профессиональный отчёт.
+            return f"""Ты — опытный пентестер. Напиши ПОДРОБНЫЙ технический отчёт по результатам сканирования. Анализируй каждую находку детально по её evidence, а не общим описанием.
 
-ДАННЫЕ СКАНИРОВАНИЯ:
+ПРАВИЛА:
+- Используй ТОЛЬКО данные ниже. Не выдумывай находок, параметров, payload-ов, заголовков, CVE.
+- CONFIRMED-находки подтверждены инструментом — разбери каждую подробно (параметр, payload, сигнатура, CWE).
+- CANDIDATE-находки не подтверждены — вынеси отдельно как "требует ручной проверки".
+- Не утверждай, что система «полностью безопасна». Открытые порты и отсутствующие заголовки — не всегда уязвимость, объясняй контекст.
+
+ДАННЫЕ СКАНИРОВАНИЯ (строка находки: [SEVERITY] Модуль: заголовок @ url (CWE, confidence, verdict) | evidence):
 {data}
 
-Напиши отчёт на русском языке в следующем формате (строго):
+Формат отчёта (Markdown):
 
-## 🎯 Executive Summary
-Краткое резюме (3-4 предложения) для руководства. Укажи общую оценку безопасности: A (отлично) / B / C / D / F (критически опасно).
+## Executive Summary
+3-5 предложений для руководства и оценка A-F с обоснованием.
 
-## 🔴 Критические зоны атаки
-Конкретные находки с наибольшим риском. Для каждой:
-- Что найдено (IP, порт, URL)
-- Почему опасно (вектор атаки)
-- Рекомендация
+## Подтверждённые находки (детально)
+Для КАЖДОЙ confirmed-находки подраздел "### [SEVERITY] <название>":
+- Локация: точный URL и параметр.
+- Доказательство / PoC: точный payload, сигнатура или значение из данных.
+- Эксплуатация и влияние: как атакующий использует и реальный бизнес-риск.
+- Рекомендация: конкретное исправление.
 
-## 🟡 Средний риск
-Находки среднего приоритета.
+## Цепочки атак
+Свяжи связанные находки в 1-3 сквозных сценария атаки, называя конкретные находки.
 
-## 🟢 Низкий риск / Информационные находки
+## Кандидаты для ручной проверки
+Неподтверждённые high/critical: причина флага и точная ручная проверка.
 
-## 🛡️ Рекомендации
-Конкретные действия, отсортированные по приоритету.
+## Средний риск
 
-## 📊 Attack Surface Summary
-Размер поверхности атаки: кол-во субдоменов, открытых портов, технологий, критичных endpoint'ов.
+## Низкий риск / Информационные находки
 
-Используй только реальные данные из сканирования. Не выдумывай уязвимостей."""
+## План устранения по приоритету
+Нумерованный список по снижению риска.
+
+## Attack Surface Summary
+Числа: субдомены, хосты, порты, технологии, уязвимости, CVE, endpoint'ы, секреты.
+
+В конце добавь: "All automated findings should be manually verified before remediation tracking or risk acceptance."
+"""
         else:
-            return f"""You are a senior application security consultant writing a client-ready penetration testing report.
+            return f"""You are a senior penetration tester writing the DETAILED technical findings section of a client engagement report. Go deep — analyse each finding specifically using its evidence. Do NOT write a short generic overview.
 
 CRITICAL LANGUAGE RULES:
 - Write the entire report in clear professional English only.
 - Use ASCII English section titles and labels only.
 - Do not use German, Russian, Kazakh, Chinese, mixed-language phrases, emojis, or malformed translated words.
-- Use standard security terminology. Do not invent header names, product names, vulnerabilities, or mitigations.
-- If evidence is weak or missing, say "requires manual verification" instead of presenting it as confirmed.
-- Use only the scan data below. Do not add findings that are not supported by the data.
-- Do not claim the project is "fully secure" or "fully safe"; security is risk-managed, not absolute.
 
-FINDING QUALITY RULES:
-- Every Critical or High finding must cite concrete evidence: IP, port, URL, technology, CVE, or exact issue from scan data.
-- Missing security headers are usually Medium unless paired with a concrete exploit path.
-- Open ports are not automatically vulnerabilities; explain the exposed service and why it matters.
-- Do not recommend fake headers. Valid examples include Content-Security-Policy, Strict-Transport-Security, X-Frame-Options,
-  X-Content-Type-Options, Referrer-Policy, and Permissions-Policy.
-- Do not mention CSRF unless the scan data explicitly contains CSRF evidence.
-- Do not mention DRDoS unless UDP amplification services or related evidence exists in the scan data.
-- Do not describe missing headers as missing authentication. They are browser-side hardening controls.
+EVIDENCE & ACCURACY RULES:
+- Use ONLY the scan data below. Never invent findings, parameters, payloads, headers, products, CVEs, or mitigations.
+- CONFIRMED findings were proven by the tooling — analyse each one in depth using its exact evidence (parameter, payload, signature, CWE).
+- CANDIDATE findings are unconfirmed — present them separately as "requires manual verification"; never describe them as confirmed.
+- If evidence is weak, say so. Do not claim the system is "fully secure"; security is risk-managed, not absolute.
+- Open ports and missing security headers are not automatically vulnerabilities — explain the exposed service/control and why it matters.
 
-SCAN DATA:
+SCAN DATA (each finding line is: [SEVERITY] Module: title @ url (CWE, confidence, verdict) | evidence):
 {data}
 
-Write the report in Markdown with exactly these sections:
+Write the report in Markdown with these sections:
 
 ## Executive Summary
-3-5 sentences for management. Include an A-F security grade and one sentence explaining the grade.
+3-5 sentences for management, plus an A-F security grade and one sentence justifying it.
 
-## Critical and High Risk Findings
-Only include findings supported by concrete evidence. For each finding use:
-- Evidence:
-- Risk:
-- Recommendation:
+## Confirmed Findings (Detailed)
+For EVERY confirmed finding, write a subsection titled "### [SEVERITY] <short title>" containing:
+- Location: the exact URL and parameter.
+- Evidence / Proof of Concept: quote the exact payload, signature, or value from the scan data.
+- Exploitation and Impact: how an attacker leverages it and the realistic business impact.
+- Remediation: a specific, actionable fix.
+If there are no confirmed findings, write: "No findings were confirmed by the automated scan."
 
-If there are no supported Critical/High findings, write: "No critical or high-risk findings were confirmed by the automated scan."
+## Attack Chains
+Combine related findings (e.g. exposed admin panel + leaked API key + weak auth) into 1-3 concrete end-to-end attack scenarios, naming the specific findings used in each chain.
+
+## Candidate Findings Requiring Manual Verification
+List the unconfirmed high/critical candidates. For each, give the reason it was flagged and the exact manual check to confirm or dismiss it.
 
 ## Medium Risk Findings
-Prioritized findings with concrete evidence and remediation.
+Each with concrete evidence and remediation.
 
-## Low Risk / Informational Findings
-Useful context such as exposed technologies, non-critical endpoints, and informational observations.
+## Low Risk / Informational Observations
+Exposed technologies, non-critical endpoints, and other useful context.
 
 ## Prioritized Remediation Plan
-Numbered actions ordered by risk reduction and implementation urgency.
+A numbered list ordered by risk reduction; each item names the finding(s) it resolves.
 
 ## Attack Surface Summary
-Summarize subdomains, live hosts, open ports, high-risk ports, technologies, vulnerabilities, CVEs, endpoints, and JS secrets.
+Numbers for subdomains, live hosts, open ports, high-risk ports, technologies, vulnerabilities, CVEs, endpoints, and secrets.
 
-End with this sentence:
+End with exactly:
 "All automated findings should be manually verified before remediation tracking or risk acceptance."
 """
+
+    # ── Finding collection for the prompt ─────────────────────────────────────
+    def _collect_findings_for_prompt(self, r: dict) -> tuple[list[str], list[str], list[str]]:
+        """Gather findings from every module, grouped: confirmed, unconfirmed
+        high/critical candidates, and mediums — each line carries evidence."""
+        confirmed: list[tuple[int, str]] = []
+        candidates: list[tuple[int, str]] = []
+        mediums: list[tuple[int, str]] = []
+
+        for module, label in PROMPT_MODULE_LABELS.items():
+            data = r.get(module, {})
+            if not isinstance(data, dict):
+                continue
+            for f in data.get("findings", []) or []:
+                if not isinstance(f, dict):
+                    continue
+                sev = str(f.get("severity", "INFO")).upper()
+                rank = SEV_RANK.get(sev, 0)
+                verdict = str(f.get("verdict") or "").lower()
+                exploit = str(f.get("exploitability") or "").lower()
+                line = self._finding_line(label, f)
+                if verdict == "confirmed" or exploit == "confirmed":
+                    confirmed.append((rank, line))
+                elif sev == "MEDIUM":
+                    mediums.append((rank, line))
+                elif rank >= 3:  # unconfirmed CRITICAL/HIGH
+                    candidates.append((rank, line))
+                # LOW/INFO candidates are intentionally dropped to keep the prompt focused
+
+        srt = lambda items: [line for _, line in sorted(items, key=lambda x: x[0], reverse=True)]
+        return srt(confirmed), srt(candidates), srt(mediums)
+
+    def _finding_line(self, label: str, f: dict) -> str:
+        sev = str(f.get("severity", "INFO")).upper()
+        title = f.get("title") or f.get("name") or f.get("type", "finding")
+        url = f.get("url") or f.get("matched_url", "")
+        meta = []
+        if f.get("cwe"):
+            meta.append(str(f["cwe"]))
+        if f.get("confidence") is not None:
+            meta.append(f"conf={f['confidence']}")
+        if f.get("verdict"):
+            meta.append(str(f["verdict"]))
+        line = f"[{sev}] {label}: {title}"
+        if url:
+            line += f" @ {url}"
+        if meta:
+            line += " (" + ", ".join(meta) + ")"
+        evidence = self._evidence_brief(f.get("evidence", {}))
+        if evidence:
+            line += f" | {evidence}"
+        return line[:480]
+
+    @staticmethod
+    def _evidence_brief(evidence) -> str:
+        if not isinstance(evidence, dict):
+            return ""
+        bits: list[str] = []
+        for key in PROMPT_EVIDENCE_KEYS:
+            value = evidence.get(key)
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, (list, tuple)):
+                value = ", ".join(str(v) for v in value[:3])
+            elif isinstance(value, dict):
+                value = ", ".join(f"{k}={v}" for k, v in list(value.items())[:3])
+            bits.append(f"{key}={str(value)[:70]}")
+            if len(bits) >= 5:
+                break
+        return "; ".join(bits)
 
     # ── Ollama ────────────────────────────────────────────────────────────────
 
@@ -355,7 +431,11 @@ End with this sentence:
                     "stream": False,
                     "options": {
                         "temperature":   cfg.get("temperature", 0.3),
-                        "num_predict":   cfg.get("max_tokens", 4096),
+                        # num_ctx must be large enough to hold the (now richer)
+                        # prompt — Ollama silently truncates anything beyond it,
+                        # which is what made earlier reports thin.
+                        "num_ctx":       cfg.get("num_ctx", 8192),
+                        "num_predict":   cfg.get("max_tokens", 6144),
                         "top_p":         0.9,
                     },
                 },
@@ -430,7 +510,9 @@ End with this sentence:
             (r"[\u4e00-\u9fff]",  "cjk_detected"),
             (r"\b(Kritische|Risikogebiete|Angriff|Entdeckung|Warum|Empfehlung|Mittelrisiko)\b", "german_detected"),
             (r"\b(Niedrigen|Informations?ale|OffenePorts|fehlende|Überprüfen|Zertifikat)\b",    "german_detected"),
-            (r"\b(PROtection|Overprüfung|Angriffssfläche|mutsam|sogenah)\b",                    "german_detected"),
+            # NB: must not collide with normal English (e.g. "protection") — only
+            # match genuinely malformed/German tokens.
+            (r"\b(Overprüfung|Angriffssfläche|mutsam|sogenah)\b",                                "german_detected"),
         ]
         for pattern, reason in non_english_patterns:
             if re.search(pattern, text, flags=re.IGNORECASE):

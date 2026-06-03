@@ -30,12 +30,28 @@ def test_ai_prompt_rejects_unsupported_claims():
 The target has several findings based on automated scan evidence.
 
 ## Critical and High Risk Findings
-- Evidence: Missing CSRF protection was detected.
-- Risk: Account compromise.
-- Recommendation: Implement CSRF protection.
+- Evidence: The host is exposed to DRDoS amplification attacks.
+- Risk: Service disruption.
+- Recommendation: Filter UDP traffic.
 """
 
     assert not AIReportModule._is_acceptable_english_report(bad_report)
+
+
+def test_ai_report_accepts_normal_security_english():
+    # Regression: the word "protection" must NOT be rejected as German — that bug
+    # silently discarded good AI reports and fell back to a thin static summary.
+    good = """
+## Executive Summary
+The scan identified issues requiring manual validation; the overall grade is C.
+
+## Critical and High Risk Findings
+- Evidence: /search?q= reflected an unescaped marker.
+- Risk: Cross-site scripting.
+- Recommendation: Add Content-Security-Policy protection and output encoding.
+"""
+
+    assert AIReportModule._is_acceptable_english_report(good)
 
 
 def test_ai_prompt_accepts_supported_english_output():
