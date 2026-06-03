@@ -51,12 +51,17 @@ telegram:
 # ── AI Analysis (Ollama — local, free) ───────────────────────
 ai:
   enabled:       true
-  provider:      "ollama"          # ollama | openai
+  provider:      "ollama"          # ollama | openai | anthropic
   model:         "deepseek-r1:7b"  # deepseek-r1:14b needs ~10GB RAM
   ollama_url:    "http://localhost:11434"
   # OpenAI-compatible fallback (groq.com, openrouter.ai are free)
   openai_api_key:  ""
   openai_base_url: "https://api.openai.com/v1"
+  # Anthropic / Claude (used when provider == anthropic). Keep the key in
+  # env (ANTHROPIC_API_KEY) or a local untracked file, not in git.
+  anthropic_api_key:  ""
+  anthropic_model:    "claude-sonnet-4-6"   # opus/sonnet/haiku 4.x
+  anthropic_base_url: "https://api.anthropic.com"
   temperature:   0.3
   max_tokens:    4096
   language:      "en"              # en | ru
@@ -70,6 +75,16 @@ scan:
   rate_limit: 50
   global_rate_limit: 50       # aggregate in-process HTTP requests/sec
   allow_write: false          # blocks write-like HTTP methods by default
+
+  # AI false-positive triage pass (runs after the correlator). Reviews every
+  # finding's evidence and downgrades likely false positives to manual_review
+  # without deleting them. use_ai sends findings to the configured LLM
+  # (billed for anthropic/openai); set false to use the free heuristic only.
+  fp_triage:
+    enabled:       true
+    use_ai:        true
+    max_findings:  80           # triage the riskiest N; rest keep their verdict
+    fp_confidence_threshold: 0.6  # min model confidence to downgrade a finding
 
   # Subdomain sources
   subdomains:

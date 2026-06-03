@@ -89,8 +89,11 @@ PIPELINE: list[dict] = [
     {"name": "vulnscan",    "group": 11},
     {"name": "cve_check",   "group": 12},
     {"name": "correlator",  "group": 13},
-    {"name": "asset_risk",  "group": 14},
-    {"name": "ai_report",   "group": 15},
+    # group 14: reasoning pass over all findings (after correlator, before
+    # asset_risk/ai_report so their output reflects triaged verdicts)
+    {"name": "fp_triage",   "group": 14},
+    {"name": "asset_risk",  "group": 15},
+    {"name": "ai_report",   "group": 16},
 ]
 
 CLASS_MAP = {
@@ -132,6 +135,7 @@ CLASS_MAP = {
     "vulnscan":    ("modules.vulnscan",     "VulnScanModule"),
     "cve_check":   ("modules.cve_check",    "CVECheckModule"),
     "correlator":  ("modules.correlator",   "CorrelatorModule"),
+    "fp_triage":   ("modules.fp_triage",    "FPTriageModule"),
     "asset_risk":  ("modules.asset_risk",   "AssetRiskModule"),
     "ai_report":   ("modules.ai_report",    "AIReportModule"),
 }
@@ -176,6 +180,7 @@ MODULE_LABELS = {
     "vulnscan":    "Vulnerability Scanning (Nuclei)",
     "cve_check":   "CVE & ExploitDB Correlation",
     "correlator":  "Cross-Finding Correlation",
+    "fp_triage":   "AI False-Positive Triage",
     "asset_risk":  "Per-Asset Risk Ranking",
     "ai_report":   "AI Security Analysis",
 }
@@ -384,7 +389,7 @@ def _build_kwargs(name: str, all_results: dict) -> dict:
         kwargs["tech_results"] = all_results.get("techstack", {})
         kwargs["vuln_results"] = all_results.get("vulnscan", {})
         kwargs["all_results"] = all_results
-    elif name in ("correlator", "asset_risk", "ai_report"):
+    elif name in ("correlator", "fp_triage", "asset_risk", "ai_report"):
         kwargs["all_results"] = all_results
     return kwargs
 
@@ -441,6 +446,9 @@ def _module_summary(name: str, result: dict) -> str:
                 f"{summary.get('with_exploitdb', 0)} ExploitDB match(es)")
     elif name == "correlator":
         return f"{result.get('total', 0)} correlated priority item(s)"
+    elif name == "fp_triage":
+        return (f"{result.get('assessed', 0)} triaged, "
+                f"{result.get('flagged', 0)} likely false positive(s)")
     elif name == "asset_risk":
         tier = result.get("tier_summary", {})
         return (f"{result.get('total_assets', 0)} assets, "

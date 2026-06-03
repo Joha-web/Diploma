@@ -27,7 +27,19 @@ class AIAdvisor:
 
     def analyse(self, module_name: str, result: dict, target: str) -> str:
         prompt = self._prompt(module_name, result, target)
-        provider = self.ai_cfg.get("provider", "ollama")
+        return self.complete(prompt)
+
+    def complete(self, prompt: str, system: str | None = None,
+                 max_tokens: int | None = None) -> str:
+        """Provider-agnostic single-shot completion.
+
+        Centralised so other components (e.g. the false-positive triage pass)
+        can reuse the configured LLM without duplicating provider plumbing.
+        Returns "" on any failure so callers can fall back gracefully.
+        """
+        provider = str(self.ai_cfg.get("provider", "ollama")).lower()
+        if provider in ("anthropic", "claude"):
+            return self._anthropic(prompt, system=system, max_tokens=max_tokens)
         if provider == "ollama":
             return self._ollama(prompt)
         return self._openai(prompt)
@@ -122,6 +134,47 @@ class AIAdvisor:
             )
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"].strip()
+        except Exception:
+            return ""
+        return ""
+
+    def _anthropic(self, prompt: str, system: str | None = None,
+                   max_tokens: int | None = None) -> str:
+        key = (
+            self.ai_cfg.get("anthropic_api_key")
+            or os.getenv("ANTHROPIC_API_KEY", "")
+        )
+        if not key:
+            return ""
+        base_url = self.ai_cfg.get("anthropic_base_url", "https://api.anthropic.com")
+        model = self.ai_cfg.get("anthropic_model") or self.ai_cfg.get(
+            "model", "claude-sonnet-4-6"
+        )
+        body = {
+            "model": model,
+            "max_tokens": int(max_tokens or self.ai_cfg.get("max_tokens", 1024)),
+            "temperature": float(self.ai_cfg.get("temperature", 0.2)),
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            body["system"] = system
+        try:
+            resp = requests.post(
+                f"{base_url}/v1/messages",
+                headers={
+                    "x-api-key": key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json=body,
+                timeout=90,
+            )
+            if resp.status_code == 200:
+                blocks = resp.json().get("content", []) or []
+                text = "".join(
+                    b.get("text", "") for b in blocks if b.get("type") == "text"
+                )
+                return text.strip()
         except Exception:
             return ""
         return ""

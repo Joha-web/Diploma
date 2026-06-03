@@ -44,11 +44,14 @@ telegram:
 
 ai:
   enabled: true
-  provider: "ollama"
+  provider: "ollama"               # ollama | openai | anthropic
   model: "deepseek-r1:7b"
   ollama_url: "http://localhost:11434"
   openai_api_key: ""
   openai_base_url: "https://api.openai.com/v1"
+  anthropic_api_key: ""            # or set ANTHROPIC_API_KEY in env
+  anthropic_model: "claude-sonnet-4-6"
+  anthropic_base_url: "https://api.anthropic.com"
   temperature: 0.3
   max_tokens: 4096
   language: "en"
@@ -61,6 +64,14 @@ scan:
   rate_limit: 50
   global_rate_limit: 50
   allow_write: false
+
+  # AI false-positive triage (runs after the correlator). use_ai sends
+  # findings to the configured LLM (billed); false = free heuristic only.
+  fp_triage:
+    enabled: true
+    use_ai: true
+    max_findings: 80
+    fp_confidence_threshold: 0.6
 
   subdomains:
     use_subfinder: true
