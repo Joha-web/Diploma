@@ -12,6 +12,25 @@ from modules.base import BaseModule
 
 CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
 
+# WhatWeb / fingerprint plugins that report page metadata or HTTP headers rather
+# than a software product. Feeding these to searchsploit yields substring
+# nonsense — e.g. WhatWeb's "Title" plugin (the page <title>) substring-matched
+# "enTITLEment" in EDB-42145 (an Apple macOS/iOS local kernel exploit).
+NON_PRODUCT_TECH = frozenset({
+    "title", "country", "ip", "email", "script", "frame", "html5",
+    "metagenerator", "redirectlocation", "cookies", "cookie", "httponly",
+    "uncommonheaders", "x-ua-compatible", "x-powered-by", "poweredby",
+    "passwordfield", "meta-author", "meta-keywords", "open-graph-protocol",
+    "schema.org", "allow", "via", "etag", "object",
+})
+# Response-header names some fingerprinters surface as "technologies".
+HEADER_NAME_RE = re.compile(
+    r"^(x-|access-control-|content-|sec-|strict-transport|www-authenticate|"
+    r"set-cookie|referrer-policy|permissions-policy|cross-origin-)", re.I,
+)
+# Exploit-DB categories irrelevant to a remote external web-app correlation.
+NOISE_EXPLOIT_TYPES = frozenset({"shellcode", "papers"})
+
 
 class CVECheckModule(BaseModule):
     name = "cve_check"
@@ -72,21 +91,35 @@ class CVECheckModule(BaseModule):
                 "confidence": 0.9 if source.get("matched_url") else 0.75,
             })
 
+        # Component → exploit correlation. searchsploit matches case-insensitive
+        # substrings, so raw results are full of false positives (a "PHP 7.2.14"
+        # query returns unrelated php-platform web apps; "Title" matches
+        # "enTITLEment"). Keep only exploits whose title actually names the
+        # product, and drop exploit classes irrelevant to remote web targets.
         component_matches = []
+        relevant_by_term: dict[str, list[dict]] = {}
         for component in components:
             term = component["query"]
-            matches = exploitdb_by_term.get(term, [])
-            if matches:
+            relevant = self._relevant_matches(
+                component["component"], exploitdb_by_term.get(term, [])
+            )
+            if relevant:
+                relevant_by_term[term] = relevant
                 component_matches.append({
                     **component,
                     "exploit_available": True,
-                    "exploitdb": matches[:5],
+                    "exploitdb": relevant[:5],
                     "attack_simulation": self._dry_run_simulation(term, True, component),
                     "confidence": 0.55,
+                    "relevance": "product_name_in_exploit_title",
                 })
 
         exploitdb_matches = []
-        for term, matches in exploitdb_by_term.items():
+        # CVE-derived matches are reliable — searchsploit indexes CVE ids directly.
+        for cve_id in cves:
+            for match in exploitdb_by_term.get(cve_id, [])[:5]:
+                exploitdb_matches.append({"query": cve_id, **match})
+        for term, matches in relevant_by_term.items():
             for match in matches[:5]:
                 exploitdb_matches.append({"query": term, **match})
 
@@ -157,6 +190,8 @@ class CVECheckModule(BaseModule):
                 version = str(tech.get("version", "")).strip()
                 if not name or not version:
                     continue
+                if not self._is_product_component(name):
+                    continue
                 if not re.search(r"\d", version):
                     continue
                 query = f"{name} {version}".strip()
@@ -169,6 +204,56 @@ class CVECheckModule(BaseModule):
                 if url and url not in entry["urls"]:
                     entry["urls"].append(url)
         return list(components.values())
+
+    @staticmethod
+    def _is_product_component(name: str) -> bool:
+        """Reject fingerprint plugins that report metadata/headers, not products."""
+        key = name.strip().lower()
+        if key in NON_PRODUCT_TECH:
+            return False
+        if HEADER_NAME_RE.match(key):
+            return False
+        return True
+
+    @staticmethod
+    def _name_tokens(name: str) -> list[str]:
+        """Distinctive alphabetic tokens of a product name (drops versions/short bits)."""
+        return [t for t in re.split(r"[^A-Za-z0-9]+", name.lower())
+                if len(t) >= 3 and not t.isdigit()]
+
+    @staticmethod
+    def _exploit_product_segment(title: str) -> str:
+        """The product[+version] segment of an Exploit-DB title.
+
+        EDB titles follow the convention ``Product Version - Description``, so the
+        affected product lives before the first ` - `. Restricting matching to
+        this head segment stops the product name being matched inside a
+        description (e.g. "cPanel < 11.25 - ... (Add User PHP Script)" must not
+        count as a PHP-runtime exploit).
+        """
+        return title.split(" - ", 1)[0] if " - " in title else title
+
+    def _relevant_matches(self, component_name: str, matches: list[dict]) -> list[dict]:
+        """Keep only exploits whose *product segment* names the component.
+
+        This is the false-positive killer. searchsploit substring-matches, so
+        "Title" hits "enTITLEment" and "PHP 7.2.14" returns unrelated php-platform
+        web apps. Requiring a product-name token as a whole word in the title's
+        head segment removes those collisions while keeping genuine product
+        exploits (titled e.g. "PHP 7.x - RCE").
+        """
+        tokens = self._name_tokens(component_name)
+        if not tokens:
+            return []  # nothing distinctive to confirm against → treat as noise
+        relevant: list[dict] = []
+        for match in matches:
+            if str(match.get("type", "")).lower() in NOISE_EXPLOIT_TYPES:
+                continue
+            head = self._exploit_product_segment(str(match.get("title", "")))
+            head_tokens = set(re.split(r"[^a-z0-9]+", head.lower()))
+            if any(tok in head_tokens for tok in tokens):
+                relevant.append(match)
+        return relevant
 
     @staticmethod
     def _build_search_queries(cves: dict[str, dict], components: list[dict]) -> list[str]:
