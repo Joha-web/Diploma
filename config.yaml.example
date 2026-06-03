@@ -85,6 +85,11 @@ scan:
     use_wayback_cdx: true
     use_threatminer: true
     use_shodan: true
+    # Shodan host intelligence: passive open ports / services / known CVEs per
+    # resolved IP via /shodan/host/{ip} (1 Shodan query credit per IP).
+    shodan_host_intel: true
+    max_shodan_hosts: 20
+    use_chaos: true                 # ProjectDiscovery Chaos dataset (uses PDCP key, passive)
     use_censys: true
     use_github: true
     use_securitytrails: false
@@ -476,6 +481,9 @@ scan:
     waf_scan_strategy: host-spray
     waf_exclude_tags: [fuzz, fuzzing, bruteforce, headless]
     nuclei_timeout: 3600
+    # A PDCP key authenticates nuclei (full/latest template access) WITHOUT
+    # uploading anything. Result upload to the PD Cloud dashboard is opt-in:
+    # set to true only if you explicitly want findings sent to the cloud.
     dashboard_upload: false
     oob:
       enabled: true

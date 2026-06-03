@@ -194,6 +194,7 @@ def _assets(results: dict) -> dict:
         "sourcemaps": results.get("sourcemap_analyzer", {}).get("maps", []),
         "cloud_assets": results.get("fuzzer", {}).get("cloud_assets", []),
         "graphql": results.get("fuzzer", {}).get("graphql_details", []),
+        "shodan_hosts": recon.get("shodan_hosts", []),
         "harvested_endpoints": results.get("endpoint_harvester", {}).get("all_endpoints", []),
         "harvested_parameters": results.get("endpoint_harvester", {}).get("parameters", []),
         "screenshots": web.get("screenshots", []),

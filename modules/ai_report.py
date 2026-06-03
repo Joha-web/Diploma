@@ -144,6 +144,18 @@ class AIReportModule(BaseModule):
                     bits.append("takeover")
                 blocks.append(f"  [{a.get('tier', '?').upper()}] {a.get('asset', '?')} — " + ", ".join(bits))
 
+        # ── Shodan host intelligence (passive open ports + known CVEs)
+        shodan_hosts = recon.get("shodan_hosts", []) or []
+        if shodan_hosts:
+            total_cves = sum(len(h.get("vulns", [])) for h in shodan_hosts)
+            blocks.append(f"\nSHODAN HOST INTEL ({len(shodan_hosts)} hosts, {total_cves} known CVEs):")
+            for h in shodan_hosts[:10]:
+                ports_str = ", ".join(str(p) for p in (h.get("ports", []) or [])[:15])
+                line = f"  {h.get('ip', '?')} ({h.get('org', '')}): ports [{ports_str}]"
+                if h.get("vulns"):
+                    line += " | CVEs: " + ", ".join(h["vulns"][:8])
+                blocks.append(line)
+
         # ── Open ports
         ps = ports.get("summary", {})
         if ps:

@@ -138,7 +138,12 @@ class VulnScanModule(BaseModule):
             cmd.extend(["-ss", str(ncfg.get("waf_scan_strategy", "host-spray"))])
 
         oob_runtime = self._apply_oob_flags(cmd, ncfg)
-        if ncfg.get("dashboard_upload") and self.config.get("api_keys", {}).get("pdcp"):
+        # A PDCP key authenticates nuclei (PDCP_API_KEY is exported to its env),
+        # which gives full/latest template access — WITHOUT uploading anything.
+        # Result upload to the cloud dashboard stays strictly opt-in.
+        pdcp_enabled = bool(self.config.get("api_keys", {}).get("pdcp"))
+        dashboard_upload = pdcp_enabled and ncfg.get("dashboard_upload", False)
+        if dashboard_upload:
             cmd.append("-dashboard")
 
         timeout = ncfg.get("nuclei_timeout", 3600)
@@ -149,6 +154,8 @@ class VulnScanModule(BaseModule):
             "templates": templates,
             "exclude_tags": exclude_tags if not enable_risky else [],
             "oob": oob_runtime,
+            "pdcp_authenticated": pdcp_enabled,
+            "pdcp_dashboard_upload": dashboard_upload,
         }
         waf_note = f" | WAF-aware rate: {rate}" if waf_detected else ""
         oob_note = " | OOB enabled" if oob_runtime.get("enabled") else " | OOB disabled"

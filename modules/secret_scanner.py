@@ -4,6 +4,7 @@ ReconX - Module: public Git repository secret scanning with Gitleaks.
 
 import json
 import hashlib
+import os
 import re
 import shutil
 import tempfile
@@ -80,9 +81,22 @@ class SecretScannerModule(BaseModule):
             "total": len(findings),
         }
 
+    def _github_token(self) -> str:
+        """Resolve the GitHub token, preferring the .env / environment token.
+
+        GITHUB_TOKEN from .env (loaded by load_env_file()) is treated as the
+        authoritative source and wins over config api_keys.github, which is only
+        a fallback for setups that keep the token in config.yaml.
+        """
+        return (
+            os.getenv("GITHUB_TOKEN", "").strip()
+            or os.getenv("GH_TOKEN", "").strip()
+            or str(self.config.get("api_keys", {}).get("github", "")).strip()
+        )
+
     def _find_repos(self) -> list[str]:
         cfg = self.config.get("scan", {}).get("secret_scanner", {})
-        token = self.config.get("api_keys", {}).get("github", "")
+        token = self._github_token()
         per_page = min(int(cfg.get("github_per_page", cfg.get("max_repos", 20))), 100)
         query = quote_plus(str(cfg.get("query", self.domain)))
         url = f"https://api.github.com/search/repositories?q={query}&per_page={per_page}"

@@ -125,3 +125,40 @@ def test_nuclei_zero_findings_on_live_targets_records_warning(tmp_path, monkeypa
     assert "warning" in result["runtime"]
     assert "Nuclei returned 0 findings" in result["runtime"]["warning"]
     assert warnings
+
+
+def test_nuclei_pdcp_authenticated_but_no_upload_by_default(tmp_path, monkeypatch):
+    # PDCP key authenticates nuclei (template access) but must NOT upload
+    # results to the cloud unless explicitly opted in.
+    module = VulnScanModule("example.com", str(tmp_path),
+                            {"api_keys": {"pdcp": "tok"}, "scan": {"nuclei": {}}})
+    captured = {}
+    monkeypatch.setattr(module, "exec", lambda cmd, timeout=300: captured.setdefault("cmd", cmd))
+    monkeypatch.setattr(module, "_line_count", lambda path: 1)
+    monkeypatch.setattr(module, "has_tool", lambda tool: False)
+    module._run_nuclei(Path("targets.txt"), Path("out.jsonl"))
+    assert "-dashboard" not in captured["cmd"]
+    assert module.nuclei_runtime["pdcp_authenticated"] is True
+    assert module.nuclei_runtime["pdcp_dashboard_upload"] is False
+
+
+def test_nuclei_dashboard_added_only_when_opted_in(tmp_path, monkeypatch):
+    module = VulnScanModule("example.com", str(tmp_path),
+                            {"api_keys": {"pdcp": "tok"}, "scan": {"nuclei": {"dashboard_upload": True}}})
+    captured = {}
+    monkeypatch.setattr(module, "exec", lambda cmd, timeout=300: captured.setdefault("cmd", cmd))
+    monkeypatch.setattr(module, "_line_count", lambda path: 1)
+    monkeypatch.setattr(module, "has_tool", lambda tool: False)
+    module._run_nuclei(Path("targets.txt"), Path("out.jsonl"))
+    assert "-dashboard" in captured["cmd"]
+
+
+def test_nuclei_dashboard_disabled_when_opted_out(tmp_path, monkeypatch):
+    module = VulnScanModule("example.com", str(tmp_path),
+                            {"api_keys": {"pdcp": "tok"}, "scan": {"nuclei": {"dashboard_upload": False}}})
+    captured = {}
+    monkeypatch.setattr(module, "exec", lambda cmd, timeout=300: captured.setdefault("cmd", cmd))
+    monkeypatch.setattr(module, "_line_count", lambda path: 1)
+    monkeypatch.setattr(module, "has_tool", lambda tool: False)
+    module._run_nuclei(Path("targets.txt"), Path("out.jsonl"))
+    assert "-dashboard" not in captured["cmd"]

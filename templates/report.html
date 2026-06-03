@@ -515,6 +515,7 @@ mark { background: rgba(79,142,247,.25); color: var(--text); border-radius: 2px;
   {% if corr.findings %}<a href="#correlator"><span class="dot"></span> Correlation</a>{% endif %}
   {% if cms.scans %}<a href="#cms"><span class="dot"></span> CMS Scan</a>{% endif %}
   {% if errors.debug_modes or errors.sql_errors or errors.server_errors or (errors.status_5xx and errors.status_5xx.hosts) or (errors.status_401 and errors.status_401.hosts) %}<a href="#server-errors"><span class="dot"></span> Server-Side Errors</a>{% endif %}
+  {% if recon.shodan_hosts %}<a href="#shodan"><span class="dot"></span> Shodan Host Intel</a>{% endif %}
   <a href="#ssl"><span class="dot"></span> SSL / Headers</a>
 
   <div class="sidebar-section">Info</div>
@@ -1437,6 +1438,39 @@ function applyAllFindingsFilter() {
     </div>
   </details>
   {% endif %}
+</div>
+{% endif %}
+
+<!-- Shodan Host Intelligence -->
+{% if recon.shodan_hosts %}
+<div class="section" id="shodan">
+  <div class="section-header">
+    <div class="section-title">🛰 Shodan Host Intelligence
+      <span class="count-badge">{{ recon.shodan_hosts | length }} hosts</span>
+    </div>
+  </div>
+  <div style="margin-bottom:10px;font-size:.85em;color:var(--muted)">
+    Passive open ports, services and known CVEs from Shodan — no active scanning of the target.
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>IP</th><th>Org</th><th>Open Ports</th><th>Known CVEs</th></tr></thead>
+      <tbody>
+        {% for h in recon.shodan_hosts %}
+        <tr>
+          <td><code>{{ h.ip }}</code>{% if h.hostnames %}<div style="font-size:.72em;color:var(--muted)">{{ h.hostnames[:2] | join(', ') }}</div>{% endif %}</td>
+          <td style="font-size:.82em">{{ h.org or '—' }}</td>
+          <td style="font-size:.8em"><code>{{ h.ports | join(', ') }}</code></td>
+          <td>
+            {% if h.vulns %}<span class="badge badge-HIGH">{{ h.vulns | length }}</span>
+            <div style="font-size:.74em;color:var(--muted)">{{ h.vulns[:8] | join(', ') }}</div>
+            {% else %}<span style="color:var(--muted)">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endif %}
 

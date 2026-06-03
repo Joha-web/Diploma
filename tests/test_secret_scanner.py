@@ -101,3 +101,17 @@ def test_api_validator_uses_one_redacted_gitleaks_candidate(tmp_path):
     assert len(result["findings"]) == 1
     assert result["findings"][0]["type"] == "github_token"
     assert result["findings"][0]["evidence"]["validation"]["reason"] == "raw_secret_unavailable"
+
+
+def test_github_token_from_config_when_env_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    module = SecretScannerModule("example.com", str(tmp_path), {"api_keys": {"github": "cfg-tok"}})
+    assert module._github_token() == "cfg-tok"
+
+
+def test_github_token_env_wins_over_config(tmp_path, monkeypatch):
+    # .env / GITHUB_TOKEN is authoritative and must override a config token.
+    monkeypatch.setenv("GITHUB_TOKEN", "env-tok")
+    module = SecretScannerModule("example.com", str(tmp_path), {"api_keys": {"github": "cfg-tok"}})
+    assert module._github_token() == "env-tok"

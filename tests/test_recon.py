@@ -353,3 +353,56 @@ def test_classify_live_subdomains_noop_without_subdomains(tmp_path):
     module = ReconModule("example.com", str(tmp_path), {})
     module._classify_live_subdomains()
     assert module.live_subdomains == []
+
+
+def test_shodan_host_intel_parses_ports_and_cves(tmp_path, monkeypatch):
+    module = ReconModule("example.com", str(tmp_path),
+                         {"api_keys": {"shodan": "k"}, "scan": {"subdomains": {}}})
+
+    def fake_req(source, url, **kw):
+        assert "shodan/host/1.2.3.4" in url
+        return {"ports": [443, 80], "hostnames": ["a.example.com"], "org": "ACME",
+                "os": "Linux", "vulns": ["CVE-2021-1", "CVE-2020-2"], "tags": ["self-signed"],
+                "data": [{"port": 443, "product": "nginx", "version": "1.18",
+                          "transport": "tcp", "cpe": ["cpe:/a:nginx"]}]}
+
+    monkeypatch.setattr(module, "_request_json", fake_req)
+    hosts = module._shodan_host_intel(["1.2.3.4"])
+
+    assert len(hosts) == 1
+    h = hosts[0]
+    assert h["ports"] == [80, 443]                  # sorted/deduped
+    assert h["vulns"] == ["CVE-2020-2", "CVE-2021-1"]  # sorted
+    assert h["services"][0]["product"] == "nginx"
+
+
+def test_shodan_host_intel_skips_without_key(tmp_path):
+    module = ReconModule("example.com", str(tmp_path), {"scan": {"subdomains": {}}})
+    assert module._shodan_host_intel(["1.2.3.4"]) == []
+
+
+def test_shodan_host_intel_respects_disable_flag(tmp_path):
+    module = ReconModule("example.com", str(tmp_path),
+                         {"api_keys": {"shodan": "k"},
+                          "scan": {"subdomains": {"shodan_host_intel": False}}})
+    assert module._shodan_host_intel(["1.2.3.4"]) == []
+
+
+def test_chaos_source_uses_pdcp_key(tmp_path, monkeypatch):
+    module = ReconModule("example.com", str(tmp_path), {"api_keys": {"pdcp": "pdcp-key"}})
+
+    def fake_req(source, url, headers=None, **kw):
+        assert source == "chaos"
+        assert "dns.projectdiscovery.io/dns/example.com/subdomains" in url
+        assert headers["Authorization"] == "pdcp-key"
+        return {"domain": "example.com", "subdomains": ["api", "*.dev"]}
+
+    monkeypatch.setattr(module, "_request_json", fake_req)
+    hosts = module._api_chaos()
+    assert "api.example.com" in hosts
+    assert "dev.example.com" in hosts
+
+
+def test_chaos_source_skips_without_pdcp_key(tmp_path):
+    module = ReconModule("example.com", str(tmp_path), {})
+    assert module._api_chaos() == []

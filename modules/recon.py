@@ -64,6 +64,7 @@ class ReconModule(BaseModule):
         urls   = self._collect_urls()
         asn_info = self._asn_lookup()
         scan_ips = self._scan_target_ips(asn_info)
+        shodan_hosts = self._shodan_host_intel(scan_ips or sorted(self.resolved_ips))
         origins = self._origin_discovery(asn_info)
         screenshots = self._take_screenshots()
         asset_graph = self._build_asset_graph(
@@ -91,6 +92,7 @@ class ReconModule(BaseModule):
             "screenshots": screenshots,
             "cloud_buckets": cloud_buckets,
             "cert_sans": cert_sans,
+            "shodan_hosts": shodan_hosts,
             "asset_graph_summary": asset_graph,
         }
 
@@ -391,6 +393,7 @@ class ReconModule(BaseModule):
             ("rapiddns",     "use_rapiddns",     self._api_rapiddns),
             ("wayback_cdx",  "use_wayback_cdx",  self._api_wayback),
             ("shodan",       "use_shodan",       self._api_shodan),
+            ("chaos",        "use_chaos",        self._api_chaos),
             ("censys",       "use_censys",       self._api_censys),
             ("github",       "use_github",       self._api_github),
             ("securitytrails", "use_securitytrails", self._api_securitytrails),
@@ -1007,6 +1010,85 @@ class ReconModule(BaseModule):
             sub = str(row.get("subdomain", "")).strip().lstrip("*.")
             if sub:
                 hosts.append(f"{sub}.{self.domain}")
+        return hosts
+
+    def _api_chaos(self) -> list:
+        """ProjectDiscovery Chaos subdomain dataset (passive) using the PDCP key.
+
+        Queries the Chaos DNS dataset for known subdomains — no scan data is
+        uploaded; this only reads ProjectDiscovery's public dataset.
+        """
+        key = self.config.get("api_keys", {}).get("pdcp", "")
+        if not key:
+            return []
+        data = self._request_json(
+            "chaos",
+            f"https://dns.projectdiscovery.io/dns/{self.domain}/subdomains",
+            headers={"Authorization": key},
+            timeout=30,
+        )
+        if not isinstance(data, dict):
+            return []
+        hosts = []
+        for sub in data.get("subdomains", []) or []:
+            sub = str(sub).strip().lstrip("*.")
+            hosts.append(self.domain if not sub else f"{sub}.{self.domain}")
+        return hosts
+
+    def _shodan_host_intel(self, ips: list[str]) -> list[dict]:
+        """Passive host intelligence from Shodan: open ports, services, banners
+        and known CVEs per IP — no active scanning of the target.
+
+        Uses the Shodan /shodan/host/{ip} endpoint (consumes 1 query credit per
+        IP), capped by max_shodan_hosts.
+        """
+        cfg = self.config.get("scan", {}).get("subdomains", {})
+        key = self.config.get("api_keys", {}).get("shodan", "")
+        if not key or not ips or not cfg.get("shodan_host_intel", True):
+            return []
+        max_hosts = int(cfg.get("max_shodan_hosts", 20))
+        targets = [ip for ip in ips if self._is_ip(ip)][:max_hosts]
+        if not targets:
+            return []
+        self.info(f"Shodan host intelligence for {len(targets)} IP(s)")
+
+        hosts: list[dict] = []
+        for ip in targets:
+            data = self._request_json(
+                "shodan", f"https://api.shodan.io/shodan/host/{ip}",
+                params={"key": key}, timeout=30,
+            )
+            if not isinstance(data, dict) or data.get("error"):
+                continue
+            services = []
+            for item in data.get("data", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                services.append({
+                    "port": item.get("port"),
+                    "transport": item.get("transport", ""),
+                    "product": item.get("product", ""),
+                    "version": item.get("version", ""),
+                    "cpe": item.get("cpe", []) or [],
+                })
+            hosts.append({
+                "ip": ip,
+                "hostnames": data.get("hostnames", []) or [],
+                "org": data.get("org", "") or "",
+                "isp": data.get("isp", "") or "",
+                "os": data.get("os") or "",
+                "ports": sorted(set(data.get("ports", []) or [])),
+                "vulns": sorted(data.get("vulns", []) or []),   # CVE-XXXX-YYYY
+                "tags": data.get("tags", []) or [],
+                "services": services[:40],
+            })
+
+        if hosts:
+            ports = sum(len(h["ports"]) for h in hosts)
+            cves = sum(len(h["vulns"]) for h in hosts)
+            (self.module_dir / "passive").mkdir(exist_ok=True)
+            self.save_json(hosts, "passive/shodan_hosts.json")
+            self.success(f"Shodan: {len(hosts)} host(s), {ports} open port(s), {cves} known CVE(s)")
         return hosts
 
     def _api_censys(self) -> list:
