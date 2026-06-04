@@ -17,6 +17,15 @@ from modules.active_probe_base import ActiveProbeBase
 
 SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
 
+# Streaming / long-polling endpoints (socket.io, SockJS, HMR…) keep the
+# connection open, so dalfox/XSStrike hang on them until they time out. They
+# are not XSS-testable surfaces — skip them as scan targets.
+STREAMING_URL_RE = re.compile(
+    r"/socket\.io/|/sockjs|/engine\.io|[?&]EIO=|[?&]transport=(?:polling|websocket)|"
+    r"/__webpack_hmr|/hot-update|/livereload|/_next/webpack-hmr|/sse(?:/|$|\?)",
+    re.I,
+)
+
 # XSS payload catalogue. Each entry sets up a different context-breakout so the
 # reflection classifier can promote it from "text_reflection" up to script_context
 # or html_attribute when the reflected output proves a real sink. The `{marker}`
@@ -205,7 +214,7 @@ class XSSModule(ActiveProbeBase):
 
     def _run_dalfox(self, target: dict, cfg: dict, index: int) -> tuple[list[dict], dict]:
         cmd = self._dalfox_command(target, cfg)
-        timeout = int(cfg.get("dalfox_timeout", cfg.get("timeout", 600)))
+        timeout = int(cfg.get("dalfox_timeout", cfg.get("timeout", 180)))
         result = self.exec(cmd, timeout=timeout, label=f"dalfox {target['url']}")
         output = "\n".join(part for part in (result.stdout, result.stderr) if part)
         stdout_file = f"dalfox_run_{index:03d}.txt"
@@ -503,6 +512,8 @@ class XSSModule(ActiveProbeBase):
             clean_params = {str(param).strip() for param in params if str(param).strip()}
             if not url.startswith(("http://", "https://")) or not clean_params:
                 return
+            if STREAMING_URL_RE.search(url):
+                return  # socket.io / SSE / HMR — dalfox hangs on these
             if "?" not in url:
                 url = self._with_param(url, sorted(clean_params)[0])
             else:

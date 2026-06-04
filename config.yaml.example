@@ -53,8 +53,10 @@ ai:
   anthropic_model: "claude-sonnet-4-6"
   anthropic_base_url: "https://api.anthropic.com"
   temperature: 0.3
-  max_tokens: 6144                  # report length cap (Ollama num_predict)
+  max_tokens: 4096                  # report length cap (Ollama num_predict)
   num_ctx: 8192                     # Ollama context window — must fit the prompt
+  timeout: 900                      # AI generation timeout (s); raise it (and
+                                    # max_tokens) for longer reports on a slow model.
   language: "en"
   realtime_advice: false
   advise_on: [recon, portscan, techstack, fuzzer, vulnscan, cve_check]
@@ -90,6 +92,7 @@ scan:
     shodan_host_intel: true
     max_shodan_hosts: 20
     use_chaos: true                 # ProjectDiscovery Chaos dataset (uses PDCP key, passive)
+    gau_timeout: 180                # gau --subs can be slow; cap it (seconds)
     use_censys: true
     use_github: true
     use_securitytrails: false
@@ -107,7 +110,7 @@ scan:
     active_wordlist: "subdomains-top1million-5000.txt"
     active_threads: 100
     active_timeout: 900
-    use_asn_lookup: false
+    use_asn_lookup: true
     max_asn_lookups: 40
     asn_lookup_delay: 1.0
     exclude_cdn_ips: true
@@ -118,7 +121,7 @@ scan:
     permutation_threads: 100
     permutation_timeout: 600
     # origin-IP discovery for hosts that sit behind a CDN/WAF
-    use_origin_discovery: false
+    use_origin_discovery: true
     origin_max_lookups: 50
     # extended URL harvesting per live host
     use_katana: false
@@ -128,16 +131,16 @@ scan:
     well_known_max_hosts: 50
     well_known_timeout: 10
     # reverse-WHOIS / org-pivoting via crt.sh ?O= search
-    use_reverse_whois: false
+    use_reverse_whois: true
     reverse_whois_max_domains: 100
     # active S3/GCS/Azure bucket guessing
-    use_cloud_buckets: false
+    use_cloud_buckets: true
     cloud_bucket_extra_words: []
     cloud_bucket_max: 2000
     cloud_bucket_threads: 20
     cloud_bucket_timeout: 5
     # pull SANs from each live host's TLS cert and merge same-domain SANs back
-    use_cert_san_graph: false
+    use_cert_san_graph: true
     cert_san_max_hosts: 80
     cert_san_timeout: 5
     # synthesis step: tie sub ↔ IP ↔ ASN ↔ cert ↔ tech ↔ endpoints
@@ -236,8 +239,8 @@ scan:
     enabled: true
     max_targets: 150
     threads: 10
-    delay: 2
-    timeout: 1200
+    delay: 1          # seconds between arjun requests (was 2 → halves runtime)
+    timeout: 600      # arjun can run very long; cap it (was 1200)
 
   injection_probe:
     enabled: true
@@ -343,7 +346,7 @@ scan:
     max_payloads: 2
     request_timeout: 10
     workers: 1
-    dalfox_timeout: 600
+    dalfox_timeout: 180   # per-target cap; streaming URLs (socket.io) are skipped
     dalfox_extra_args: []
     # Heavier external scanners — run when their binary is present, skipped
     # gracefully otherwise. Capped by max_tool_targets (they crawl per target).

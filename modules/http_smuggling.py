@@ -8,7 +8,15 @@ desync indicators. It does not send a queued backend request.
 import socket
 import ssl
 import time
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse as _raw_urlparse
+
+
+def urlparse(url):
+    """urlparse that never raises 'Invalid IPv6 URL' on a malformed URL."""
+    try:
+        return _raw_urlparse(str(url or ""))
+    except ValueError:
+        return ParseResult("", "", str(url or ""), "", "", "")
 
 from modules.base import BaseModule
 

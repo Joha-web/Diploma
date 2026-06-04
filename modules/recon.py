@@ -159,7 +159,7 @@ class ReconModule(BaseModule):
         to be the highest-signal free reverse-WHOIS surrogate.
         """
         cfg = self.config.get("scan", {}).get("subdomains", {})
-        if not cfg.get("use_reverse_whois", False):
+        if not cfg.get("use_reverse_whois", True):
             return {}
         orgs = whois_data.get("organizations") or []
         if not orgs:
@@ -589,7 +589,7 @@ class ReconModule(BaseModule):
     def _enumerate_cloud_buckets(self) -> dict:
         """Active S3/GCS/Azure bucket-name guessing seeded from domain + sub labels."""
         cfg = self.config.get("scan", {}).get("subdomains", {})
-        if not cfg.get("use_cloud_buckets", False):
+        if not cfg.get("use_cloud_buckets", True):
             return {}
 
         max_candidates = max(50, int(cfg.get("cloud_bucket_max", 2000)))
@@ -1374,7 +1374,7 @@ class ReconModule(BaseModule):
 
         if self.has_tool("gau"):
             self.info("gau")
-            r = self.exec(["gau", "--subs", self.domain], timeout=120)
+            r = self.exec(["gau", "--subs", self.domain], timeout=int(cfg.get("gau_timeout", 180)))
             urls = [u.strip() for u in r.stdout.splitlines() if u.strip()]
             all_urls.update(urls)
             self.success(f"gau → {len(urls)} URLs")
@@ -1495,7 +1495,7 @@ class ReconModule(BaseModule):
 
     def _asn_lookup(self) -> list[dict]:
         cfg = self.config.get("scan", {}).get("subdomains", {})
-        if not cfg.get("use_asn_lookup", False) or not self.resolved_ips:
+        if not cfg.get("use_asn_lookup", True) or not self.resolved_ips:
             return []
 
         max_lookups = int(cfg.get("max_asn_lookups", 40))
@@ -1589,7 +1589,7 @@ class ReconModule(BaseModule):
              filtered to non-CDN networks.
         """
         cfg = self.config.get("scan", {}).get("subdomains", {})
-        if not cfg.get("use_origin_discovery", False):
+        if not cfg.get("use_origin_discovery", True):
             return {}
         if not self.resolved_hosts:
             return {}
@@ -1768,7 +1768,7 @@ class ReconModule(BaseModule):
         separately.
         """
         cfg = self.config.get("scan", {}).get("subdomains", {})
-        if not cfg.get("use_cert_san_graph", False):
+        if not cfg.get("use_cert_san_graph", True):
             return {}
         if not self.live_http:
             return {}

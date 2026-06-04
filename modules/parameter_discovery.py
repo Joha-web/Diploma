@@ -44,9 +44,9 @@ class ParameterDiscoveryModule(BaseModule):
             self.save_text(targets, "arjun_targets.txt")
             self.exec(
                 [*arjun_cmd, "-i", str(url_file), "-oJ", str(out_file),
-                 "-t", str(cfg.get("threads", 10)), "-d", str(cfg.get("delay", 2)),
+                 "-t", str(cfg.get("threads", 10)), "-d", str(cfg.get("delay", 1)),
                  "--stable"],
-                timeout=int(cfg.get("timeout", 1200)),
+                timeout=int(cfg.get("timeout", 600)),
             )
             params = self._parse_arjun(self.load_json(out_file))
 

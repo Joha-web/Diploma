@@ -447,11 +447,12 @@ End with exactly:
                         # prompt — Ollama silently truncates anything beyond it,
                         # which is what made earlier reports thin.
                         "num_ctx":       cfg.get("num_ctx", 8192),
-                        "num_predict":   cfg.get("max_tokens", 6144),
+                        "num_predict":   cfg.get("max_tokens", 4096),
                         "top_p":         0.9,
                     },
                 },
-                timeout=600,
+                # A detailed report from a local 7B model is slow — give it room.
+                timeout=int(cfg.get("timeout", 900)),
             )
             if resp.status_code == 200:
                 text = self._clean_model_output(resp.json().get("response", ""))
@@ -460,7 +461,8 @@ End with exactly:
                 self.error(f"Ollama error {resp.status_code}: {resp.text[:200]}")
                 return ""
         except requests.exceptions.Timeout:
-            self.error("Ollama request timed out (600s)")
+            self.error(f"Ollama request timed out ({int(cfg.get('timeout', 900))}s) — "
+                       "lower ai.max_tokens or raise ai.timeout for very large scans")
             return ""
         except Exception as e:
             self.error(f"Ollama request failed: {e}")
@@ -488,7 +490,7 @@ End with exactly:
                     "temperature": cfg.get("temperature", 0.3),
                     "max_tokens":  cfg.get("max_tokens", 4096),
                 },
-                timeout=120,
+                timeout=int(cfg.get("timeout", 900)),
             )
             if resp.status_code == 200:
                 data = resp.json()

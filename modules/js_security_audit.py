@@ -5,7 +5,15 @@ ReconX - Module: static JavaScript security audit.
 from __future__ import annotations
 
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import ParseResult, urljoin, urlparse as _raw_urlparse
+
+
+def urlparse(url):
+    """urlparse that never raises 'Invalid IPv6 URL' on a malformed URL."""
+    try:
+        return _raw_urlparse(str(url or ""))
+    except ValueError:
+        return ParseResult("", "", str(url or ""), "", "", "")
 
 import requests
 

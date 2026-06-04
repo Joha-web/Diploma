@@ -9,7 +9,15 @@ import os
 import re
 import socket
 import ssl
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import ParseResult, urljoin, urlparse as _raw_urlparse, urlunparse
+
+
+def urlparse(url):
+    """urlparse that never raises 'Invalid IPv6 URL' on a malformed URL."""
+    try:
+        return _raw_urlparse(str(url or ""))
+    except ValueError:
+        return ParseResult("", "", str(url or ""), "", "", "")
 
 from modules.active_probe_base import ActiveProbeBase
 

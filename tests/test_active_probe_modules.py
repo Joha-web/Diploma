@@ -594,3 +594,14 @@ def test_js_security_audit_minified_bundle_downgrades_postmessage_to_low(tmp_pat
     assert pm, "expected a postMessage finding to fire"
     assert pm[0]["severity"] == "LOW", pm[0]
     assert pm[0]["evidence"]["minified"] is True
+
+
+def test_malformed_url_does_not_crash_urlparse_helpers():
+    # The 'Invalid IPv6 URL' class of crash: a stray '[' in the authority.
+    from modules.websocket_probe import urlparse as ws_urlparse
+    from modules.http_smuggling import urlparse as hs_urlparse
+    from modules.jwt_audit import urlparse as jwt_urlparse
+    bad = "https://exam[ple.com/path?x=1"
+    for fn in (ws_urlparse, hs_urlparse, jwt_urlparse):
+        parsed = fn(bad)          # must not raise
+        assert parsed is not None

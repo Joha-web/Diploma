@@ -97,7 +97,8 @@ def test_xss_dalfox_mode_runs_and_parses_findings(tmp_path, monkeypatch):
     module = XSSModule(
         "example.com",
         str(tmp_path),
-        {"scan": {"xss": {"use_dalfox": True, "fallback_reflection": False}}},
+        {"scan": {"xss": {"use_dalfox": True, "use_xsstrike": False,
+                          "use_xsser": False, "fallback_reflection": False}}},
         parameter_results={"parameterized_targets": ["https://example.com/search?q=test"]},
     )
     dalfox_output = "[V] XSS Found\n[POC][GET] https://example.com/search?q=%3Csvg%3E\n"
@@ -200,3 +201,17 @@ def test_run_skips_when_no_tool_and_no_fallback(tmp_path, monkeypatch):
     result = module.run()
     assert result["status"] == "skipped"
     assert set(result["missing_tools"]) == {"dalfox", "xsstrike", "xsser"}
+
+
+def test_xss_skips_socketio_and_streaming_targets(tmp_path):
+    module = XSSModule(
+        "example.com", str(tmp_path), {},
+        parameter_results={"parameterized_targets": [
+            "https://example.com/socket.io/?EIO=4&transport=polling&t=abc",
+            "https://example.com/sse?channel=updates",
+            "https://example.com/search?q=test",
+        ]},
+    )
+    urls = {t["url"] for t in module._collect_targets()}
+    assert not any("socket.io" in u or "/sse" in u for u in urls)
+    assert any("/search?q=" in u for u in urls)
