@@ -3,6 +3,7 @@ ReconX - Module: SQL injection testing with sqlmap.
 """
 
 import re
+import shlex
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -86,10 +87,12 @@ class SQLInjectionModule(BaseModule):
                 timeout = int(cfg.get("timeout", 900))
                 for index, target in enumerate(targets, start=1):
                     cmd = self._sqlmap_command(target, cfg, sqlmap_dir)
-                    result = self.exec(cmd, timeout=timeout, label=f"sqlmap {target['url']}")
-                    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
                     stdout_file = f"sqlmap_run_{index:03d}.txt"
-                    self.save_text(output, stdout_file)
+                    out_path = self.module_dir / stdout_file
+                    # Stream sqlmap output to disk so a timeout-kill keeps any
+                    # injection it already confirmed (exec() drops stdout on timeout).
+                    result = self._exec_to_file(cmd, out_path, timeout, f"sqlmap {target['url']}")
+                    output = self._read_tool_output(out_path)
                     target_findings = self._parse_sqlmap_findings(output, target, stdout_file, index)
                     sqlmap_findings.extend(target_findings)
                     for f in target_findings:
@@ -273,6 +276,24 @@ class SQLInjectionModule(BaseModule):
             updated.append((param, value))
         return urlunparse(parsed._replace(query=urlencode(updated, doseq=True)))
 
+    def _exec_to_file(self, cmd: list[str], out_path: Path, timeout: int, label: str):
+        """Run sqlmap with output streamed to a file via the shell.
+
+        BaseModule.exec() discards stdout when it kills a timed-out process, which
+        would lose any injection sqlmap already confirmed. Redirecting to disk
+        means partial output (and its findings) survives the kill.
+        """
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        shell_cmd = " ".join(shlex.quote(c) for c in cmd) + f" > {shlex.quote(str(out_path))} 2>&1"
+        return self.exec(shell_cmd, timeout=timeout, shell=True, label=label)
+
+    @staticmethod
+    def _read_tool_output(out_path: Path) -> str:
+        try:
+            return out_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
     def _sqlmap_command(self, target: dict, cfg: dict, output_dir: Path) -> list[str]:
         cmd = [
             "sqlmap",
@@ -292,7 +313,11 @@ class SQLInjectionModule(BaseModule):
         params = [param for param in target.get("params", []) if param]
         if params:
             cmd.extend(["-p", ",".join(params)])
-        if cfg.get("smart", True):
+        # --smart makes sqlmap skip params that fail a quick heuristic, which
+        # misses blind/non-obvious SQLi (e.g. it skips an injectable param that
+        # only a full test confirms). We already pre-rank likely params, so
+        # default it OFF to maximise detection.
+        if cfg.get("smart", False):
             cmd.append("--smart")
         if cfg.get("random_agent", True):
             cmd.append("--random-agent")

@@ -236,7 +236,7 @@ scan:
     threads: 1
     request_timeout: 10
     retries: 1
-    smart: true
+    smart: false               # --smart skips params heuristically and misses blind SQLi
     random_agent: true
     forms: false
     crawl: 0

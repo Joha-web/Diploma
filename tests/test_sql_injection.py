@@ -78,15 +78,21 @@ back-end DBMS: MySQL
     monkeypatch.setattr(module, "has_tool", lambda tool: tool == "sqlmap")
 
     def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        # sqlmap now streams to a file via a shell command; mirror that, and
+        # also simulate a timeout (empty stdout) to prove findings survive it.
         executed["cmd"] = cmd
         executed["timeout"] = timeout
-        return subprocess.CompletedProcess(cmd, 0, stdout=sqlmap_output, stderr="")
+        (module.module_dir / "sqlmap_run_001.txt").write_text(sqlmap_output, encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="timeout")
 
     monkeypatch.setattr(module, "exec", fake_exec)
 
     result = module.run()
 
-    assert executed["cmd"][0] == "sqlmap"
+    # exec receives a shell string (shlex-quoted) with the redirect.
+    assert isinstance(executed["cmd"], str)
+    assert executed["cmd"].startswith("sqlmap -u ")
+    assert "-p id" in executed["cmd"]
     assert result["total"] == 1
     finding = result["findings"][0]
     assert finding["id"] == "sql_injection_sqlmap_1_1"
