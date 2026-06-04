@@ -2,6 +2,7 @@
 ReconX - Module: generic open redirect probes.
 """
 
+import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
@@ -31,6 +32,18 @@ REDIRECT_PAYLOADS = (
     f"/\\{ATTACKER_HOST}/",        # backslash bypass
     f"//{ATTACKER_HOST}\\@example.com/",  # @-bypass — attacker is the actual host
     f"https://example.com@{ATTACKER_HOST}/",  # userinfo @-bypass
+)
+
+# Client-side redirect sinks: many open redirects fire via meta-refresh or a JS
+# location assignment rather than an HTTP Location header. Extract the target URL
+# from each so we can check whether it resolves to the attacker host.
+META_REFRESH_RE = re.compile(
+    r"""<meta[^>]+http-equiv\s*=\s*["']?refresh["']?[^>]+content\s*=\s*["'][^"']*url\s*=\s*([^"'>\s]+)""",
+    re.I,
+)
+JS_REDIRECT_RE = re.compile(
+    r"""(?:location\s*\.\s*(?:href|replace|assign)\s*\(?\s*|window\s*\.\s*location\s*=\s*|location\s*=\s*)["']([^"']+)["']""",
+    re.I,
 )
 
 
@@ -81,6 +94,7 @@ class OpenRedirectProbeModule(BaseModule):
                 )
                 if resp is None:
                     continue
+                # 1. HTTP Location header redirect (server-side).
                 location = resp.headers.get("Location", "")
                 if self._location_is_attacker(location):
                     return self._finding("open_redirect", "HIGH", probe_url, "Open redirect parameter accepted", {
@@ -88,7 +102,23 @@ class OpenRedirectProbeModule(BaseModule):
                         "payload": payload,
                         "location": location,
                         "status_code": resp.status_code,
+                        "technique": "http_location",
                     })
+                # 2. Client-side redirect: meta-refresh / JS location to attacker.
+                if cfg.get("detect_client_side", True):
+                    client = self._body_redirect_to_attacker(resp.text or "")
+                    if client:
+                        technique, target = client
+                        return self._finding(
+                            "open_redirect", "HIGH", probe_url,
+                            "Client-side open redirect parameter accepted",
+                            {
+                                "param": name, "payload": payload,
+                                "redirect_target": target, "technique": technique,
+                                "status_code": resp.status_code,
+                            },
+                            confidence=0.80,  # client-side: needs a victim browser to fire
+                        )
         return None
 
     def _targets(self) -> list[str]:
@@ -118,10 +148,33 @@ class OpenRedirectProbeModule(BaseModule):
             result.append((name, value))
         return urlunparse(parsed._replace(query=urlencode(result)))
 
+    @classmethod
+    def _location_is_attacker(cls, location: str) -> bool:
+        return cls._redirect_host(location) == ATTACKER_HOST
+
     @staticmethod
-    def _location_is_attacker(location: str) -> bool:
-        parsed = urlparse(str(location or ""))
-        return (parsed.hostname or "").lower() == "attacker.reconx.invalid"
+    def _redirect_host(location: str) -> str:
+        """Resolve a redirect target's host the way a *browser* would, so the
+        common filter-bypass forms aren't missed: backslashes act as slashes,
+        leading slashes collapse (`////host` → `//host`), a missing-slash scheme
+        (`https:host`) still has a host, and `user@host` resolves to host.
+        """
+        loc = str(location or "").strip().replace("\\", "/")
+        # Strip an optional scheme and any run of leading slashes.
+        match = re.match(r"\s*(?:[a-z][a-z0-9+.\-]*:)?/*", loc, re.I)
+        rest = loc[match.end():]
+        host_part = re.split(r"[/?#]", rest, maxsplit=1)[0]
+        if "@" in host_part:                      # userinfo@host → take the host
+            host_part = host_part.rsplit("@", 1)[1]
+        return host_part.split(":", 1)[0].strip().strip(".").lower()
+
+    def _body_redirect_to_attacker(self, body: str) -> tuple[str, str] | None:
+        for rx, technique in ((META_REFRESH_RE, "meta_refresh"), (JS_REDIRECT_RE, "javascript_location")):
+            for match in rx.finditer(body or ""):
+                target = match.group(1)
+                if self._redirect_host(target) == ATTACKER_HOST:
+                    return technique, target[:200]
+        return None
 
     @staticmethod
     def _dedup(findings: list[dict]) -> list[dict]:
@@ -134,7 +187,8 @@ class OpenRedirectProbeModule(BaseModule):
                 result.append(finding)
         return result
 
-    def _finding(self, finding_id: str, severity: str, url: str, title: str, evidence: dict) -> dict:
+    def _finding(self, finding_id: str, severity: str, url: str, title: str,
+                 evidence: dict, confidence: float = 0.85) -> dict:
         return {
             "source": self.name,
             "id": finding_id,
@@ -147,5 +201,5 @@ class OpenRedirectProbeModule(BaseModule):
             "description": "An attacker-controlled URL was accepted in a redirect parameter.",
             "evidence": evidence,
             "references": ["https://portswigger.net/web-security/open-redirection"],
-            "confidence": 0.85,
+            "confidence": confidence,
         }

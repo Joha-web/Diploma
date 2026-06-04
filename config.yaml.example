@@ -414,6 +414,7 @@ scan:
     enabled: true
     max_targets: 120
     timeout: 8
+    detect_client_side: true   # also flag meta-refresh / JS location redirects (not just HTTP Location)
 
   api_key_validator:
     enabled: true

@@ -669,3 +669,39 @@ def test_idor_anonymous_flags_object_specific_response(tmp_path, monkeypatch):
     findings = module._check_anonymous_access(module._candidates())
     assert len(findings) == 1
     assert findings[0]["id"] == "idor_anonymous_object_access"
+
+
+def test_open_redirect_detects_meta_refresh_to_attacker(tmp_path, monkeypatch):
+    module = OpenRedirectProbeModule("example.com", str(tmp_path), {})
+    body = '<html><head><meta http-equiv="refresh" content="0;url=https://attacker.reconx.invalid/"></head></html>'
+    monkeypatch.setattr(module, "http_get", lambda *a, **k: Response(status_code=200, text=body))
+    finding = module._probe("https://example.com/go?url=/", object(), {})
+    assert finding and finding["id"] == "open_redirect"
+    assert finding["evidence"]["technique"] == "meta_refresh"
+    assert finding["confidence"] == 0.80
+
+
+def test_open_redirect_detects_javascript_location_to_attacker(tmp_path, monkeypatch):
+    module = OpenRedirectProbeModule("example.com", str(tmp_path), {})
+    body = '<script>window.location = "https://attacker.reconx.invalid/landing"</script>'
+    monkeypatch.setattr(module, "http_get", lambda *a, **k: Response(status_code=200, text=body))
+    finding = module._probe("https://example.com/r?redirect=/", object(), {})
+    assert finding and finding["evidence"]["technique"] == "javascript_location"
+
+
+def test_open_redirect_ignores_attacker_href_in_body(tmp_path, monkeypatch):
+    """A plain <a href> to the attacker host is NOT a redirect sink — no finding."""
+    module = OpenRedirectProbeModule("example.com", str(tmp_path), {})
+    body = '<a href="https://attacker.reconx.invalid/">click</a>'
+    monkeypatch.setattr(module, "http_get", lambda *a, **k: Response(status_code=200, text=body))
+    assert module._probe("https://example.com/go?url=/", object(), {}) is None
+
+
+def test_open_redirect_browser_style_bypass_parsing():
+    O = OpenRedirectProbeModule
+    # Forms Python's urlparse mis-reads but browsers resolve to the attacker host.
+    assert O._location_is_attacker("////attacker.reconx.invalid/")          # multi-slash
+    assert O._location_is_attacker("https:attacker.reconx.invalid/")        # missing slashes
+    assert O._location_is_attacker("//attacker.reconx.invalid\\@example.com/")  # backslash @-bypass
+    # Lookalike domain must NOT match.
+    assert not O._location_is_attacker("https://attacker.reconx.invalid.evil.com/")
