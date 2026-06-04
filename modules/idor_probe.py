@@ -32,7 +32,8 @@ PATH_ID_RE = re.compile(r"/([a-z0-9_-]{2,40})/([0-9]{1,12}|[0-9a-f-]{24,36})(?=/
 OPENAPI_PARAM_RE = re.compile(r"\{([^}]+)\}")
 SENSITIVE_RESOURCE_RE = re.compile(
     r"(users?|accounts?|orgs?|organizations?|tenants?|teams?|customers?|profiles?|"
-    r"projects?|orders?|invoices?|payments?|subscriptions?|workspaces?|members?|roles?)",
+    r"projects?|orders?|invoices?|payments?|subscriptions?|workspaces?|members?|roles?|"
+    r"baskets?|carts?|wishlists?|addresses|cards?|wallets?|messages?)",
     re.I,
 )
 
@@ -276,8 +277,20 @@ class IDORProbeModule(ActiveProbeBase):
             if not self._successful(resp_a) or not self._successful(resp_b):
                 continue
             similarity = self._response_similarity(resp_a, resp_b)
-            if similarity < float(self.module_config().get("similarity_threshold", 0.92)):
+            threshold = float(self.module_config().get("similarity_threshold", 0.92))
+            if similarity < threshold:
                 continue
+            # Two different users seeing the same content is only BOLA if the
+            # resource is access-controlled. A *public* resource returns identical
+            # content to everyone, including anonymous — gate those out.
+            anon_status = None
+            if self.module_config().get("anon_gate", True):
+                anon = self.get_with_profile(url, "anonymous", timeout=timeout, verify=False)
+                sent += 1
+                if anon is not None:
+                    anon_status = anon.status_code
+                    if self._successful(anon) and self._response_similarity(anon, resp_a) >= threshold:
+                        continue  # public resource — not a per-user authorization flaw
             findings.append(self.make_finding(
                 "idor_profile_response_overlap",
                 url,
@@ -289,10 +302,12 @@ class IDORProbeModule(ActiveProbeBase):
                     "length_a": len(resp_a.text or ""),
                     "length_b": len(resp_b.text or ""),
                     "similarity": similarity,
+                    "anonymous_status": anon_status,
                     "body_sha256": self._body_hash(resp_a.text or ""),
                     "candidate": item,
                 },
-                confidence=min(0.90, 0.60 + (similarity * 0.30)),
+                # Higher confidence now that public resources are excluded.
+                confidence=min(0.92, 0.64 + (similarity * 0.30)),
             ))
         return findings
 
@@ -300,15 +315,31 @@ class IDORProbeModule(ActiveProbeBase):
         findings: list[dict] = []
         timeout = self.request_timeout()
         max_requests = int(self.module_config().get("max_anonymous_requests", 20))
+        guard_id = str(self.module_config().get("enum_guard_id", 988776655))
+        use_guard = self.module_config().get("anonymous_guard", True)
         sent = 0
         for item in candidates:
             method = str(item.get("method", "GET")).upper()
             if method not in ("GET", "HEAD") or sent >= max_requests:
                 continue
+            # Guard: a nonexistent variant of the same endpoint. If the real object
+            # returns the same body, this is a generic/not-found/SPA page served to
+            # everyone — not anonymous access to a real object.
+            guard_hash = None
+            if use_guard:
+                guard_url = self._guard_variant(item, guard_id)
+                if guard_url:
+                    guard = self.get_with_profile(guard_url, "anonymous", timeout=timeout, verify=False)
+                    sent += 1
+                    if guard is not None and self._successful(guard):
+                        guard_hash = self._body_hash(guard.text or "")
             resp = self.get_with_profile(item["url"], "anonymous", timeout=timeout, verify=False)
             sent += 1
             if resp is None or not self._successful(resp):
                 continue
+            body_hash = self._body_hash(resp.text or "")
+            if guard_hash and body_hash == guard_hash:
+                continue  # generic page, not a real object exposed anonymously
             findings.append(self.make_finding(
                 "idor_anonymous_object_access",
                 item["url"],
@@ -316,10 +347,20 @@ class IDORProbeModule(ActiveProbeBase):
                     "status": resp.status_code,
                     "length": len(resp.text or ""),
                     "candidate": item,
-                    "body_sha256": self._body_hash(resp.text or ""),
+                    "body_sha256": body_hash,
+                    "guard_checked": guard_hash is not None,
                 },
             ))
         return findings
+
+    def _guard_variant(self, item: dict, guard_id: str) -> str:
+        """A URL with the candidate's identifier swapped for a nonexistent one."""
+        kind = item.get("kind")
+        if kind == "query" and item.get("param"):
+            return self._sub_query_value(item["url"], item["param"], guard_id)
+        if kind == "path" and item.get("value"):
+            return self._sub_path_value(item["url"], str(item["value"]), guard_id)
+        return ""
 
     # ── Numeric ID enumeration (the IDOR "wordlist") ────────────────────────────
     @staticmethod

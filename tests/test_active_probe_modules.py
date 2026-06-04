@@ -605,3 +605,67 @@ def test_malformed_url_does_not_crash_urlparse_helpers():
     for fn in (ws_urlparse, hs_urlparse, jwt_urlparse):
         parsed = fn(bad)          # must not raise
         assert parsed is not None
+
+
+def _idor_with_profiles(tmp_path, extra=None):
+    cfg = {"compare_profiles": True, "check_anonymous": True}
+    cfg.update(extra or {})
+    config = {
+        "scope": {"enforce": False},
+        "scan": {"idor_probe": cfg},
+        "auth_profiles": {
+            "user_a": {"token": "tok-a"},
+            "user_b": {"token": "tok-b"},
+        },
+    }
+    return IDORProbeModule(
+        "example.com", str(tmp_path), config,
+        parameter_results={"parameters": [{"url": "https://example.com/api/account?account_id=42", "param": "account_id"}]},
+    )
+
+
+def test_idor_compare_profiles_skips_public_resource(tmp_path, monkeypatch):
+    module = _idor_with_profiles(tmp_path)
+    # Every profile (incl. anonymous) gets the same body → public, not BOLA.
+    monkeypatch.setattr(module, "get_with_profile",
+                        lambda url, profile, **kw: Response(text="public catalogue", status_code=200))
+    candidates = module._candidates()
+    findings = module._compare_profiles(candidates)
+    assert findings == []
+
+
+def test_idor_compare_profiles_flags_when_anonymous_denied(tmp_path, monkeypatch):
+    module = _idor_with_profiles(tmp_path)
+    # Both users see the same private object; anonymous is denied → real BOLA.
+    def fake(url, profile, **kw):
+        if profile == "anonymous":
+            return Response(text="Unauthorized", status_code=401)
+        return Response(text="account 42 private balance", status_code=200)
+    monkeypatch.setattr(module, "get_with_profile", fake)
+    findings = module._compare_profiles(module._candidates())
+    assert len(findings) == 1
+    assert findings[0]["id"] == "idor_profile_response_overlap"
+    assert findings[0]["evidence"]["anonymous_status"] == 401
+
+
+def test_idor_anonymous_guard_skips_generic_page(tmp_path, monkeypatch):
+    module = _idor_with_profiles(tmp_path)
+    # Both the guard (nonexistent id) and the real id return the SAME body →
+    # generic page served to everyone, not a real object.
+    monkeypatch.setattr(module, "get_with_profile",
+                        lambda url, profile, **kw: Response(text="<html>app shell</html>", status_code=200))
+    findings = module._check_anonymous_access(module._candidates())
+    assert findings == []
+
+
+def test_idor_anonymous_flags_object_specific_response(tmp_path, monkeypatch):
+    module = _idor_with_profiles(tmp_path)
+    guard_id = "988776655"
+    def fake(url, profile, **kw):
+        if guard_id in url:
+            return Response(text="not found", status_code=404)   # guard → not successful
+        return Response(text="account 42 owner=alice balance=$900", status_code=200)
+    monkeypatch.setattr(module, "get_with_profile", fake)
+    findings = module._check_anonymous_access(module._candidates())
+    assert len(findings) == 1
+    assert findings[0]["id"] == "idor_anonymous_object_access"

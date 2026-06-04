@@ -425,7 +425,9 @@ scan:
     enabled: true
     max_candidates: 200
     compare_profiles: false
+    anon_gate: true             # exclude public resources from BOLA overlap (anon sees same → public)
     check_anonymous: false
+    anonymous_guard: true       # skip generic/not-found pages via a nonexistent-id guard
     max_compare_requests: 40
     max_anonymous_requests: 20
     similarity_threshold: 0.92
