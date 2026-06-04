@@ -279,6 +279,10 @@ scan:
     enabled: true
     lfi: true
     rfi: true
+    rfi_oob: true              # confirm TRUE remote inclusion via an Interactsh OOB callback
+    rfi_oob_wait: 5            # seconds to wait for callbacks before reading interactions
+    inband_lfi: true           # fast infra-free probe: traversal encodings + null-byte + php://filter
+    max_lfi_requests: 120      # cap for the in-band probe
     fuzz_all_params: false     # true = fuzz every param, not just file-inclusion-prone names
     max_targets: 30
     max_params_per_target: 3

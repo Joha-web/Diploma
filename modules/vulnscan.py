@@ -265,7 +265,9 @@ class VulnScanModule(BaseModule):
 
     def _start_interactsh_client(self, oob_cfg: dict) -> dict:
         log_file = self.module_dir / "interactsh_interactions.jsonl"
-        cmd = ["interactsh-client", "-json", "-o", str(log_file), "-silent"]
+        # NB: no "-silent" — recent interactsh-client (1.3.x) rejects that flag and
+        # exits before registering, which silently disables all OOB detection.
+        cmd = ["interactsh-client", "-json", "-o", str(log_file)]
         if oob_cfg.get("interactsh_server"):
             cmd.extend(["-server", str(oob_cfg["interactsh_server"])])
         if oob_cfg.get("interactsh_token"):
@@ -276,16 +278,22 @@ class VulnScanModule(BaseModule):
             "callback_url": "",
             "interactions_log": str(log_file.relative_to(self.output_dir)),
         }
+        self._oob_master_fd = None
         try:
-            popen_kwargs = {
-                "stdout": subprocess.PIPE,
-                "stderr": subprocess.STDOUT,
-                "text": True,
-                "env": self._subprocess_env(),
-            }
+            popen_kwargs = {"text": True, "env": self._subprocess_env()}
+            slave_fd = None
             if os.name != "nt":
-                popen_kwargs["start_new_session"] = True
+                # interactsh-client block-buffers its stdout when it's a pipe, so
+                # the registered callback domain never flushes and OOB silently
+                # fails. Give it a PTY so it line-buffers and emits the domain.
+                import pty
+                self._oob_master_fd, slave_fd = pty.openpty()
+                popen_kwargs.update(stdout=slave_fd, stderr=slave_fd, start_new_session=True)
+            else:
+                popen_kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             proc = subprocess.Popen(cmd, **popen_kwargs)
+            if slave_fd is not None:
+                os.close(slave_fd)
             self._oob_process = proc
             runtime["client_started"] = True
             runtime["client_pid"] = proc.pid
@@ -295,7 +303,7 @@ class VulnScanModule(BaseModule):
 
         callback = self._read_interactsh_callback(
             proc,
-            timeout=float(oob_cfg.get("registration_timeout", 10)),
+            timeout=float(oob_cfg.get("registration_timeout", 15)),
         )
         if callback:
             runtime["callback_url"] = callback
@@ -304,8 +312,27 @@ class VulnScanModule(BaseModule):
             self.warn("Interactsh client started but no callback URL was observed")
         return runtime
 
-    def _read_interactsh_callback(self, proc: subprocess.Popen, timeout: float = 10) -> str:
+    def _read_interactsh_callback(self, proc: subprocess.Popen, timeout: float = 15) -> str:
         deadline = time.monotonic() + timeout
+        master_fd = getattr(self, "_oob_master_fd", None)
+        if master_fd is not None:
+            buf = b""
+            while proc.poll() is None and time.monotonic() < deadline:
+                readable, _, _ = select.select([master_fd], [], [], 0.3)
+                if not readable:
+                    continue
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                buf += data
+                callback = self._extract_interactsh_callback(buf.decode("utf-8", "replace"))
+                if callback:
+                    return callback
+            return ""
+        # Fallback (Windows / no PTY): read the stdout pipe line by line.
         while proc.poll() is None and time.monotonic() < deadline:
             stream = proc.stdout
             if stream is None:
@@ -323,8 +350,11 @@ class VulnScanModule(BaseModule):
 
     @staticmethod
     def _extract_interactsh_callback(text: str) -> str:
+        # interactsh's default servers rotate across oast.* TLDs (pro/live/site/
+        # online/fun/me/…) plus the legacy interact.sh — match any oast TLD so a
+        # new server domain doesn't silently break callback extraction.
         match = re.search(
-            r"\b([a-z0-9][a-z0-9-]{4,}\.(?:oast\.(?:pro|live|site|online)|interact\.sh))\b",
+            r"\b([a-z0-9][a-z0-9-]{4,}\.(?:oast\.[a-z]{2,6}|interact\.sh))\b",
             text,
             re.I,
         )
@@ -341,6 +371,13 @@ class VulnScanModule(BaseModule):
     def _stop_oob_client(self, runtime: dict) -> None:
         proc = self._oob_process
         self._oob_process = None
+        master_fd = getattr(self, "_oob_master_fd", None)
+        self._oob_master_fd = None
+        if master_fd is not None:
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
         if not proc or proc.poll() is not None:
             return
         try:

