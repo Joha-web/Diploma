@@ -142,3 +142,28 @@ def test_error_prescreen_force_promotes_on_sql_error(tmp_path, monkeypatch):
     ref = next(c for c in candidates if c["param"] == "ref")
     assert ref["score"] >= 0.95
     assert ref.get("error_dbms")
+
+
+def test_deep_and_intrusive_presets_deepen_sqlmap():
+    from main import CONFIG_PRESETS
+
+    deep = CONFIG_PRESETS["deep"]["scan"]["sql_injection"]
+    assert deep["level"] == 3 and deep["risk"] == 2
+    assert deep["max_targets"] >= 15
+
+    intrusive = CONFIG_PRESETS["intrusive"]["scan"]["sql_injection"]
+    assert intrusive["level"] == 5 and intrusive["risk"] == 3
+    assert intrusive["forms"] is True
+
+    # safe/bug_bounty keep the conservative default (no sqlmap override).
+    assert "sql_injection" not in CONFIG_PRESETS["safe"]["scan"]
+
+
+def test_deep_preset_merge_preserves_base_sqli_keys():
+    from main import apply_config_preset
+
+    base = {"scan": {"sql_injection": {"enabled": True, "smart": False, "level": 1}}}
+    merged = apply_config_preset(base, "deep")["scan"]["sql_injection"]
+    assert merged["level"] == 3          # overridden by preset
+    assert merged["smart"] is False      # base key preserved
+    assert merged["enabled"] is True

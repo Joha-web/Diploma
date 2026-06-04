@@ -249,6 +249,11 @@ CONFIG_PRESETS = {
             "xss": {"max_targets": 250, "max_requests": 700, "max_payloads": 5, "use_dalfox": True},
             "race_condition": {"active_probe": False},
             "endpoint_harvester": {"cariddi_intensive": True, "kiterunner": True, "max_seeds": 400},
+            # Deeper sqlmap: higher level/risk catches blind SQLi the level-1
+            # default misses, and a lower strong_threshold sends more ranked
+            # candidates to sqlmap.
+            "sql_injection": {"level": 3, "risk": 2, "max_targets": 15,
+                              "strong_threshold": 0.4, "technique": "BEUST"},
         },
     },
     "intrusive": {
@@ -261,6 +266,10 @@ CONFIG_PRESETS = {
             "xss": {"max_targets": 300, "max_requests": 900, "max_payloads": 5, "use_dalfox": True},
             "race_condition": {"active_probe": True},
             "api_key_validator": {"live_validation": True},
+            # Maximum sqlmap depth: full level/risk, all techniques (incl. stacked
+            # queries), form testing, and the widest candidate net.
+            "sql_injection": {"level": 5, "risk": 3, "max_targets": 25,
+                              "strong_threshold": 0.35, "technique": "BEUSTQ", "forms": True},
             "endpoint_harvester": {"cariddi_intensive": True, "kiterunner": True,
                                    "kiterunner_intensive": True, "max_seeds": 600,
                                    "retain_raw_secrets": True},
