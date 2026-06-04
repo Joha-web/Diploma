@@ -298,9 +298,12 @@ scan:
     enabled: true
     possible_threshold: 0.3
     strong_threshold: 0.5
-    exec_prescreen: true
+    exec_prescreen: true        # in-band echo+arithmetic probe (output reflected)
     prescreen_max_requests: 50
     prescreen_min_score: 0.25
+    time_prescreen: true        # time-based BLIND detection (sleep-delay, double-confirmed)
+    time_delay: 6               # seconds to sleep; re-confirmed at 2x to kill false positives
+    time_prescreen_max: 20      # max params to time-test
     commix: true
     commix_timeout: 300
     commix_extra_args: []

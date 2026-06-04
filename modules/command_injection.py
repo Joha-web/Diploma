@@ -16,6 +16,8 @@ Two layers, like the SSRF/SQLi probes:
 from __future__ import annotations
 
 import re
+import shlex
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -84,6 +86,8 @@ class CommandInjectionModule(ActiveProbeBase):
         candidates = self._collect_candidates()
         if cfg.get("exec_prescreen", True):
             self._exec_prescreen(candidates, cfg)
+        if cfg.get("time_prescreen", True):
+            self._timing_prescreen(candidates, cfg)
         scored = sorted((c for c in candidates if c["score"] >= possible),
                         key=lambda c: c["score"], reverse=True)
         self.save_json(scored, "cmdi_candidates.json")
@@ -95,11 +99,15 @@ class CommandInjectionModule(ActiveProbeBase):
             findings.append(finding)
             confirmed.add((self._base(cand["url"]), cand["param"].lower()))
 
-        # In-band pre-screen confirmations (infra-free).
+        # Pre-screen confirmations (infra-free): in-band echo, then time-based blind.
         for cand in scored:
             if cand.get("exec_confirmed"):
                 mark(cand, self._confirmed_finding(cand, "in-band probe", 0.9,
                                                    {"payload": cand.get("exec_payload", "")}))
+            elif cand.get("time_confirmed"):
+                mark(cand, self._confirmed_finding(cand, "time-based blind probe", 0.85,
+                                                   {"payload": cand.get("time_payload", ""),
+                                                    "delay_seconds": cand.get("time_delay")}))
 
         likely = self._build_targets(scored, strong, cfg)
 
@@ -255,6 +263,82 @@ class CommandInjectionModule(ActiveProbeBase):
                     cand["exec_payload"] = payload
                     break
 
+    # ── Time-based blind pre-screen ──────────────────────────────────────────────
+    # Payload templates that suspend the OS command for N seconds across the
+    # common shells / both OSes. {v} = original value, {d} = delay seconds.
+    _TIME_PAYLOADS = (
+        "{v};sleep {d}", "{v}|sleep {d}", "{v}$(sleep {d})", "{v}`sleep {d}`",
+        "{v}&&sleep {d}", "{v}& ping -c {d} 127.0.0.1", "{v}& ping -n {d} 127.0.0.1",
+    )
+
+    def _timing_prescreen(self, candidates: list[dict], cfg: dict) -> None:
+        """Detect *blind* command injection by measuring response delay.
+
+        Catches the common case the in-band echo / ffuf marker miss: the command
+        runs but returns no output. A `sleep N` payload that delays the response
+        by ~N seconds — re-confirmed with a 2N delay to rule out a slow endpoint —
+        is strong evidence of execution.
+        """
+        import requests
+        session = requests.Session()
+        session.verify = False
+        delay = self._bounded(cfg.get("time_delay", 6), 3, 30)
+        confirm = delay * 2
+        req_timeout = max(float(cfg.get("request_timeout", 10)), confirm + 5)
+        max_targets = int(cfg.get("time_prescreen_max", 20))
+        min_score = float(cfg.get("prescreen_min_score", 0.25))
+        tested = 0
+
+        for cand in sorted(candidates, key=lambda c: c["score"], reverse=True):
+            if tested >= max_targets:
+                break
+            if cand["score"] < min_score or cand.get("exec_confirmed"):
+                continue
+            base_value = cand["value"] or "1"
+            baseline = self._timed_get(self._set_param_value(cand["url"], cand["param"], base_value),
+                                       session, req_timeout)
+            if baseline is None or baseline >= delay:
+                continue  # unreachable or already too slow to distinguish
+            tested += 1
+            for tmpl in self._TIME_PAYLOADS:
+                probe = self._set_param_value(cand["url"], cand["param"], tmpl.format(v=base_value, d=delay))
+                elapsed = self._timed_get(probe, session, req_timeout)
+                if elapsed is None or elapsed < delay or (elapsed - baseline) < delay * 0.7:
+                    continue
+                # Confirm with double the delay to rule out a coincidentally slow response.
+                confirm_probe = self._set_param_value(cand["url"], cand["param"], tmpl.format(v=base_value, d=confirm))
+                confirm_elapsed = self._timed_get(confirm_probe, session, req_timeout)
+                if confirm_elapsed is not None and confirm_elapsed >= confirm * 0.7 and confirm_elapsed > elapsed:
+                    cand["score"] = max(cand["score"], 0.9)
+                    cand["reasons"] = cand["reasons"] + [
+                        f"time-based blind: sleep {delay}s→{elapsed:.1f}s, sleep {confirm}s→{confirm_elapsed:.1f}s"]
+                    cand["time_confirmed"] = True
+                    cand["time_payload"] = tmpl.format(v=base_value, d=delay)
+                    cand["time_delay"] = round(elapsed, 1)
+                    break
+
+    def _timed_get(self, url: str, session, timeout: float) -> float | None:
+        start = time.monotonic()
+        resp = self.http_get(url, session=session, timeout=timeout, verify=False)
+        if resp is None:
+            return None
+        return time.monotonic() - start
+
+    # ── External-tool runner (timeout-safe) ───────────────────────────────────────
+    def _exec_to_file(self, cmd: list[str], out_path: Path, timeout: int, label: str):
+        """Run a tool with output streamed to a file so a timeout-kill keeps any
+        confirmation it already printed (exec() drops stdout on timeout)."""
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        shell_cmd = " ".join(shlex.quote(c) for c in cmd) + f" > {shlex.quote(str(out_path))} 2>&1"
+        return self.exec(shell_cmd, timeout=timeout, shell=True, label=label)
+
+    @staticmethod
+    def _read_tool_output(out_path: Path) -> str:
+        try:
+            return out_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
     # ── commix ──────────────────────────────────────────────────────────────────
     def _run_commix(self, cand: dict, cfg: dict, index: int) -> list[dict]:
         out_dir = self.module_dir / "commix"
@@ -264,11 +348,11 @@ class CommandInjectionModule(ActiveProbeBase):
         for arg in cfg.get("commix_extra_args", []) or []:
             if isinstance(arg, str) and arg.strip():
                 cmd.append(arg.strip())
-        result = self.exec(cmd, timeout=int(cfg.get("commix_timeout", 300)),
-                           label=f"commix {cand['param']}@{cand['path']}")
-        output = "\n".join(p for p in (result.stdout, result.stderr) if p)
         stdout_file = f"commix/run_{index:03d}.txt"
-        self.save_text(output, stdout_file)
+        out_path = self.module_dir / stdout_file
+        self._exec_to_file(cmd, out_path, int(cfg.get("commix_timeout", 300)),
+                           f"commix {cand['param']}@{cand['path']}")
+        output = self._read_tool_output(out_path)
         if not COMMIX_HIT_RE.search(output):
             return []
         hits = [ln.strip() for ln in output.splitlines() if COMMIX_HIT_RE.search(ln)]

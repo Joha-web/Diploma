@@ -76,11 +76,13 @@ def test_parse_commix_hit_builds_critical_finding(tmp_path):
     cand = {"url": "https://example.com/ping?host=x", "param": "host", "path": "/ping",
             "score": 0.95, "reasons": ["name host"]}
     out = "[*] testing...\n(!) The (GET) 'host' parameter is vulnerable to (results-based) command injection.\n"
-    # _run_commix calls exec; emulate by calling the parser via a fake exec
+    # commix now streams to a file (shell redirect); emulate that, including a
+    # timeout-kill (empty stdout) so the file-read path is what yields the finding.
     import subprocess as sp
 
     def fake_exec(cmd, timeout=300, label=None, **kw):
-        return sp.CompletedProcess(cmd, 0, out, "")
+        (module.module_dir / "commix" / "run_001.txt").write_text(out, encoding="utf-8")
+        return sp.CompletedProcess(cmd, 1, "", "timeout")
 
     module.exec = fake_exec
     findings = module._run_commix(cand, {}, 1)
@@ -116,3 +118,45 @@ def test_run_reports_candidates_only_without_tools(tmp_path):
     result = module.run()
     assert result["candidate_count"] == 1
     assert any(f["id"] == "cmdi_candidate_parameter" for f in result["findings"])
+
+
+def test_timing_prescreen_confirms_blind_cmdi(tmp_path, monkeypatch):
+    """A sleep payload that delays the response ~N seconds (and ~2N on the
+    confirm) flags blind command injection."""
+    from urllib.parse import unquote_plus
+    import re as _re
+    module = _module(tmp_path)
+    cand = {"url": "https://example.com/ping?host=8.8.8.8", "param": "host", "value": "8.8.8.8",
+            "path": "/ping", "score": 0.9, "reasons": [], "sources": ["t"]}
+
+    def fake_timed_get(url, session, timeout):
+        dec = unquote_plus(url)  # a real server decodes '+' in the query to a space
+        m = _re.search(r"(?:sleep|ping -[cn]) ?(\d+)", dec)
+        return float(m.group(1)) + 0.1 if m else 0.2  # delay == requested sleep
+
+    monkeypatch.setattr(module, "_timed_get", fake_timed_get)
+    module._timing_prescreen([cand], {"time_delay": 6})
+
+    assert cand.get("time_confirmed") is True
+    assert cand["score"] >= 0.9
+    assert any("time-based blind" in r for r in cand["reasons"])
+
+
+def test_timing_prescreen_no_false_positive_when_no_delay(tmp_path, monkeypatch):
+    module = _module(tmp_path)
+    cand = {"url": "https://example.com/ping?host=8.8.8.8", "param": "host", "value": "8.8.8.8",
+            "path": "/ping", "score": 0.9, "reasons": [], "sources": ["t"]}
+    # Endpoint never delays → must not confirm.
+    monkeypatch.setattr(module, "_timed_get", lambda url, session, timeout: 0.2)
+    module._timing_prescreen([cand], {"time_delay": 6})
+    assert not cand.get("time_confirmed")
+
+
+def test_timing_prescreen_ignores_already_slow_baseline(tmp_path, monkeypatch):
+    """If the baseline itself is slow (>= delay), timing is inconclusive — skip."""
+    module = _module(tmp_path)
+    cand = {"url": "https://example.com/ping?host=8.8.8.8", "param": "host", "value": "8.8.8.8",
+            "path": "/ping", "score": 0.9, "reasons": [], "sources": ["t"]}
+    monkeypatch.setattr(module, "_timed_get", lambda url, session, timeout: 9.0)  # always slow
+    module._timing_prescreen([cand], {"time_delay": 6})
+    assert not cand.get("time_confirmed")
