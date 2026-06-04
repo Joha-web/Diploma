@@ -252,9 +252,20 @@ scan:
     max_requests: 150
     max_payloads: 2
     request_timeout: 10
-    workers: 1
+    workers: 40                # dalfox parallelism (1 = too slow / times out)
     dalfox_timeout: 600
     dalfox_extra_args: []
+    # Extra XSS scanners (run when installed; skipped gracefully otherwise)
+    max_tool_targets: 20
+    use_xsstrike: true
+    xsstrike_path: ""
+    xsstrike_timeout: 600
+    xsstrike_extra_args: []
+    use_xsser: true
+    xsser_threads: 3
+    xsser_timeout: 600
+    xsser_auto_set: 600        # cap injected vectors (max 1293) so runs finish
+    xsser_extra_args: []
 
   http_smuggling:
     enabled: true

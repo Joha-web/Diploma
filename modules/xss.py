@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import html
 import re
+import shlex
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -214,13 +215,14 @@ class XSSModule(ActiveProbeBase):
 
     def _run_dalfox(self, target: dict, cfg: dict, index: int) -> tuple[list[dict], dict]:
         cmd = self._dalfox_command(target, cfg)
-        timeout = int(cfg.get("dalfox_timeout", cfg.get("timeout", 180)))
-        result = self.exec(cmd, timeout=timeout, label=f"dalfox {target['url']}")
-        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        timeout = int(cfg.get("dalfox_timeout", cfg.get("timeout", 300)))
         stdout_file = f"dalfox_run_{index:03d}.txt"
-        self.save_text(output, stdout_file)
+        out_path = self.module_dir / stdout_file
+        result = self._exec_to_file(cmd, out_path, timeout, f"dalfox {target['url']}")
+        output = self._read_tool_output(out_path)
         findings = self._parse_dalfox_findings(output, target, stdout_file, index)
         return findings, {
+            "tool": "dalfox",
             "url": target["url"],
             "params": target.get("params", []),
             "returncode": result.returncode,
@@ -238,7 +240,10 @@ class XSSModule(ActiveProbeBase):
             "--timeout",
             str(self._bounded_int(cfg.get("request_timeout", 10), 1, 120)),
         ]
-        workers = self._bounded_int(cfg.get("workers", 1), 1, 20)
+        # dalfox parallelism. The old default of 1 serialised every payload and
+        # made dalfox time out before finishing; 40 keeps it fast without being
+        # as aggressive as dalfox's own default of 100.
+        workers = self._bounded_int(cfg.get("workers", 40), 1, 100)
         cmd.extend(["--worker", str(workers)])
         params = [param for param in target.get("params", []) if param]
         if params:
@@ -300,6 +305,25 @@ class XSSModule(ActiveProbeBase):
             ))
         return findings
 
+    def _exec_to_file(self, cmd: list[str], out_path: Path, timeout: int, label: str):
+        """Run a tool with its output streamed to a file via the shell.
+
+        XSStrike and XSSer emit thousands of payloads and often outlast the
+        timeout. BaseModule.exec() discards stdout when it kills a timed-out
+        process, which would lose findings the tool already printed. Redirecting
+        to disk means partial output (and any findings in it) survives the kill.
+        """
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        shell_cmd = " ".join(shlex.quote(c) for c in cmd) + f" > {shlex.quote(str(out_path))} 2>&1"
+        return self.exec(shell_cmd, timeout=timeout, shell=True, label=label)
+
+    @staticmethod
+    def _read_tool_output(out_path: Path) -> str:
+        try:
+            return out_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
     # ── XSStrike ────────────────────────────────────────────────────────────────
     def _xsstrike_command(self, cfg: dict) -> list[str] | None:
         """Resolve XSStrike to an on-PATH binary or a `python3 xsstrike.py` call."""
@@ -322,10 +346,10 @@ class XSSModule(ActiveProbeBase):
             if isinstance(arg, str) and arg.strip():
                 cmd.append(arg.strip())
         timeout = int(cfg.get("xsstrike_timeout", cfg.get("timeout", 600)))
-        result = self.exec(cmd, timeout=timeout, label=f"xsstrike {target['url']}")
-        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
         stdout_file = f"xsstrike_run_{index:03d}.txt"
-        self.save_text(output, stdout_file)
+        out_path = self.module_dir / stdout_file
+        result = self._exec_to_file(cmd, out_path, timeout, f"xsstrike {target['url']}")
+        output = self._read_tool_output(out_path)
         findings = self._parse_xsstrike(output, target, stdout_file, index)
         return findings, {
             "tool": "xsstrike", "url": target["url"], "params": target.get("params", []),
@@ -372,44 +396,69 @@ class XSSModule(ActiveProbeBase):
 
     # ── XSSer ─────────────────────────────────────────────────────────────────────
     def _run_xsser(self, target: dict, cfg: dict, index: int) -> tuple[list[dict], dict]:
+        # XSSer needs an explicit injection point: -u <base> -g <path?param=XSS>.
+        # The "--url + --auto" form aborts with "cannot find a place to start".
+        base, getdata = self._xsser_target(target)
         cmd = [
-            "xsser", "--url", target["url"], "--auto", "--no-head",
+            "xsser", "-u", base, "-g", getdata, "--auto", "--statistics",
             "--threads", str(self._bounded_int(cfg.get("xsser_threads", 3), 1, 20)),
             "--timeout", str(self._bounded_int(cfg.get("request_timeout", 10), 1, 120)),
         ]
+        # Cap the vector set so XSSer finishes within the timeout (default 1293).
+        auto_set = self._bounded_int(cfg.get("xsser_auto_set", 600), 0, 1293)
+        if auto_set:
+            cmd += ["--auto-set", str(auto_set)]
         for arg in cfg.get("xsser_extra_args", []) or []:
             if isinstance(arg, str) and arg.strip():
                 cmd.append(arg.strip())
         timeout = int(cfg.get("xsser_timeout", cfg.get("timeout", 600)))
-        result = self.exec(cmd, timeout=timeout, label=f"xsser {target['url']}")
-        output = "\n".join(part for part in (result.stdout, result.stderr) if part)
         stdout_file = f"xsser_run_{index:03d}.txt"
-        self.save_text(output, stdout_file)
+        out_path = self.module_dir / stdout_file
+        result = self._exec_to_file(cmd, out_path, timeout, f"xsser {target['url']}")
+        output = self._read_tool_output(out_path)
         findings = self._parse_xsser(output, target, stdout_file, index)
         return findings, {
             "tool": "xsser", "url": target["url"], "params": target.get("params", []),
             "returncode": result.returncode, "stdout_file": stdout_file, "findings": len(findings),
         }
 
+    @classmethod
+    def _xsser_target(cls, target: dict) -> tuple[str, str]:
+        """Split a URL into XSSer's (-u base, -g path?param=XSS) form.
+
+        Each target parameter's value is replaced with the literal marker XSS,
+        which XSSer substitutes with its payload vectors.
+        """
+        parsed = urlparse(target["url"])
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        want = set(target.get("params", []))
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        if pairs:
+            query = "&".join(f"{k}=XSS" if (not want or k in want) else f"{k}={v}"
+                             for k, v in pairs)
+        else:
+            query = "&".join(f"{p}=XSS" for p in want) or "XSS"
+        return base, f"{parsed.path or '/'}?{query}"
+
     def _parse_xsser(self, output: str, target: dict, stdout_file: str, index: int) -> list[dict]:
-        # XSSer prints a final tally; only act when it reports a successful
-        # injection, and attach the injection line(s) it listed as evidence.
+        # XSSer marks confirmed vectors with [FOUND] in its "Injection(s) Results"
+        # block and lists them under "[+] Vulnerable(s):" (vs "[Not Info]" when
+        # nothing fires). Only raise a finding when something is actually FOUND.
         clean = re.sub(r"\x1b\[[0-9;]*m", "", output or "")
-        successful = 0
-        m = re.search(r"Successful:\s*(\d+)", clean, re.I)
-        if m:
-            successful = int(m.group(1))
-        injection_lines = [ln.strip() for ln in clean.splitlines()
-                           if re.search(r"\binjection[:s]?\b.*https?://", ln, re.I)
-                           or ln.strip().lower().startswith("[+] injection")]
-        if successful <= 0 and not injection_lines:
+        found_lines = [ln.strip() for ln in clean.splitlines()
+                       if re.search(r"\[\s*FOUND\s*\]", ln, re.I)]
+        vuln_section = re.search(
+            r"\[\+\]\s*Vulnerable\(s\):\s*(.+?)(?:-{5,}|={5,}|\Z)", clean, re.I | re.S)
+        vuln_text = (vuln_section.group(1).strip() if vuln_section else "")
+        has_vuln = bool(vuln_text) and not re.search(r"\[\s*Not\s+(Info|Found)\s*\]", vuln_text, re.I)
+        if not found_lines and not has_vuln:
             return []
         return [self.make_finding(
             "xss_xsser_reported",
             target["url"],
-            title="XSSer reported a successful XSS injection",
+            title="XSSer reported an XSS injection",
             description=(
-                f"XSSer reported {successful or 'an'} successful injection(s). "
+                f"XSSer flagged {len(found_lines) or 'an'} injection vector(s) as FOUND. "
                 "XSSer is prone to false positives — confirm the payload manually."
             ),
             severity="MEDIUM",
@@ -420,7 +469,7 @@ class XSSModule(ActiveProbeBase):
             exploitability="active",
             evidence={
                 "tool": "xsser", "param": self._matching_param(target["url"], target.get("params", [])),
-                "successful": successful, "lines": injection_lines[:3],
+                "found_count": len(found_lines), "lines": (found_lines or [vuln_text])[:3],
                 "run_index": index, "stdout_file": stdout_file, "sources": target.get("sources", []),
             },
         )]

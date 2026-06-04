@@ -107,16 +107,21 @@ def test_xss_dalfox_mode_runs_and_parses_findings(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "has_tool", lambda tool: tool == "dalfox")
 
     def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        # dalfox now streams to a file (shell redirect); mirror that here.
         executed["cmd"] = cmd
-        return subprocess.CompletedProcess(cmd, 0, stdout=dalfox_output, stderr="")
+        (module.module_dir / "dalfox_run_001.txt").write_text(dalfox_output, encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "exec", fake_exec)
 
     result = module.run()
 
-    assert executed["cmd"][:3] == ["dalfox", "url", "https://example.com/search?q=test"]
+    # exec receives a shell string with the dalfox command + redirect (args
+    # are shlex-quoted, so the URL is wrapped in quotes).
+    assert executed["cmd"].startswith("dalfox url ")
+    assert "search?q=test" in executed["cmd"]
     assert "--skip-discovery" in executed["cmd"]
-    assert executed["cmd"][-2:] == ["-p", "q"]
+    assert "-p q" in executed["cmd"]
     assert result["total"] == 1
     finding = result["findings"][0]
     assert finding["id"] == "xss_dalfox_confirmed"
@@ -162,24 +167,41 @@ def test_parse_xsstrike_silent_without_payload(tmp_path):
     assert module._parse_xsstrike("[~] No reflections\n", target, "f.txt", 1) == []
 
 
-def test_parse_xsser_reports_successful_injection(tmp_path):
+def test_xsser_target_builds_injection_marker():
+    # base + path?param=XSS form (the only form XSSer actually injects with).
+    base, getdata = XSSModule._xsser_target({"url": "https://example.com/s?q=1&p=2", "params": ["q"]})
+    assert base == "https://example.com"
+    assert getdata == "/s?q=XSS&p=2"
+
+
+def test_parse_xsser_reports_found_vector(tmp_path):
     module = _xss_module(tmp_path)
     target = {"url": "https://example.com/s?q=1", "params": ["q"], "sources": ["fuzzer"]}
+    # Real XSSer v1.8 output shape.
     output = (
-        "[*] Final Results:\n- Injections: 5\n- Failed: 4\n- Successful: 1\n"
-        "[+] Injection: https://example.com/s?q=<script>alert(1)</script>\n"
+        "[*] Injection(s) Results:\n"
+        "=========================\n"
+        " [FOUND] -> [ a1b2c3 ] : [ q ]\n\n"
+        "[+] Vulnerable(s): \n\n [ https://example.com/s?q=<script>a1b2c3</script> ]\n"
+        "---------------------------------------------\n"
     )
     findings = module._parse_xsser(output, target, "xsser_run_001.txt", 1)
     assert len(findings) == 1
     assert findings[0]["id"] == "xss_xsser_reported"
-    assert findings[0]["evidence"]["successful"] == 1
+    assert findings[0]["evidence"]["found_count"] == 1
     assert findings[0]["evidence"]["lines"]
 
 
-def test_parse_xsser_silent_when_no_success(tmp_path):
+def test_parse_xsser_silent_when_not_found(tmp_path):
     module = _xss_module(tmp_path)
     target = {"url": "https://example.com/s?q=1", "params": ["q"]}
-    output = "[*] Final Results:\n- Injections: 5\n- Failed: 5\n- Successful: 0\n"
+    output = (
+        "[*] Injection(s) Results:\n"
+        "=========================\n"
+        " [NOT FOUND] -> [ a1b2c3 ] : [ q ]\n\n"
+        "[+] Vulnerable(s): \n\n [Not Info]\n"
+        "---------------------------------------------\n"
+    )
     assert module._parse_xsser(output, target, "f.txt", 1) == []
 
 
@@ -215,3 +237,40 @@ def test_xss_skips_socketio_and_streaming_targets(tmp_path):
     urls = {t["url"] for t in module._collect_targets()}
     assert not any("socket.io" in u or "/sse" in u for u in urls)
     assert any("/search?q=" in u for u in urls)
+
+
+def test_run_xsstrike_reads_findings_from_streamed_file(tmp_path, monkeypatch):
+    """A timed-out tool yields no stdout from exec(), but its findings must still
+    be parsed from the file the run streamed to disk."""
+    module = _xss_module(tmp_path)
+    out_dir = module.module_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        # Simulate a killed tool: exec returns empty stdout, but the file on disk
+        # already holds the streamed findings.
+        (out_dir / "xsstrike_run_001.txt").write_text(
+            "[+] Payload: <svg/onload=alert(1)>\n[!] Efficiency: 100\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="timeout")
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    target = {"url": "https://example.com/s?q=1", "params": ["q"], "sources": ["t"]}
+    findings, run = module._run_xsstrike(["python3", "/opt/XSStrike/xsstrike.py"], target,
+                                         {"xsstrike_timeout": 5}, 1)
+    assert len(findings) == 1
+    assert findings[0]["id"] == "xss_xsstrike_confirmed"
+
+
+def test_xsser_command_caps_vector_set(tmp_path, monkeypatch):
+    module = _xss_module(tmp_path)
+    captured = {}
+
+    def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        captured["cmd"] = cmd  # shell string
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    target = {"url": "https://example.com/s?q=1", "params": ["q"], "sources": ["t"]}
+    module._run_xsser(target, {"xsser_auto_set": 400}, 1)
+    assert "--auto-set 400" in captured["cmd"]
+    assert "-g" in captured["cmd"]
