@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 import requests
 
 from modules.base import BaseModule
+from modules.url_utils import redirect_host
 
 
 OAUTH_PATHS = [
@@ -159,7 +160,10 @@ class OAuthProbeModule(BaseModule):
 
     @staticmethod
     def _location_is_attacker(location: str) -> bool:
-        host = (urlparse(str(location or "")).hostname or "").lower()
+        # Browser-style host resolution so reflected redirect-filter bypasses
+        # (////host, https:host, //host\@other) aren't missed — same fix as
+        # open_redirect_probe.
+        host = redirect_host(location)
         return host == "attacker.reconx.invalid" or host.endswith(".attacker.reconx.invalid")
 
     def _check_state_required(self, auth_ep: str, session: requests.Session, cfg: dict) -> list[dict]:

@@ -94,7 +94,7 @@ class DeserializationProbeModule(BaseModule):
         if viewstate:
             value = viewstate.group(1)
             evidence = {"field": "__VIEWSTATE", "value_length": len(value), "value_prefix": value[:32]}
-            if value.startswith("/w"):
+            if value.startswith("/wE"):
                 evidence["format"] = "ASP.NET LosFormatter"
             findings.append(self._finding("aspnet_viewstate_detected", "INFO", url, "ASP.NET ViewState detected", evidence))
         for signature in ERROR_SIGNATURES:
@@ -122,8 +122,11 @@ class DeserializationProbeModule(BaseModule):
         # Python pickle — common base64-encoded markers + bare cos\n header
         if value.startswith(("gAS", "gAJ", "gAR", "cos\n", "c__builtin__", "ccopy_reg")):
             return "python_pickle"
-        # ASP.NET ViewState — usually starts with /w
-        if value.startswith("/w"):
+        # ASP.NET ViewState — LosFormatter/ObjectStateFormatter output begins with
+        # the bytes \xff\x01 (version marker), which base64-encode to "/wE". The
+        # looser "/w" prefix only pins the first byte (0xFF) and matches arbitrary
+        # base64, so it is too noisy for a HIGH finding.
+        if value.startswith("/wE"):
             return "aspnet_viewstate_like"
         # PHP serialize() — O:N:"X":, a:N:{, s:N:"
         if PHP_SERIALIZE_RE.match(value):

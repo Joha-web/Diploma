@@ -41,12 +41,27 @@ TECH_CATEGORIES: dict[str, str] = {
 CMS_SET = {"WordPress", "Drupal", "Joomla", "Bitrix", "1C-Bitrix",
            "MODX", "Ghost", "Typo3", "Moodle"}
 
+# WhatWeb plugins that report page metadata / HTTP response headers rather than
+# an actual software product. Ingesting these as "technologies" pollutes the
+# report and produces downstream false positives (e.g. the "Title" plugin — the
+# page <title> — became a bogus ExploitDB component). HTTPServer and X-Powered-By
+# are intentionally NOT skipped — they're handled specially as real products.
 SKIP_PLUGINS = {
+    # original set
     "Country", "IP", "RedirectLocation", "UncommonHeaders",
     "X-Frame-Options", "X-XSS-Protection", "Strict-Transport-Security",
     "Content-Security-Policy", "X-Content-Type-Options", "Script",
     "HTML5", "Email", "Cookies", "Frame", "HTML", "CSS", "Meta-Refresh",
     "Open-Graph-Protocol", "PasswordField", "FormAction",
+    # page metadata / generic markers
+    "Title", "MetaGenerator", "Object", "Via",
+    # response headers that are not products
+    "X-UA-Compatible", "WWW-Authenticate", "Content-Language", "HttpOnly",
+    "Allow", "ETag", "Set-Cookie", "Vary", "Accept-Ranges", "Age", "X-Cache",
+    "Cache-Control", "Pragma", "Expires", "Referrer-Policy",
+    "Permissions-Policy", "Feature-Policy", "Content-Disposition",
+    "Access-Control-Allow-Methods", "Access-Control-Allow-Origin",
+    "Access-Control-Allow-Credentials", "Access-Control-Allow-Headers",
 }
 
 
@@ -275,10 +290,11 @@ class TechStackModule(BaseModule):
                 continue
             try:
                 obj  = json.loads(line)
-                url  = obj.get("host", "").rstrip("/")
+                url  = (obj.get("host") or obj.get("url") or "").rstrip("/")
                 name = obj.get("info", {}).get("name", "")
                 ver  = ""
-                ext  = obj.get("extracted-results", [])
+                # nuclei JSON key has varied across versions (hyphen vs underscore).
+                ext  = obj.get("extracted-results") or obj.get("extracted_results") or []
                 if ext:
                     ver = ext[0]
                 result.setdefault(url, {"technologies": []})["technologies"].append({

@@ -169,9 +169,15 @@ class APISchemaAuditModule(ActiveProbeBase):
         if not isinstance(schema, dict):
             return ""
         schema_type = schema.get("type")
-        if schema.get("additionalProperties") is True:
+        additional = schema.get("additionalProperties")
+        if additional is True:
             return f"{path}.additionalProperties"
-        if schema_type == "object" and not schema.get("properties") and not schema.get("$ref"):
+        # An object with no declared properties is "overly broad" only when extra
+        # fields are unrestricted (additionalProperties unspecified → permissive
+        # default). A typed map (additionalProperties is a schema) or a closed
+        # object (additionalProperties is False) is constrained — not a finding.
+        if (schema_type == "object" and not schema.get("properties")
+                and not schema.get("$ref") and additional is None):
             return path
         for key in ("properties", "definitions", "$defs"):
             children = schema.get(key)

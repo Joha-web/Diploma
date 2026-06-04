@@ -150,18 +150,21 @@ class WebdetectModule(BaseModule):
             try:
                 e = json.loads(line)
                 url = e.get("url", "")
-                final_url = e.get("final-url", url)
+                # httpx switched its JSON keys from hyphenated (status-code) to
+                # underscore (status_code) — read both so status/tech/length are
+                # not silently lost across tool versions.
+                final_url = e.get("final_url") or e.get("final-url") or url
                 if not self.is_in_scope(url) or (final_url and not self.is_in_scope(final_url)):
                     continue
                 live.append({
                     "url":            url,
-                    "status":         e.get("status-code", 0),
+                    "status":         e.get("status_code", e.get("status-code", 0)),
                     "title":          e.get("title", ""),
                     "server":         e.get("webserver", ""),
-                    "content_length": e.get("content-length", 0),
-                    "technologies":   e.get("technologies", []),
+                    "content_length": e.get("content_length", e.get("content-length", 0)),
+                    "technologies":   e.get("tech", e.get("technologies", [])),
                     "final_url":      final_url,
-                    "ip":             e.get("host", ""),
+                    "ip":             e.get("host_ip") or e.get("host", ""),
                     "screenshot":     "",
                 })
             except json.JSONDecodeError:

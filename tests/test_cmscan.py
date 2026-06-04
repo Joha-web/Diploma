@@ -100,3 +100,30 @@ def test_subprocess_env_passes_wpscan_token_from_config(tmp_path, monkeypatch):
     )
 
     assert module._subprocess_env()["WPSCAN_API_TOKEN"] == "wpscan-token"
+
+
+def test_cmscan_reads_findings_from_streamed_file_on_timeout(tmp_path, monkeypatch):
+    """wpscan output is streamed to a file; a confirmed finding must survive a
+    timeout-kill (exec returns empty stdout) by being read back from the file."""
+    import subprocess
+    module = CMSScanModule(
+        "example.com", str(tmp_path), {"api_keys": {"wpscan": "tok"}},
+        tech_results={"hosts": [{"url": "https://example.com",
+                                 "technologies": [{"name": "WordPress"}]}]},
+    )
+    monkeypatch.setattr(module, "has_tool", lambda t: t == "wpscan")
+    wp_json = '{"version": {"number": "4.0", "status": "insecure"}}'
+
+    def fake_exec(cmd, timeout=600, shell=False, label=None, **k):
+        # cmd is the shell string "... > <path> 2>/dev/null" — write to that path,
+        # then return a timeout-like result with NO stdout.
+        path = cmd.split("> ", 1)[1].rsplit(" 2>/dev/null", 1)[0].strip().strip("'")
+        with open(path, "w") as fh:
+            fh.write(wp_json)
+        return subprocess.CompletedProcess(cmd, 1, "", "timeout")
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    result = module.run()
+
+    types = {f.get("type") for s in result["scans"] for f in s["findings"]}
+    assert "outdated_core" in types   # parsed from the streamed file despite the timeout

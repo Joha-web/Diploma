@@ -103,16 +103,48 @@ class PortScanModule(BaseModule):
         if not out.exists():
             return {}
 
+        text = out.read_text(errors="replace")
+        result = self._parse_masscan(text)
+        if result:
+            self.success(f"masscan → {sum(len(v) for v in result.values())} open ports")
+        elif text.strip():
+            # Non-empty output but nothing parsed — surface it instead of silently
+            # returning {} (masscan's -oJ is often not strictly valid JSON).
+            self.warn("masscan produced output but no ports parsed — check masscan.json")
+        return result
+
+    @staticmethod
+    def _parse_masscan(text: str) -> dict[str, set[int]]:
+        """Parse masscan -oJ output robustly.
+
+        masscan's JSON is frequently NOT strictly valid (a trailing comma before
+        the closing ``]``, and a timeout-truncated final record), so a plain
+        json.loads silently loses every open port. Instead, walk the text and
+        decode each ``{...}`` record independently — tolerant of trailing commas,
+        wrapping brackets and a cut-off last record.
+        """
         result: dict[str, set[int]] = {}
-        try:
-            for entry in json.loads(out.read_text()):
-                ip   = entry.get("ip", "")
-                port = (entry.get("ports") or [{}])[0].get("port", 0)
+        decoder = json.JSONDecoder()
+        idx, length = 0, len(text)
+        while idx < length:
+            start = text.find("{", idx)
+            if start == -1:
+                break
+            try:
+                obj, end = decoder.raw_decode(text, start)
+            except json.JSONDecodeError:
+                idx = start + 1          # skip a stray '{' and keep going
+                continue
+            idx = end
+            if not isinstance(obj, dict):
+                continue
+            ip = obj.get("ip", "")
+            for port_entry in obj.get("ports") or []:
+                if not isinstance(port_entry, dict):
+                    continue
+                port = port_entry.get("port", 0)
                 if ip and port:
                     result.setdefault(ip, set()).add(int(port))
-            self.success(f"masscan → {sum(len(v) for v in result.values())} open ports")
-        except Exception:
-            pass
         return result
 
     # ── nmap sweep ────────────────────────────────────────────────────────────

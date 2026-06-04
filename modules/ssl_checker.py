@@ -9,6 +9,7 @@ import socket
 import urllib3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import requests
 
@@ -56,7 +57,7 @@ class SSLCheckerModule(BaseModule):
             workers = min(20, max(1, len(https_urls[:60])))
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {
-                    pool.submit(self._check_ssl, self._host_from_url(url)): url
+                    pool.submit(self._check_ssl, *self._host_port_from_url(url)): url
                     for url in https_urls[:60]
                 }
                 for future in as_completed(futures):
@@ -97,86 +98,156 @@ class SSLCheckerModule(BaseModule):
 
     # ── SSL/TLS ───────────────────────────────────────────────────────────────
 
+    KNOWN_PUBLIC_CAS = {
+        "digicert", "comodo", "sectigo", "globalsign", "letsencrypt",
+        "let's encrypt", "entrust", "godaddy", "verisign", "geotrust",
+        "amazon", "microsoft", "google", "cloudflare", "rapidssl",
+        "thawte", "usertrust", "identrust", "isrg", "ssl corporation",
+    }
+
     def _check_ssl(self, host: str, port: int = 443) -> dict:
         base = {"host": host, "port": port, "issues": []}
+        issues: list[str] = []
+
+        # Three independent handshakes — each runs regardless of the others so a
+        # flaky/failed modern handshake never suppresses a real cert finding:
+        #   • lenient (CERT_NONE) → negotiated protocol + cipher
+        #   • verifying            → trust/hostname, and the cert dict on success
+        #   • weak-protocol probe  → explicit TLS1.0/1.1 (default ctx won't negotiate)
+        info = self._handshake_info(host, port)
+        verify = self._verify(host, port)
+        weak = self._weak_protocols(host, port)
+
+        if not (info.get("version") or verify["ok"] or verify["issue"] or weak):
+            base["issues"] = ["CONNECTION_FAILED"]
+            base["error"] = info.get("error", "")
+            return base
+
+        if info.get("version"):
+            base["protocol"] = info["version"]
+            base["cipher"] = info.get("cipher")
+        elif weak:
+            base["protocol"] = weak[-1]      # only weak protocols are accepted
+            issues.append("NO_MODERN_TLS")
+
+        if verify["ok"] and verify["cert"]:
+            issues.extend(self._analyze_cert(verify["cert"], base))
+        elif verify["issue"]:
+            issues.append(verify["issue"])
+
+        if weak:
+            base["weak_protocols"] = weak
+            issues.extend(f"WEAK_PROTOCOL:{w}" for w in weak)
+
+        base["issues"] = sorted(set(issues))
+        return base
+
+    def _handshake_info(self, host: str, port: int) -> dict:
         try:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
-            ctx.verify_mode    = ssl.CERT_OPTIONAL
-
+            ctx.verify_mode = ssl.CERT_NONE
             with socket.create_connection((host, port), timeout=10) as sock:
                 with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                    cert    = ssock.getpeercert()
-                    version = ssock.version()
-                    cipher  = ssock.cipher()
+                    cipher = ssock.cipher()
+                    return {
+                        "version": ssock.version(),
+                        "cipher": cipher[0] if cipher else None,
+                        "cert": ssock.getpeercert(),
+                    }
+        except (ssl.SSLError, socket.timeout, ConnectionRefusedError, OSError) as exc:
+            return {"error": f"{exc.__class__.__name__}: {exc}"[:120]}
 
-            base["protocol"] = version
-            base["cipher"]   = cipher[0] if cipher else None
+    def _analyze_cert(self, cert: dict, base: dict) -> list[str]:
+        """Expiry + self-signed analysis from a parsed cert dict. Pure given the
+        cert (unit-testable); also fills base['expires'/'days_until_expiry'/…]."""
+        issues: list[str] = []
+        if not cert:
+            return issues
 
-            issues: list[str] = []
+        not_after = cert.get("notAfter", "")
+        if not_after:
+            try:
+                exp = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+                days = (exp - datetime.now(timezone.utc)).days
+                base["expires"] = not_after
+                base["days_until_expiry"] = days
+                if days < 0:
+                    issues.append("CERT_EXPIRED")
+                elif days < 30:
+                    issues.append(f"EXPIRING_SOON:{days}d")
+            except ValueError:
+                pass
 
-            # Weak protocol
-            if version in ("SSLv2", "SSLv3", "TLSv1", "TLSv1.1"):
-                issues.append(f"WEAK_PROTOCOL:{version}")
+        issuer = dict(x[0] for x in cert.get("issuer", []))
+        subject = dict(x[0] for x in cert.get("subject", []))
+        issuer_org = (issuer.get("organizationName") or "").strip().lower()
+        subject_org = (subject.get("organizationName") or "").strip().lower()
+        issuer_cn = (issuer.get("commonName") or "").strip().lower()
+        subject_cn = (subject.get("commonName") or "").strip().lower()
+        is_known_ca = any(ca in issuer_org for ca in self.KNOWN_PUBLIC_CAS)
+        if (not is_known_ca
+                and issuer_org and issuer_org == subject_org
+                and issuer_cn and issuer_cn == subject_cn):
+            issues.append("SELF_SIGNED")
 
-            if cert:
-                # Expiry
-                not_after = cert.get("notAfter", "")
-                if not_after:
-                    try:
-                        exp = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
-                        exp = exp.replace(tzinfo=timezone.utc)
-                        now = datetime.now(timezone.utc)
-                        days = (exp - now).days
-                        base["expires"]           = not_after
-                        base["days_until_expiry"] = days
-                        if days < 0:
-                            issues.append("CERT_EXPIRED")
-                        elif days < 30:
-                            issues.append(f"EXPIRING_SOON:{days}d")
-                    except ValueError:
-                        pass
+        base["issuer"] = issuer.get("organizationName", "Unknown")
+        base["san"] = [x[1] for x in cert.get("subjectAltName", [])][:10]
+        return issues
 
-                # Self-signed detection: issuer == subject on both CN and O,
-                # excluding well-known public CA organization names that legitimately
-                # issue certs to themselves (e.g. DigiCert, Amazon, Let's Encrypt).
-                KNOWN_PUBLIC_CAS = {
-                    "digicert", "comodo", "sectigo", "globalsign", "letsencrypt",
-                    "let's encrypt", "entrust", "godaddy", "verisign", "geotrust",
-                    "amazon", "microsoft", "google", "cloudflare", "rapidssl",
-                    "thawte", "usertrust", "identrust", "isrg",
-                }
-                issuer  = dict(x[0] for x in cert.get("issuer",  []))
-                subject = dict(x[0] for x in cert.get("subject", []))
-                issuer_org = (issuer.get("organizationName") or "").strip().lower()
-                subject_org = (subject.get("organizationName") or "").strip().lower()
-                issuer_cn = (issuer.get("commonName") or "").strip().lower()
-                subject_cn = (subject.get("commonName") or "").strip().lower()
-                is_known_ca = any(ca in issuer_org for ca in KNOWN_PUBLIC_CAS)
-                if (
-                    not is_known_ca
-                    and issuer_org and issuer_org == subject_org
-                    and issuer_cn and issuer_cn == subject_cn
-                ):
-                    issues.append("SELF_SIGNED")
+    def _verify(self, host: str, port: int) -> dict:
+        """Strict (trust + hostname) handshake. On success returns the validated
+        cert dict; on a verification failure returns the classified issue."""
+        ctx = ssl.create_default_context()   # CERT_REQUIRED + check_hostname
+        try:
+            with socket.create_connection((host, port), timeout=10) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                    return {"ok": True, "cert": ssock.getpeercert(), "issue": None}
+        except ssl.SSLCertVerificationError as exc:
+            return {"ok": False, "cert": None, "issue": self._classify_verify_error(str(exc))}
+        except (ssl.SSLError, socket.timeout, ConnectionRefusedError, OSError):
+            return {"ok": False, "cert": None, "issue": None}  # connection issue, handled elsewhere
 
-                base["issuer"] = issuer.get("organizationName", "Unknown")
-                base["san"]    = [x[1] for x in cert.get("subjectAltName", [])][:10]
+    @staticmethod
+    def _classify_verify_error(msg: str) -> str:
+        m = (msg or "").lower()
+        if "expired" in m:
+            return "CERT_EXPIRED"
+        # untrusted root presents as "self signed certificate in certificate chain"
+        # — distinguish it from a leaf self-signed cert before the generic check.
+        if ("certificate chain" in m or "unable to get local issuer" in m
+                or "unable to verify the first certificate" in m):
+            return "CERT_UNTRUSTED"
+        if "self-signed" in m or "self signed" in m:
+            return "SELF_SIGNED"
+        if "hostname" in m or "doesn't match" in m or "ip address mismatch" in m:
+            return "HOSTNAME_MISMATCH"
+        return "CERT_INVALID"
 
-            base["issues"] = issues
-            return base
-
-        except ssl.SSLCertVerificationError as e:
-            base["issues"] = ["CERT_INVALID", str(e)[:100]]
-            return base
-        except (socket.timeout, ConnectionRefusedError, OSError) as e:
-            base["issues"] = ["CONNECTION_FAILED"]
-            base["error"]  = str(e)
-            return base
-        except Exception as e:
-            base["issues"] = ["UNKNOWN_ERROR"]
-            base["error"]  = str(e)
-            return base
+    def _weak_protocols(self, host: str, port: int) -> list[str]:
+        """Best-effort: explicitly try TLS 1.0 / 1.1 handshakes; flag any the
+        server accepts. Degrades silently if the local OpenSSL refuses the old
+        version (so it never false-flags)."""
+        found: list[str] = []
+        for label, version in (("TLSv1", ssl.TLSVersion.TLSv1),
+                                ("TLSv1.1", ssl.TLSVersion.TLSv1_1)):
+            try:
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                ctx.minimum_version = version
+                ctx.maximum_version = version
+                try:
+                    ctx.set_ciphers("DEFAULT:@SECLEVEL=0")   # allow legacy ciphers/protocols
+                except ssl.SSLError:
+                    pass
+                with socket.create_connection((host, port), timeout=8) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                        if ssock.version() == label:
+                            found.append(label)
+            except Exception:
+                continue
+        return found
 
     def _log_ssl(self, r: dict):
         host   = r.get("host", "?")
@@ -254,5 +325,8 @@ class SSLCheckerModule(BaseModule):
         return self.filter_in_scope_urls(urls)
 
     @staticmethod
-    def _host_from_url(url: str) -> str:
-        return url.split("//", 1)[1].split("/")[0].split(":")[0]
+    def _host_port_from_url(url: str) -> tuple[str, int]:
+        parsed = urlparse(url)
+        host = parsed.hostname or url.split("//", 1)[-1].split("/")[0].split(":")[0]
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        return host, port

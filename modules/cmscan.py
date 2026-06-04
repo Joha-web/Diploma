@@ -10,6 +10,7 @@ Auto-detects CMS from techstack results, then runs the right scanner:
 import json
 import os
 import re
+import shlex
 from modules.base import BaseModule
 
 # wpscan -e value enumerating everything: all plugins/themes, timthumbs,
@@ -93,10 +94,16 @@ class CMSScanModule(BaseModule):
                 safe = re.sub(r"https?://|[/:]", "_", url)
                 raw  = self.module_dir / f"{cms_name.lower()}_{safe}.txt"
 
-                result = self.exec(cmd, timeout=600)
-                raw.write_text(result.stdout or "", encoding="utf-8")
+                # Stream tool stdout straight to the file. wpscan with full
+                # enumeration (ap,at) is slow and can outlast the timeout; exec()
+                # discards stdout on a timeout-kill, so a confirmed CMS finding
+                # would be lost. Reading the file keeps whatever was written.
+                shell_cmd = " ".join(shlex.quote(c) for c in cmd) + f" > {shlex.quote(str(raw))} 2>/dev/null"
+                self.exec(shell_cmd, timeout=int(cms_cfg.get("timeout", 600)), shell=True,
+                          label=f"{info['tool']} {url}")
+                output = raw.read_text(encoding="utf-8", errors="replace") if raw.exists() else ""
 
-                findings = self._parse(cms_name, info["tool"], result.stdout or "", url)
+                findings = self._parse(cms_name, info["tool"], output, url)
                 # Surface the missing-token limitation directly in the report.
                 if cms_name == "WordPress" and not wpscan_token:
                     findings.insert(0, self._no_token_finding())

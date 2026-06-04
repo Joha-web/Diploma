@@ -219,6 +219,14 @@ class EndpointHarvesterModule(BaseModule):
         return js[: int(cfg.get("max_js", 100))]
 
     # ── cariddi ─────────────────────────────────────────────────────────────────
+    # ── Timeout-safe tool runner ──────────────────────────────────────────────
+    def _exec_to_file(self, cmd: list[str], out_path: Path, timeout: int, label: str):
+        """Run a tool with stdout streamed to a file so a timeout-kill keeps
+        whatever it already produced (exec() drops stdout on a timeout)."""
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        shell_cmd = " ".join(shlex.quote(c) for c in cmd) + f" > {shlex.quote(str(out_path))} 2>/dev/null"
+        return self.exec(shell_cmd, timeout=timeout, shell=True, label=label)
+
     def _run_cariddi(self, seeds: list[str], cfg: dict) -> tuple[set[str], list, list, list]:
         self.info("cariddi crawl")
         seeds_file = self.module_dir / "cariddi" / "seeds.txt"
@@ -235,10 +243,12 @@ class EndpointHarvesterModule(BaseModule):
             args.append("-s")
         args += ["-e", "-info", "-juicy"]
 
-        cmd = f"cat {shlex.quote(str(seeds_file))} | " + " ".join(shlex.quote(a) for a in args)
-        r = self.exec(cmd, timeout=int(cfg.get("timeout", 300)), shell=True, label="cariddi")
-        lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
-        self.save_text(lines, "cariddi/output.jsonl")
+        # Stream cariddi's JSON output straight to the file so a long crawl that
+        # outlasts the timeout still yields whatever it already wrote.
+        cmd = (f"cat {shlex.quote(str(seeds_file))} | " + " ".join(shlex.quote(a) for a in args)
+               + f" > {shlex.quote(str(out))} 2>/dev/null")
+        self.exec(cmd, timeout=int(cfg.get("timeout", 300)), shell=True, label="cariddi")
+        lines = self.load_lines(out)
         return self._parse_cariddi(lines, redact=not cfg.get("retain_raw_secrets", False))
 
     def _parse_cariddi(self, lines: list[str], redact: bool = True) -> tuple[set[str], list, list, list]:
@@ -291,11 +301,11 @@ class EndpointHarvesterModule(BaseModule):
         self.info(f"LinkFinder over {len(js_urls)} JS bundle(s)")
         timeout = int(cfg.get("timeout", 300))
         found: set[str] = set()
-        for js in js_urls:
-            r = self.exec(lf_cmd + ["-i", js, "-o", "cli"],
-                          timeout=timeout, label=f"linkfinder {js}")
+        for index, js in enumerate(js_urls, start=1):
+            out = self.module_dir / "linkfinder" / f"run_{index:03d}.txt"
+            self._exec_to_file(lf_cmd + ["-i", js, "-o", "cli"], out, timeout, f"linkfinder {js}")
             base = f"{urlparse(js).scheme}://{urlparse(js).netloc}"
-            for line in r.stdout.splitlines():
+            for line in self.load_lines(out):
                 ep = line.strip()
                 # LinkFinder `-o cli` prints one endpoint per line; skip blanks,
                 # banner text (contains spaces) and comment markers.
@@ -359,9 +369,10 @@ class EndpointHarvesterModule(BaseModule):
         if cfg.get("kiterunner_max_routes"):
             args += ["-d", str(int(cfg["kiterunner_max_routes"]))]
 
-        r = self.exec(args, timeout=int(cfg.get("timeout", 600)), label="kiterunner")
+        out = self.module_dir / "kiterunner" / "scan.txt"
+        self._exec_to_file(args, out, int(cfg.get("timeout", 600)), "kiterunner")
         found: set[str] = set()
-        for line in r.stdout.splitlines():
+        for line in self.load_lines(out):
             for url in KR_LINE_RE.findall(line):
                 found.add(url)
         scoped = set(self.filter_in_scope_urls(found))

@@ -8,6 +8,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import requests
 
 from modules.base import BaseModule
+from modules.url_utils import redirect_host
 
 
 # Common redirect-parameter names — superset of PayloadsAllTheThings/Open Redirect.
@@ -152,21 +153,7 @@ class OpenRedirectProbeModule(BaseModule):
     def _location_is_attacker(cls, location: str) -> bool:
         return cls._redirect_host(location) == ATTACKER_HOST
 
-    @staticmethod
-    def _redirect_host(location: str) -> str:
-        """Resolve a redirect target's host the way a *browser* would, so the
-        common filter-bypass forms aren't missed: backslashes act as slashes,
-        leading slashes collapse (`////host` → `//host`), a missing-slash scheme
-        (`https:host`) still has a host, and `user@host` resolves to host.
-        """
-        loc = str(location or "").strip().replace("\\", "/")
-        # Strip an optional scheme and any run of leading slashes.
-        match = re.match(r"\s*(?:[a-z][a-z0-9+.\-]*:)?/*", loc, re.I)
-        rest = loc[match.end():]
-        host_part = re.split(r"[/?#]", rest, maxsplit=1)[0]
-        if "@" in host_part:                      # userinfo@host → take the host
-            host_part = host_part.rsplit("@", 1)[1]
-        return host_part.split(":", 1)[0].strip().strip(".").lower()
+    _redirect_host = staticmethod(redirect_host)  # browser-style host resolver (shared)
 
     def _body_redirect_to_attacker(self, body: str) -> tuple[str, str] | None:
         for rx, technique in ((META_REFRESH_RE, "meta_refresh"), (JS_REDIRECT_RE, "javascript_location")):

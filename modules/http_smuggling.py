@@ -71,6 +71,7 @@ class HTTPSmugglingModule(BaseModule):
                  live_hosts: list | None = None):
         super().__init__(target, output_dir, config)
         self.live_hosts = live_hosts or []
+        self._baseline_cache: dict[tuple[str, int], float | None] = {}
 
     def run(self) -> dict:
         cfg = self.config.get("scan", {}).get("http_smuggling", {})
@@ -102,31 +103,74 @@ class HTTPSmugglingModule(BaseModule):
         self.save_json(findings, "smuggling_findings.json")
         return {"findings": findings, "total": len(findings)}
 
+    # ── Differential-timing helpers ──────────────────────────────────────────
+    def _baseline(self, host: str, port: int, scheme: str, path: str, cfg: dict) -> float | None:
+        """Time a well-formed request to the same host so timing is judged
+        relative to normal latency — not against a fixed threshold a slow server
+        would always trip. Cached per host:port; min of two samples for stability.
+        """
+        key = (host, port)
+        if key in self._baseline_cache:
+            return self._baseline_cache[key]
+        benign = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            "Content-Type: application/x-www-form-urlencoded\r\n"
+            "Content-Length: 0\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+        )
+        samples = [self._raw_send(host, port, scheme, benign, cfg) for _ in range(2)]
+        samples = [s for s in samples if s is not None]
+        value = min(samples) if samples else None
+        self._baseline_cache[key] = value
+        return value
+
+    def _timing_desync(self, host: str, port: int, scheme: str, payload: str,
+                       baseline: float | None, cfg: dict) -> float | None:
+        """Return elapsed only if the malformed payload stalls *substantially
+        longer than baseline* (floor + delta), re-confirmed once to drop jitter."""
+        if baseline is None:
+            return None
+        floor = float(cfg.get("timing_threshold", 4.5))
+        delta = float(cfg.get("timing_delta", 3.0))
+        elapsed = self._raw_send(host, port, scheme, payload, cfg)
+        if elapsed is None or elapsed < floor or (elapsed - baseline) < delta:
+            return None
+        confirm = self._raw_send(host, port, scheme, payload, cfg)
+        if confirm is None or confirm < floor or (confirm - baseline) < delta:
+            return None  # one-off stall, not a consistent desync
+        return elapsed
+
     def _probe_cl_te(self, host: str, port: int, scheme: str, path: str,
                      url: str, cfg: dict) -> dict | None:
-        elapsed = self._raw_send(host, port, scheme, CL_TE_PAYLOAD.format(host=host, path=path), cfg)
-        if elapsed is not None and elapsed >= float(cfg.get("timing_threshold", 4.5)):
+        baseline = self._baseline(host, port, scheme, path, cfg)
+        elapsed = self._timing_desync(host, port, scheme,
+                                      CL_TE_PAYLOAD.format(host=host, path=path), baseline, cfg)
+        if elapsed is not None:
             return self._finding("http_smuggling_cl_te", "HIGH", url, {
-                "method": "CL.TE",
-                "elapsed": round(elapsed, 2),
-                "threshold": float(cfg.get("timing_threshold", 4.5)),
+                "method": "CL.TE", "elapsed": round(elapsed, 2),
+                "baseline": round(baseline, 2), "threshold": float(cfg.get("timing_threshold", 4.5)),
+                "delta_required": float(cfg.get("timing_delta", 3.0)),
             })
         return None
 
     def _probe_te_cl(self, host: str, port: int, scheme: str, path: str,
                      url: str, cfg: dict) -> dict | None:
-        elapsed = self._raw_send(host, port, scheme, TE_CL_PAYLOAD.format(host=host, path=path), cfg)
-        if elapsed is not None and elapsed >= float(cfg.get("timing_threshold", 4.5)):
+        baseline = self._baseline(host, port, scheme, path, cfg)
+        elapsed = self._timing_desync(host, port, scheme,
+                                      TE_CL_PAYLOAD.format(host=host, path=path), baseline, cfg)
+        if elapsed is not None:
             return self._finding("http_smuggling_te_cl", "HIGH", url, {
-                "method": "TE.CL",
-                "elapsed": round(elapsed, 2),
-                "threshold": float(cfg.get("timing_threshold", 4.5)),
+                "method": "TE.CL", "elapsed": round(elapsed, 2),
+                "baseline": round(baseline, 2), "threshold": float(cfg.get("timing_threshold", 4.5)),
+                "delta_required": float(cfg.get("timing_delta", 3.0)),
             })
         return None
 
     def _probe_te_te(self, host: str, port: int, scheme: str, path: str,
                      url: str, cfg: dict) -> dict | None:
-        threshold = float(cfg.get("timing_threshold", 4.5))
+        baseline = self._baseline(host, port, scheme, path, cfg)
         for headers in TE_TE_VARIANTS[: int(cfg.get("max_te_variants", len(TE_TE_VARIANTS)))]:
             header_blob = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
             payload = (
@@ -141,12 +185,12 @@ class HTTPSmugglingModule(BaseModule):
                 "\r\n"
                 "X"
             )
-            elapsed = self._raw_send(host, port, scheme, payload, cfg)
-            if elapsed is not None and elapsed >= threshold:
+            elapsed = self._timing_desync(host, port, scheme, payload, baseline, cfg)
+            if elapsed is not None:
                 return self._finding("http_smuggling_te_te", "HIGH", url, {
-                    "method": "TE.TE",
-                    "elapsed": round(elapsed, 2),
-                    "threshold": threshold,
+                    "method": "TE.TE", "elapsed": round(elapsed, 2),
+                    "baseline": round(baseline, 2), "threshold": float(cfg.get("timing_threshold", 4.5)),
+                    "delta_required": float(cfg.get("timing_delta", 3.0)),
                     "variant_headers": headers,
                 })
         return None

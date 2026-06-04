@@ -76,7 +76,6 @@ class CORSCheckerModule(BaseModule):
                 continue
 
             finding_type = ""
-            actual_severity = severity
 
             if acao == "*":
                 # Wildcard CORS: create a single MEDIUM finding and stop probing
@@ -117,8 +116,10 @@ class CORSCheckerModule(BaseModule):
 
             if not finding_type:
                 continue
-            if acac == "true" and actual_severity != "CRITICAL":
-                actual_severity = "CRITICAL"
+            # CRITICAL when credentials are allowed (cookies/auth readable
+            # cross-origin); otherwise MEDIUM — an attacker can only read data
+            # that is already public without credentials.
+            actual_severity = "CRITICAL" if acac == "true" else "MEDIUM"
 
             findings.append({
                 "source": self.name,
@@ -146,9 +147,10 @@ class CORSCheckerModule(BaseModule):
                 "confidence": 0.95,
             })
 
-            # One CRITICAL is sufficient proof — stop probing this URL
-            if actual_severity == "CRITICAL":
-                break
+            # One reflected/untrusted-origin finding per URL is enough — the
+            # remaining probes would only restate the same root cause (the server
+            # trusts an attacker-controlled Origin) and inflate the report.
+            break
 
         return self._dedup(findings)
 

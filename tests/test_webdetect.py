@@ -108,3 +108,54 @@ def test_collect_favicons_skips_non_200(tmp_path, monkeypatch):
     live = [{"url": "https://nofav.example.com"}]
     module._collect_favicons(live)
     assert "favicon_sha256" not in live[0]
+
+
+def test_run_httpx_parses_modern_underscore_json_keys(tmp_path, monkeypatch):
+    """Regression: recent httpx emits underscore keys (status_code/tech/host_ip).
+    The parser must read them, or every live host silently loses status + tech."""
+    import json as _json
+    import subprocess
+    module = WebdetectModule("example.com", str(tmp_path), {"scope": {"enforce": False}})
+    monkeypatch.setattr(module, "has_tool", lambda t: t == "httpx")
+    out = module.module_dir / "httpx_raw.jsonl"
+    rec = {"url": "https://example.com", "status_code": 200, "title": "Example",
+           "webserver": "cloudflare", "content_length": 528, "tech": ["Cloudflare"],
+           "host": "example.com", "host_ip": "172.66.0.1"}
+
+    def fake_exec(cmd, timeout=600, **k):
+        out.write_text(_json.dumps(rec) + "\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    cf = module.module_dir / "candidates.txt"
+    cf.write_text("https://example.com\n", encoding="utf-8")
+
+    live = module._run_httpx(cf)
+    assert len(live) == 1
+    h = live[0]
+    assert h["status"] == 200
+    assert h["technologies"] == ["Cloudflare"]
+    assert h["content_length"] == 528
+    assert h["ip"] == "172.66.0.1"          # host_ip, not the hostname
+
+
+def test_run_httpx_still_reads_legacy_hyphen_json_keys(tmp_path, monkeypatch):
+    import json as _json
+    import subprocess
+    module = WebdetectModule("example.com", str(tmp_path), {"scope": {"enforce": False}})
+    monkeypatch.setattr(module, "has_tool", lambda t: t == "httpx")
+    out = module.module_dir / "httpx_raw.jsonl"
+    rec = {"url": "https://example.com", "status-code": 200, "title": "Ex",
+           "webserver": "nginx", "content-length": 12, "technologies": ["nginx"],
+           "host": "example.com"}
+
+    def fake_exec(cmd, timeout=600, **k):
+        out.write_text(_json.dumps(rec) + "\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    cf = module.module_dir / "candidates.txt"
+    cf.write_text("https://example.com\n", encoding="utf-8")
+
+    h = module._run_httpx(cf)[0]
+    assert h["status"] == 200 and h["technologies"] == ["nginx"]

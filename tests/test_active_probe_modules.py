@@ -36,13 +36,35 @@ class Response:
 
 
 def test_http_smuggling_reports_timing_hit(tmp_path, monkeypatch):
+    """Malformed payload stalls (6s) far longer than the benign baseline (0.2s)
+    → flagged via differential timing."""
     module = HTTPSmugglingModule("example.com", str(tmp_path), {})
-    monkeypatch.setattr(module, "_raw_send", lambda *args, **kwargs: 5.0)
+    # benign baseline request has no Transfer-Encoding; the CL.TE payload does.
+    monkeypatch.setattr(module, "_raw_send",
+                        lambda host, port, scheme, payload, cfg: 6.0 if "Transfer-Encoding" in payload else 0.2)
 
     finding = module._probe_cl_te("example.com", 443, "https", "/", "https://example.com", {})
 
     assert finding["id"] == "http_smuggling_cl_te"
     assert finding["severity"] == "HIGH"
+    assert finding["evidence"]["baseline"] == 0.2
+
+
+def test_http_smuggling_no_false_positive_on_uniformly_slow_server(tmp_path, monkeypatch):
+    """A slow server where EVERY request (baseline included) takes 6s must NOT be
+    flagged — the old absolute 4.5s threshold falsely did."""
+    module = HTTPSmugglingModule("example.com", str(tmp_path), {})
+    monkeypatch.setattr(module, "_raw_send", lambda *a, **k: 6.0)
+
+    finding = module._probe_cl_te("example.com", 443, "https", "/", "https://example.com", {})
+
+    assert finding is None
+
+
+def test_http_smuggling_no_finding_without_stall(tmp_path, monkeypatch):
+    module = HTTPSmugglingModule("example.com", str(tmp_path), {})
+    monkeypatch.setattr(module, "_raw_send", lambda *a, **k: 0.3)  # below the floor
+    assert module._probe_cl_te("example.com", 443, "https", "/", "https://example.com", {}) is None
 
 
 def test_oauth_oidc_config_flags_weak_settings(tmp_path):
@@ -705,3 +727,26 @@ def test_open_redirect_browser_style_bypass_parsing():
     assert O._location_is_attacker("//attacker.reconx.invalid\\@example.com/")  # backslash @-bypass
     # Lookalike domain must NOT match.
     assert not O._location_is_attacker("https://attacker.reconx.invalid.evil.com/")
+
+
+def test_oauth_open_redirect_browser_style_bypass():
+    """oauth_probe shares the browser-style redirect-host resolver, so reflected
+    filter-bypass forms aren't missed (regression for the urlparse host bug)."""
+    O = OAuthProbeModule
+    assert O._location_is_attacker("////attacker.reconx.invalid/cb")          # multi-slash
+    assert O._location_is_attacker("https:attacker.reconx.invalid/cb")        # missing slashes
+    assert O._location_is_attacker("//attacker.reconx.invalid\\@example.com/cb")  # backslash @-bypass
+    assert O._location_is_attacker("https://example.com.attacker.reconx.invalid/cb")  # subdomain
+    assert not O._location_is_attacker("https://attacker.reconx.invalid.evil.com/cb")  # lookalike
+    assert not O._location_is_attacker("https://example.com/cb")
+
+
+def test_api_schema_audit_broad_schema_precision(tmp_path):
+    """Overly-broad-schema detection must flag unrestricted objects but NOT a
+    typed map or a closed (additionalProperties:false) object."""
+    m = APISchemaAuditModule("example.com", str(tmp_path), {})
+    assert m._find_broad_schema({"type": "object", "additionalProperties": True})        # arbitrary → broad
+    assert m._find_broad_schema({"type": "object"})                                       # unconstrained → broad
+    assert m._find_broad_schema({"type": "object", "additionalProperties": {"type": "string"}}) == ""  # typed map
+    assert m._find_broad_schema({"type": "object", "additionalProperties": False}) == ""  # closed object
+    assert m._find_broad_schema({"type": "object", "properties": {"id": {"type": "integer"}}}) == ""   # has props

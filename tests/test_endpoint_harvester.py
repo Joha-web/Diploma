@@ -66,12 +66,24 @@ def test_parse_cariddi_extracts_endpoints_secrets_params(tmp_path):
     assert params[0]["param"] == "token"
 
 
+def _exec_writing(content: str):
+    """Fake exec for the streaming tools: write `content` to the shell-redirect
+    target ('… > <path> 2>/dev/null') and return an empty (timeout-style) result."""
+    import os
+
+    def fake(cmd, timeout=300, shell=False, label=None, **k):
+        path = cmd.split("> ", 1)[1].rsplit(" 2>/dev/null", 1)[0].strip().strip("'")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(content)
+        return subprocess.CompletedProcess(cmd, 1, "", "timeout")
+    return fake
+
+
 def test_run_linkfinder_resolves_relative_endpoints(tmp_path, monkeypatch):
     module = _module(tmp_path, fuzzer_results={"js_urls": ["https://example.com/static/app.js"]})
-    monkeypatch.setattr(
-        module, "exec",
-        lambda *a, **k: _proc("/api/v2/orders\nhttps://example.com/api/v2/items\n#invalid line!"),
-    )
+    monkeypatch.setattr(module, "exec",
+                        _exec_writing("/api/v2/orders\nhttps://example.com/api/v2/items\n#invalid line!"))
     found = module._run_linkfinder(["linkfinder"], module.module_config())
 
     assert "https://example.com/api/v2/orders" in found      # relative resolved
@@ -85,7 +97,7 @@ def test_run_kiterunner_parses_route_urls(tmp_path, monkeypatch):
         "POST    401 [     12,    3,    1] https://example.com/api/internal abcd\n"
         "garbage line with no url\n"
     )
-    monkeypatch.setattr(module, "exec", lambda *a, **k: _proc(output))
+    monkeypatch.setattr(module, "exec", _exec_writing(output))
     found = module._run_kiterunner("kr", module.module_config())
 
     assert "https://example.com/api/admin" in found
