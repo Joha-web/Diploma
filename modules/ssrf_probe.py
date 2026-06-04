@@ -20,11 +20,15 @@ Two layers:
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
+import shutil
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse, urlunparse
 
 from modules.active_probe_base import ActiveProbeBase
+from modules.base import REPO_ROOT
 
 # ── SSRF-likelihood signals ───────────────────────────────────────────────────
 SSRF_HIGH_PARAMS = frozenset({
@@ -248,14 +252,45 @@ class SSRFProbeModule(ActiveProbeBase):
         )
 
     # ── SSRFmap ─────────────────────────────────────────────────────────────────
+    def _exec_to_file(self, cmd: list[str], out_path: Path, timeout: int, label: str):
+        """Run SSRFmap with output streamed to a file via the shell so a
+        timeout-kill keeps any hit it already printed (exec() drops stdout on
+        timeout)."""
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        shell_cmd = " ".join(shlex.quote(c) for c in cmd) + f" > {shlex.quote(str(out_path))} 2>&1"
+        return self.exec(shell_cmd, timeout=timeout, shell=True, label=label)
+
+    @staticmethod
+    def _read_tool_output(out_path: Path) -> str:
+        try:
+            return out_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
     def _ssrfmap_command(self, cfg: dict) -> list[str] | None:
         if self.has_tool("ssrfmap"):
             return ["ssrfmap"]
         for path in [str(cfg.get("ssrfmap_path", "")).strip(),
                      "/opt/SSRFmap/ssrfmap.py", "/usr/share/SSRFmap/ssrfmap.py"]:
             if path and Path(path).exists():
-                return ["python3", path]
+                return ["python3", str(self._ensure_writable_tool(Path(path)))]
         return None
+
+    @staticmethod
+    def _ensure_writable_tool(script: Path) -> Path:
+        """SSRFmap chdirs into its own directory and writes its log + per-host
+        output there, so that directory must be writable. When it's installed
+        read-only (e.g. cloned into /opt as root), run from a one-time writable
+        copy under the repo tool cache instead — so the scan works without sudo.
+        """
+        if os.access(script.parent, os.W_OK):
+            return script
+        cache_dir = REPO_ROOT / ".tools" / "cache" / script.parent.name
+        target = cache_dir / script.name
+        if not target.exists():
+            cache_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(script.parent, cache_dir, dirs_exist_ok=True)
+        return target
 
     def _run_ssrfmap(self, base_cmd: list[str], cand: dict, cfg: dict, index: int) -> tuple[list[dict], dict]:
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{cand['path']}_{cand['param']}").strip("_")[:120]
@@ -274,10 +309,12 @@ class SSRFProbeModule(ActiveProbeBase):
                 cmd.append(arg.strip())
 
         timeout = int(cfg.get("ssrfmap_timeout", cfg.get("timeout", 600)))
-        result = self.exec(cmd, timeout=timeout, label=f"ssrfmap {cand['param']}@{cand['path']}")
-        output = ANSI_RE.sub("", "\n".join(p for p in (result.stdout, result.stderr) if p))
         out_file = f"ssrfmap/run_{index:03d}.txt"
-        self.save_text(output, out_file)
+        out_path = self.module_dir / out_file
+        # Stream to disk so a timeout-kill keeps any hit SSRFmap already printed
+        # (portscan/cloud modules are slow; exec() drops stdout on timeout).
+        result = self._exec_to_file(cmd, out_path, timeout, f"ssrfmap {cand['param']}@{cand['path']}")
+        output = ANSI_RE.sub("", self._read_tool_output(out_path))
         findings = self._parse_ssrfmap(output, cand, modules, out_file, index)
         return findings, {
             "url": cand["url"], "param": cand["param"], "modules": modules,

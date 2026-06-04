@@ -134,13 +134,81 @@ def test_run_ssrfmap_invokes_tool_and_parses(tmp_path, monkeypatch):
     captured = {}
 
     def fake_exec(cmd, timeout=600, label=None, **kw):
+        # SSRFmap now streams to a file (shell redirect); mirror that.
         captured["cmd"] = cmd
-        return subprocess.CompletedProcess(cmd, 0, "port 6379 is open\n", "")
+        out = module.module_dir / "ssrfmap" / "run_001.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("port 6379 is open\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(module, "exec", fake_exec)
     result = module.run()
 
-    assert "-p" in captured["cmd"] and captured["cmd"][captured["cmd"].index("-p") + 1] == "url"
-    assert "-m" in captured["cmd"]
+    assert isinstance(captured["cmd"], str)        # shell-redirected command
+    assert "-p url" in captured["cmd"]
+    assert "-m " in captured["cmd"]
     assert any(f["id"] == "ssrfmap_confirmed" for f in result["findings"])
     assert result["ssrfmap_used"] is True
+
+
+def test_run_ssrfmap_reads_hit_from_streamed_file(tmp_path, monkeypatch):
+    """A timed-out SSRFmap yields no exec stdout, but a hit it already streamed
+    to disk must still be parsed into a confirmed finding."""
+    module = SSRFProbeModule("example.com", str(tmp_path), {"scope": {"enforce": False}})
+    cand = {"url": "https://example.com/fetch?url=http://internal", "param": "url",
+            "method": "GET", "path": "/fetch", "score": 0.9, "reasons": ["value is a URL"]}
+
+    def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        out = module.module_dir / "ssrfmap" / "run_001.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("[+] Port 80 is open\n[+] The server is responsive\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 1, "", "timeout")  # simulate timeout-kill
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    findings, run = module._run_ssrfmap(["python3", "/opt/SSRFmap/ssrfmap.py"], cand, {}, 1)
+
+    assert len(findings) == 1
+    assert findings[0]["id"] == "ssrfmap_confirmed"
+    assert findings[0]["severity"] == "HIGH"
+    assert run["findings"] == 1
+
+
+def test_run_ssrfmap_streams_via_shell_with_correct_flags(tmp_path, monkeypatch):
+    module = SSRFProbeModule("example.com", str(tmp_path), {"scope": {"enforce": False}})
+    cand = {"url": "https://example.com/fetch?url=http://x", "param": "url",
+            "method": "GET", "path": "/fetch", "score": 0.9, "reasons": []}
+    captured = {}
+
+    def fake_exec(cmd, timeout=300, capture=True, shell=False, label=None):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    module._run_ssrfmap(["python3", "/opt/SSRFmap/ssrfmap.py"], cand, {}, 1)
+    assert isinstance(captured["cmd"], str)        # shell-redirected string
+    assert "-p url" in captured["cmd"]
+    assert "-m " in captured["cmd"]
+
+
+def test_ensure_writable_tool_keeps_writable_path(tmp_path):
+    script = tmp_path / "ssrfmap.py"
+    script.write_text("print(1)", encoding="utf-8")
+    assert SSRFProbeModule._ensure_writable_tool(script) == script
+
+
+def test_ensure_writable_tool_copies_when_install_readonly(tmp_path, monkeypatch):
+    # Simulate a read-only install (e.g. /opt cloned as root): the tool must be
+    # copied to a writable cache so SSRFmap can write its log/output there.
+    src = tmp_path / "SSRFmap"
+    src.mkdir()
+    (src / "ssrfmap.py").write_text("print(1)", encoding="utf-8")
+    (src / "core").mkdir()
+    monkeypatch.setattr("modules.ssrf_probe.os.access", lambda p, mode: False)
+    monkeypatch.setattr("modules.ssrf_probe.REPO_ROOT", tmp_path / "repo")
+
+    out = SSRFProbeModule._ensure_writable_tool(src / "ssrfmap.py")
+
+    assert out != src / "ssrfmap.py"
+    assert out.exists()
+    assert out == tmp_path / "repo" / ".tools" / "cache" / "SSRFmap" / "ssrfmap.py"
+    assert (out.parent / "core").is_dir()  # whole tree copied

@@ -198,6 +198,20 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════
+# 3e. Hand /opt tool clones to the invoking user.
+# When install.sh runs under sudo, these are root-owned. SSRFmap in
+# particular chdirs into its own dir and writes a log/output there, so it
+# fails for a non-root scan. Chown them to the real user.
+# ═════════════════════════════════════════════════════════════
+REAL_USER="${SUDO_USER:-$(id -un)}"
+if [[ -n "$REAL_USER" && "$REAL_USER" != "root" ]]; then
+    for d in /opt/SSRFmap /opt/XSStrike /opt/LinkFinder; do
+        [[ -d "$d" ]] && chown -R "$REAL_USER" "$d" 2>/dev/null \
+            && success "Owned $d → $REAL_USER" || true
+    done
+fi
+
+# ═════════════════════════════════════════════════════════════
 # 4. Nuclei templates
 # ═════════════════════════════════════════════════════════════
 if command -v nuclei &>/dev/null; then
