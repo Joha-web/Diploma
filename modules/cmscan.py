@@ -93,17 +93,33 @@ class CMSScanModule(BaseModule):
                 cmd  = info["build"](url, cms_cfg)
                 safe = re.sub(r"https?://|[/:]", "_", url)
                 raw  = self.module_dir / f"{cms_name.lower()}_{safe}.txt"
+                err  = self.module_dir / f"{cms_name.lower()}_{safe}.err"
 
                 # Stream tool stdout straight to the file. wpscan with full
                 # enumeration (ap,at) is slow and can outlast the timeout; exec()
                 # discards stdout on a timeout-kill, so a confirmed CMS finding
                 # would be lost. Reading the file keeps whatever was written.
-                shell_cmd = " ".join(shlex.quote(c) for c in cmd) + f" > {shlex.quote(str(raw))} 2>/dev/null"
+                # stderr goes to a sidecar (not /dev/null) so the JSON stays
+                # parseable but a tool failure is not silently swallowed.
+                shell_cmd = (" ".join(shlex.quote(c) for c in cmd)
+                             + f" > {shlex.quote(str(raw))} 2> {shlex.quote(str(err))}")
                 self.exec(shell_cmd, timeout=int(cms_cfg.get("timeout", 600)), shell=True,
                           label=f"{info['tool']} {url}")
-                output = raw.read_text(encoding="utf-8", errors="replace") if raw.exists() else ""
+                output  = raw.read_text(encoding="utf-8", errors="replace") if raw.exists() else ""
+                errtext = err.read_text(encoding="utf-8", errors="replace") if err.exists() else ""
 
-                findings = self._parse(cms_name, info["tool"], output, url)
+                # No stdout is a likely failure (target down, tool error, killed
+                # before any output) rather than a clean "nothing found" — say so,
+                # and let keyword-based tools still salvage findings from stderr.
+                parse_input = output
+                if not output.strip():
+                    snippet = " ".join(errtext.split())[:300]
+                    self.warn(f"  {info['tool']} produced no stdout for {url}"
+                              + (f": {snippet}" if snippet else ""))
+                    if info["tool"] != "wpscan":
+                        parse_input = errtext
+
+                findings = self._parse(cms_name, info["tool"], parse_input, url)
                 # Surface the missing-token limitation directly in the report.
                 if cms_name == "WordPress" and not wpscan_token:
                     findings.insert(0, self._no_token_finding())
@@ -152,7 +168,7 @@ class CMSScanModule(BaseModule):
         found: dict[str, list[str]] = {}
         for h in self.tech_results.get("hosts", []):
             url = h.get("url", "")
-            if url and not self.is_in_scope(url):
+            if not url or not self.is_in_scope(url):
                 continue
             for t in h.get("technologies", []):
                 name = t.get("name", "")
@@ -167,7 +183,7 @@ class CMSScanModule(BaseModule):
         for entry in self.tech_results.get("cms_detected", []):
             name = entry.get("name", "")
             url  = entry.get("url", "")
-            if url and not self.is_in_scope(url):
+            if not url or not self.is_in_scope(url):
                 continue
             for known in CMS_SCANNERS:
                 if known.lower() in name.lower():
@@ -196,55 +212,92 @@ class CMSScanModule(BaseModule):
         return self._parse_generic(output)
 
     def _parse_wpscan(self, output: str) -> list[dict]:
-        findings: list[dict] = []
-        # Try JSON parse first (--format json)
+        # wpscan --format json emits a single JSON object on stdout. If that
+        # fails to parse (banner text, a fatal error, or a partial write after a
+        # timeout-kill) fall back to keyword scraping rather than losing it.
         try:
             data = json.loads(output)
-
-            # Vulnerable plugins
-            for name, info in data.get("plugins", {}).items():
-                for v in info.get("vulnerabilities", []):
-                    findings.append({
-                        "type":     "vulnerable_plugin",
-                        "severity": self._cvss_severity(v.get("cvss", {})),
-                        "name":     name,
-                        "title":    v.get("title", ""),
-                        "cve":      v.get("references", {}).get("cve", []),
-                    })
-
-            # Vulnerable themes
-            for name, info in data.get("themes", {}).items():
-                for v in info.get("vulnerabilities", []):
-                    findings.append({
-                        "type":     "vulnerable_theme",
-                        "severity": "MEDIUM",
-                        "name":     name,
-                        "title":    v.get("title", ""),
-                    })
-
-            # Outdated WordPress core
-            version = data.get("version", {})
-            if version.get("status") == "insecure":
-                findings.append({
-                    "type":     "outdated_core",
-                    "severity": "HIGH",
-                    "name":     "WordPress core",
-                    "title":    f"Outdated version: {version.get('number', '?')}",
-                })
-
-            # Users
-            for uid, info in data.get("users", {}).items():
-                findings.append({
-                    "type":     "user_enumerated",
-                    "severity": "LOW",
-                    "name":     info.get("username", uid),
-                    "title":    "User enumerated",
-                })
-
-        except (json.JSONDecodeError, Exception):
+        except json.JSONDecodeError:
+            return self._parse_generic(output)
+        if not isinstance(data, dict):
             return self._parse_generic(output)
 
+        findings: list[dict] = []
+
+        # WordPress core — outdated status and any core CVEs.
+        version = data.get("version") or {}
+        if isinstance(version, dict):
+            number = version.get("number", "?")
+            if version.get("status") == "insecure":
+                findings.append({
+                    "type": "outdated_core", "severity": "HIGH",
+                    "name": "WordPress core",
+                    "title": f"Outdated version: {number}",
+                    "detail": f"WordPress core {number} is flagged insecure by wpscan.",
+                })
+            for v in version.get("vulnerabilities") or []:
+                findings.append(self._wpscan_vuln("vulnerable_core", "WordPress core", v, floor="HIGH"))
+
+        # Vulnerable plugins.
+        for name, info in (data.get("plugins") or {}).items():
+            for v in (info or {}).get("vulnerabilities") or []:
+                findings.append(self._wpscan_vuln("vulnerable_plugin", name, v, floor="MEDIUM"))
+
+        # Vulnerable themes, including the active main theme (a separate key).
+        themes = dict(data.get("themes") or {})
+        main_theme = data.get("main_theme")
+        if isinstance(main_theme, dict):
+            key = main_theme.get("slug") or main_theme.get("style_name") or "main_theme"
+            themes.setdefault(key, main_theme)
+        for name, info in themes.items():
+            for v in (info or {}).get("vulnerabilities") or []:
+                findings.append(self._wpscan_vuln("vulnerable_theme", name, v, floor="MEDIUM"))
+
+        # Enumerated users.
+        for uid, info in (data.get("users") or {}).items():
+            username = (info or {}).get("username", uid)
+            findings.append({
+                "type": "user_enumerated", "severity": "LOW",
+                "name": username, "title": "User enumerated",
+                "detail": f"wpscan enumerated WordPress user '{username}'.",
+            })
+
+        # Interesting findings — config backups, db exports, debug.log, readme,
+        # etc. surfaced by the cb,dbe enumeration set we request.
+        for item in data.get("interesting_findings") or []:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type", "interesting_finding")
+            label = item.get("to_s") or item.get("url") or itype
+            entries = item.get("interesting_entries") or []
+            findings.append({
+                "type": f"interesting_{itype}", "severity": "LOW",
+                "name": itype, "title": f"Interesting finding: {label}",
+                "detail": "; ".join(str(e) for e in entries) or str(label),
+            })
+
         return findings
+
+    def _wpscan_vuln(self, ftype: str, name: str, v, floor: str) -> dict:
+        """Normalise a single wpscan vulnerability record into a finding.
+
+        Severity is driven by the embedded CVSS score when present; otherwise it
+        falls back to a per-type floor (core CVEs default HIGH, plugin/theme
+        MEDIUM) so a missing score never silently downgrades a real CVE to LOW.
+        """
+        v = v if isinstance(v, dict) else {}
+        refs = v.get("references") or {}
+        cve = [c if str(c).upper().startswith("CVE-") else f"CVE-{c}"
+               for c in (refs.get("cve") or [])]
+        cvss = v.get("cvss")
+        score = cvss.get("score") if isinstance(cvss, dict) else None
+        severity = self._cvss_severity(cvss) if score else floor
+        title = v.get("title", "")
+        return {
+            "type": ftype, "severity": severity, "name": name,
+            "title": title, "cve": cve,
+            "detail": title + (f" (refs: {', '.join(cve)})" if cve else ""),
+        }
 
     def _parse_generic(self, output: str) -> list[dict]:
         findings: list[dict] = []

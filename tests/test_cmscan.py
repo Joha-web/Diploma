@@ -1,3 +1,5 @@
+import json
+
 from modules.cmscan import CMS_SCANNERS, CMSScanModule
 
 
@@ -115,9 +117,9 @@ def test_cmscan_reads_findings_from_streamed_file_on_timeout(tmp_path, monkeypat
     wp_json = '{"version": {"number": "4.0", "status": "insecure"}}'
 
     def fake_exec(cmd, timeout=600, shell=False, label=None, **k):
-        # cmd is the shell string "... > <path> 2>/dev/null" — write to that path,
-        # then return a timeout-like result with NO stdout.
-        path = cmd.split("> ", 1)[1].rsplit(" 2>/dev/null", 1)[0].strip().strip("'")
+        # cmd is the shell string "... > <stdout> 2> <stderr>" — write to the
+        # stdout path, then return a timeout-like result with NO stdout.
+        path = cmd.split("> ", 1)[1].split(" 2> ", 1)[0].strip().strip("'")
         with open(path, "w") as fh:
             fh.write(wp_json)
         return subprocess.CompletedProcess(cmd, 1, "", "timeout")
@@ -127,3 +129,69 @@ def test_cmscan_reads_findings_from_streamed_file_on_timeout(tmp_path, monkeypat
 
     types = {f.get("type") for s in result["scans"] for f in s["findings"]}
     assert "outdated_core" in types   # parsed from the streamed file despite the timeout
+
+
+def test_wpscan_parses_core_theme_and_interesting_findings(tmp_path):
+    module = CMSScanModule("example.com", str(tmp_path), {}, tech_results={})
+    wp_json = json.dumps({
+        "version": {
+            "number": "5.1", "status": "insecure",
+            "vulnerabilities": [{
+                "title": "Core RCE",
+                "references": {"cve": ["2019-1234"]},
+                "cvss": {"score": 9.8},
+            }],
+        },
+        "plugins": {
+            "contact-form-7": {"version": {"number": "1.0"}, "vulnerabilities": [{
+                "title": "CF7 XSS",
+                "references": {"cve": ["CVE-2020-9999"]},
+                "cvss": {"score": 6.1},
+            }]},
+        },
+        "main_theme": {"slug": "twentytwenty", "vulnerabilities": [{
+            "title": "Theme SQLi", "references": {"cve": ["2021-1111"]},
+        }]},
+        "interesting_findings": [{
+            "type": "db_export", "to_s": "https://example.com/wp-content/db.sql",
+            "interesting_entries": ["https://example.com/wp-content/db.sql"],
+        }],
+        "users": {"1": {"username": "admin"}},
+    })
+    findings = module._parse_wpscan(wp_json)
+    by_type = {f["type"]: f for f in findings}
+
+    # Core CVE is captured (previously only outdated_core status was) and rated
+    # from its CVSS score.
+    assert by_type["vulnerable_core"]["severity"] == "CRITICAL"
+    assert by_type["vulnerable_core"]["cve"] == ["CVE-2019-1234"]
+    # Plugin severity comes from CVSS (6.1 -> MEDIUM), CVE normalised.
+    assert by_type["vulnerable_plugin"]["severity"] == "MEDIUM"
+    assert by_type["vulnerable_plugin"]["cve"] == ["CVE-2020-9999"]
+    # The active main theme is scanned even though it lives under its own key;
+    # no CVSS -> falls back to the MEDIUM floor (not silently LOW).
+    assert by_type["vulnerable_theme"]["severity"] == "MEDIUM"
+    assert by_type["vulnerable_theme"]["cve"] == ["CVE-2021-1111"]
+    # interesting_findings (db export from the dbe enumeration) surfaces.
+    assert "interesting_db_export" in by_type
+    assert "outdated_core" in by_type
+    assert "user_enumerated" in by_type
+
+
+def test_wpscan_malformed_json_falls_back_to_generic(tmp_path):
+    module = CMSScanModule("example.com", str(tmp_path), {}, tech_results={})
+    # Not JSON, but contains keyword-scrapable content (e.g. partial output).
+    findings = module._parse_wpscan("[!] Found CVE-2017-1000 in core\nrandom banner")
+    assert any("CVE-2017-1000" in f.get("title", "") for f in findings)
+
+
+def test_detect_cms_skips_entries_without_url(tmp_path):
+    module = CMSScanModule(
+        "example.com", str(tmp_path),
+        {}, tech_results={
+            "hosts": [{"url": "", "technologies": [{"name": "WordPress"}]}],
+            "cms_detected": [{"name": "Joomla", "url": ""}],
+        },
+    )
+    # Empty URLs must not slip through (would launch a scanner against --url "").
+    assert module._detect_cms() == {}
