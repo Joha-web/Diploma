@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 from modules.base import BaseModule
+from modules.url_utils import same_site
 
 
 try:  # Optional dep — installed via `pip install playwright && playwright install chromium`
@@ -213,18 +214,9 @@ class SPACrawlerModule(BaseModule):
 
         return endpoints, routes
 
-    @staticmethod
-    def _same_site(req_host: str, target_host: str) -> bool:
-        """True only for the exact host or a proper subdomain of it.
-
-        A bare endswith() would match notexample.com against example.com, and
-        endswith("") matches everything — both pull third-party hosts in.
-        """
-        if not req_host or not target_host:
-            return False
-        req_host = req_host.lower()
-        target_host = target_host.lower()
-        return req_host == target_host or req_host.endswith("." + target_host)
+    # Host-scope check (exact host or proper subdomain) lives in url_utils so
+    # crawlers/probes share one correct copy.
+    _same_site = staticmethod(same_site)
 
     # ── Input URLs ────────────────────────────────────────────────────────────
 

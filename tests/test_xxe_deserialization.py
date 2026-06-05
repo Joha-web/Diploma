@@ -94,6 +94,62 @@ def test_dedup_collapses_repeats(tmp_path):
     assert len(module._dedup([f, dict(f)])) == 1
 
 
+def _resp(text="", cookies=()):
+    cookie_objs = [SimpleNamespace(name=n, value=v) for n, v in cookies]
+    return SimpleNamespace(text=text, status_code=200, cookies=cookie_objs)
+
+
+def test_serialized_object_in_cookie(tmp_path):
+    module = DeserializationProbeModule("example.com", str(tmp_path), {})
+    module.http_get = lambda *a, **k: _resp(
+        cookies=[("sess", "rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA==")])
+    findings = module._inspect_url("https://example.com/", session=None, cfg={})
+    hit = next(f for f in findings if f["id"] == "serialized_object_in_cookie")
+    assert hit["evidence"]["cookie"] == "sess"
+    assert hit["evidence"]["marker"] == "java_serialized_base64"
+
+
+def test_url_encoded_php_cookie_is_decoded(tmp_path):
+    module = DeserializationProbeModule("example.com", str(tmp_path), {})
+    # PHP serialized object, percent-encoded as it would appear in Set-Cookie.
+    module.http_get = lambda *a, **k: _resp(
+        cookies=[("data", "O%3A8%3A%22stdClass%22%3A0%3A%7B%7D")])
+    findings = module._inspect_url("https://example.com/", session=None, cfg={})
+    hit = next(f for f in findings if f["id"] == "serialized_object_in_cookie")
+    assert hit["evidence"]["marker"] == "php_serialized"
+
+
+def test_distinct_cookies_not_collapsed_by_dedup(tmp_path):
+    module = DeserializationProbeModule("example.com", str(tmp_path), {})
+    module.http_get = lambda *a, **k: _resp(cookies=[
+        ("a", "rO0ABXNyAAAA"), ("b", "rO0ABXNyBBBB")])
+    findings = module._inspect_url("https://example.com/", session=None, cfg={})
+    cookie_hits = [f for f in findings if f["id"] == "serialized_object_in_cookie"]
+    assert {f["evidence"]["cookie"] for f in cookie_hits} == {"a", "b"}
+
+
+def test_serialized_object_in_hidden_field(tmp_path):
+    module = DeserializationProbeModule("example.com", str(tmp_path), {})
+    body = ('<form><input name="payload" type="hidden" '
+            'value="rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA=="></form>')
+    module.http_get = lambda *a, **k: _resp(text=body)
+    findings = module._inspect_url("https://example.com/f", session=None, cfg={})
+    hit = next(f for f in findings if f["id"] == "serialized_object_in_hidden_field")
+    assert hit["evidence"]["field"] == "payload"
+    assert hit["evidence"]["marker"] == "java_serialized_base64"
+
+
+def test_hidden_field_scan_skips_aspnet_state_fields(tmp_path):
+    """__VIEWSTATE is reported once (as ViewState), not also as a hidden field."""
+    module = DeserializationProbeModule("example.com", str(tmp_path), {})
+    body = '<input type="hidden" name="__VIEWSTATE" value="/wEPDwUKLTEx...">'
+    module.http_get = lambda *a, **k: _resp(text=body)
+    findings = module._inspect_url("https://example.com/p", session=None, cfg={})
+    ids = [f["id"] for f in findings]
+    assert "aspnet_viewstate_detected" in ids
+    assert "serialized_object_in_hidden_field" not in ids
+
+
 # --------------------------------------------------------------------------- #
 # xxe_probe
 # --------------------------------------------------------------------------- #

@@ -2,9 +2,8 @@
 ReconX - Module: unsafe deserialization indicators.
 """
 
-import base64
 import re
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 import requests
 
@@ -13,6 +12,15 @@ from modules.base import BaseModule
 
 JAVA_MAGIC = "rO0AB"
 DOTNET_VIEWSTATE_RE = re.compile(r'name=["\']__VIEWSTATE["\'][^>]*value=["\']([^"\']+)', re.I)
+# Generic hidden-input scanning: grab each <input> tag, then its attributes in
+# any order (serialized blobs are quoted because they contain reserved chars).
+_INPUT_TAG_RE = re.compile(r"<input\b[^>]*>", re.I)
+_ATTR_RE = re.compile(r'([\w:-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\')')
+# ASP.NET state fields handled by the dedicated ViewState check below — don't
+# also report them via the generic hidden-field scan.
+ASP_NET_STATE_FIELDS = {
+    "__viewstate", "__viewstategenerator", "__eventvalidation", "__viewstateencrypted",
+}
 # PHP serialize signatures: object O:N:"ClassName":..., array a:N:{}, string s:N:"..."
 PHP_SERIALIZE_RE = re.compile(r'^(?:O:\d+:"|a:\d+:\{|s:\d+:")')
 # Ruby Marshal binary header: \x04\x08 followed by Marshal type byte.
@@ -89,6 +97,11 @@ class DeserializationProbeModule(BaseModule):
         resp = self.http_get(url, session=session, timeout=float(cfg.get("timeout", 10)), verify=False)
         if resp is None:
             return findings
+
+        # Cookies are the most common carrier of serialized objects (Java/PHP
+        # session state, Rails Marshal, .NET auth tickets) — scan them.
+        self._scan_cookies(resp, url, findings)
+
         body = resp.text or ""
         viewstate = DOTNET_VIEWSTATE_RE.search(body)
         if viewstate:
@@ -97,6 +110,11 @@ class DeserializationProbeModule(BaseModule):
             if value.startswith("/wE"):
                 evidence["format"] = "ASP.NET LosFormatter"
             findings.append(self._finding("aspnet_viewstate_detected", "INFO", url, "ASP.NET ViewState detected", evidence))
+
+        # Hidden form fields can carry serialized blobs the app deserializes on
+        # POST (beyond the ASP.NET __VIEWSTATE handled above).
+        self._scan_hidden_fields(body, url, findings)
+
         for signature in ERROR_SIGNATURES:
             if signature.lower() in body.lower():
                 findings.append(self._finding("deserialization_error_signature", "MEDIUM", url, "Deserialization error signature exposed", {
@@ -109,16 +127,11 @@ class DeserializationProbeModule(BaseModule):
     @staticmethod
     def _serialized_marker(value: str) -> str:
         value = str(value or "")
-        # Java — base64-encoded ObjectOutputStream
+        # Java — base64-encoded ObjectOutputStream. Java serialized data always
+        # begins with the magic AC ED 00 05, which base64-encodes to "rO0AB", so
+        # this prefix covers every base64 Java blob (URL-safe or standard).
         if value.startswith(JAVA_MAGIC):
             return "java_serialized_base64"
-        # Java — raw binary in URL-decoded form (rare)
-        try:
-            decoded = base64.b64decode(value[:128] + "==", validate=False)
-            if decoded.startswith(b"\xac\xed\x00\x05"):
-                return "java_serialized_binary"
-        except Exception:
-            pass
         # Python pickle — common base64-encoded markers + bare cos\n header
         if value.startswith(("gAS", "gAJ", "gAR", "cos\n", "c__builtin__", "ccopy_reg")):
             return "python_pickle"
@@ -138,6 +151,45 @@ class DeserializationProbeModule(BaseModule):
         if NODE_SERIALIZE_MARK in value:
             return "node_serialize_function"
         return ""
+
+    def _scan_cookies(self, resp, url: str, findings: list) -> None:
+        try:
+            cookies = list(resp.cookies)
+        except Exception:
+            return
+        for cookie in cookies:
+            raw = getattr(cookie, "value", "") or ""
+            # Try the raw value and its URL-decoded form (serialized cookies are
+            # frequently percent-encoded).
+            for candidate in (raw, unquote(raw)):
+                marker = self._serialized_marker(candidate)
+                if marker:
+                    findings.append(self._finding(
+                        "serialized_object_in_cookie", "HIGH", url,
+                        "Serialized object marker in cookie",
+                        {"cookie": getattr(cookie, "name", ""), "marker": marker,
+                         "value_prefix": candidate[:24]},
+                    ))
+                    break
+
+    def _scan_hidden_fields(self, body: str, url: str, findings: list) -> None:
+        for tag in _INPUT_TAG_RE.findall(body):
+            attrs: dict[str, str] = {}
+            for m in _ATTR_RE.finditer(tag):
+                attrs[m.group(1).lower()] = m.group(2) if m.group(2) is not None else m.group(3)
+            if attrs.get("type", "").lower() != "hidden":
+                continue
+            name = attrs.get("name", "")
+            if name.lower() in ASP_NET_STATE_FIELDS:
+                continue
+            value = attrs.get("value", "")
+            marker = self._serialized_marker(value)
+            if marker:
+                findings.append(self._finding(
+                    "serialized_object_in_hidden_field", "HIGH", url,
+                    "Serialized object marker in hidden form field",
+                    {"field": name, "marker": marker, "value_prefix": value[:24]},
+                ))
 
     def _urls(self) -> list[str]:
         urls: set[str] = set()
@@ -163,11 +215,10 @@ class DeserializationProbeModule(BaseModule):
         seen: set[tuple[str, str, str]] = set()
         result: list[dict] = []
         for finding in findings:
-            key = (
-                finding.get("id", ""),
-                finding.get("url", ""),
-                finding.get("evidence", {}).get("param", finding.get("evidence", {}).get("signature", "")),
-            )
+            ev = finding.get("evidence", {}) or {}
+            location = (ev.get("param") or ev.get("cookie") or ev.get("field")
+                        or ev.get("signature") or "")
+            key = (finding.get("id", ""), finding.get("url", ""), location)
             if key not in seen:
                 seen.add(key)
                 result.append(finding)
