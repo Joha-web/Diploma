@@ -48,3 +48,24 @@ def test_spa_module_imports_without_playwright_installed():
     # Re-importing should not raise even if the optional dep is absent.
     reloaded = importlib.reload(spa_module)
     assert hasattr(reloaded, "SPACrawlerModule")
+
+
+def test_same_site_rejects_suffix_lookalikes_and_empty():
+    same = SPACrawlerModule._same_site
+    # exact host and proper subdomains match
+    assert same("example.com", "example.com")
+    assert same("api.example.com", "example.com")
+    # suffix lookalike must NOT match (the bug: notexample.com endswith example.com)
+    assert not same("notexample.com", "example.com")
+    assert not same("evil-example.com", "example.com")
+    # empty either side never matches (endswith("") was matching everything)
+    assert not same("", "example.com")
+    assert not same("anything.com", "")
+
+
+def test_history_hook_js_wraps_pushstate_and_is_safe():
+    js = spa_module._HISTORY_HOOK_JS
+    assert "pushState" in js and "replaceState" in js
+    assert "__reconx_routes" in js
+    # guarded against non-function history methods (jsdom / odd environments)
+    assert "typeof orig !== 'function'" in js

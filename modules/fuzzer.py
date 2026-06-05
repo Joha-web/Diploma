@@ -370,8 +370,15 @@ class FuzzerModule(BaseModule):
             return set()
 
         self.info("Fuzzing (ffuf)")
+        cfg = self.config.get("scan", {}).get("fuzzing", {})
         found: set[str] = set()
-        rate = str(self.config.get("scan", {}).get("fuzzing", {}).get("rate", 100))
+        rate = str(cfg.get("rate", 100))
+        # Auto-calibration learns the host's wildcard/SPA catch-all response and
+        # filters it out. Without it, a site that returns 200 for every path
+        # (common for SPAs) makes ffuf "find" the entire wordlist. On by default.
+        autocal = ["-ac"] if cfg.get("ffuf_autocalibrate", True) else []
+        dir_timeout = int(cfg.get("ffuf_dir_timeout", 600))
+        bak_timeout = int(cfg.get("ffuf_backup_timeout", 300))
 
         for host in urls:
             self.info(f"  ffuf dirs → {host}")
@@ -385,14 +392,17 @@ class FuzzerModule(BaseModule):
                      "-mc", "200,201,204,301,302,307,401,403,405",
                      "-t", "40", "-timeout", "10", "-rate", rate,
                      "-recursion", "-recursion-depth", "2",
+                     *autocal, "-ic",
+                     # ffuf flushes its JSON only on a clean exit, so a hard
+                     # timeout-kill would lose every result. -maxtime makes ffuf
+                     # stop itself just before our exec timeout and write the
+                     # partial output file.
+                     "-maxtime", str(max(30, dir_timeout - 30)),
                      "-of", "json", "-o", str(out), "-s"],
-                    timeout=600,
+                    timeout=dir_timeout,
                     label=f"ffuf dirs {host}",
                 )
-            data = self.load_json(out)
-            for r in data.get("results", []):
-                if r.get("url") and self.is_in_scope(r["url"]):
-                    found.add(r["url"])
+            found.update(self._read_ffuf_results(out, f"ffuf dirs {host}"))
 
             # Backup / sensitive file fuzzing
             self.info(f"  ffuf backups → {host}")
@@ -402,18 +412,35 @@ class FuzzerModule(BaseModule):
                     ["ffuf", "-u", f"{host}/FUZZ", "-w", self._backup_wordlist(),
                      "-mc", "200,201,301,302",
                      "-t", "20", "-timeout", "10", "-rate", str(max(1, int(rate) // 2)),
+                     *autocal, "-ic",
+                     "-maxtime", str(max(20, bak_timeout - 20)),
                      "-of", "json", "-o", str(out_bak), "-s"],
-                    timeout=300,
+                    timeout=bak_timeout,
                     label=f"ffuf backups {host}",
                 )
-            bak_data = self.load_json(out_bak)
-            for r in bak_data.get("results", []):
-                if r.get("url") and self.is_in_scope(r["url"]):
-                    found.add(r["url"])
-                    self.warn(f"  ⚠ Sensitive file found: {r['url']}")
+            for url in sorted(self._read_ffuf_results(out_bak, f"ffuf backups {host}")):
+                found.add(url)
+                self.warn(f"  ⚠ Sensitive file found: {url}")
 
         self.success(f"ffuf → {len(found)} URLs")
         return found
+
+    def _read_ffuf_results(self, out: Path, label: str) -> set[str]:
+        """Parse an ffuf JSON output file into in-scope result URLs.
+
+        Warns when the file is missing (ffuf was killed before it could flush,
+        or errored) so a silent zero-result run is visible rather than looking
+        like a clean "nothing found".
+        """
+        if not out.exists():
+            self.warn(f"  {label}: no output file (killed before flush or errored)")
+            return set()
+        data = self.load_json(out)
+        results = data.get("results", []) if isinstance(data, dict) else []
+        return {
+            r["url"] for r in results
+            if isinstance(r, dict) and r.get("url") and self.is_in_scope(r["url"])
+        }
 
     # ── JS Mining ─────────────────────────────────────────────────────────────
 

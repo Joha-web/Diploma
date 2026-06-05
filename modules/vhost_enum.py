@@ -35,6 +35,7 @@ class VHostEnumModule(BaseModule):
 
         found: list[dict] = []
         rate = str(cfg.get("rate", 50))
+        vhost_timeout = int(cfg.get("timeout", 600))
         for ip in ips:
             self._vhost_baseline_redirect = False
             baseline = self._baseline_size(ip)
@@ -45,13 +46,17 @@ class VHostEnumModule(BaseModule):
                 "-w", wordlist,
                 "-mc", "200,201,204,401,403",
                 "-t", "30", "-rate", rate,
+                # ffuf only flushes its JSON on a clean exit; -maxtime makes it
+                # self-terminate before our exec timeout-kill so partial vhost
+                # results are written instead of lost.
+                "-maxtime", str(max(30, vhost_timeout - 30)),
                 "-of", "json", "-o", str(out), "-s",
             ]
             if baseline != "0":
                 cmd.extend(["-fs", baseline])
             if self._vhost_baseline_redirect:
                 cmd.extend(["-fc", "301,302,307,308"])
-            self.exec(cmd, timeout=int(cfg.get("timeout", 600)), label=f"ffuf vhost {ip}")
+            self.exec(cmd, timeout=vhost_timeout, label=f"ffuf vhost {ip}")
 
             data = self.load_json(out)
             for row in data.get("results", []) if isinstance(data, dict) else []:

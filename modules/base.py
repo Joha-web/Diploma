@@ -308,8 +308,6 @@ class BaseModule:
             "shodan": "SHODAN_API_KEY",
             "virustotal": "VIRUSTOTAL_API_KEY",
             "wpscan": "WPSCAN_API_TOKEN",
-            "censys_api_id": "CENSYS_API_ID",
-            "censys_api_secret": "CENSYS_API_SECRET",
             "securitytrails": "SECURITYTRAILS_API_KEY",
             "binaryedge": "BINARYEDGE_API_KEY",
         }
@@ -317,9 +315,6 @@ class BaseModule:
             value = str(keys.get(config_key, "")).strip()
             if value and not env.get(env_key):
                 env[env_key] = value
-        censys_secret = str(keys.get("censys_api_secret", "")).strip()
-        if censys_secret and not env.get("CENSYS_PAT"):
-            env["CENSYS_PAT"] = censys_secret
         return env
 
     @staticmethod

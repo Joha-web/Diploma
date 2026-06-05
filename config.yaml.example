@@ -5,8 +5,6 @@ api_keys:
   shodan: ""
   virustotal: ""
   wpscan: ""       # or env WPSCAN_API_TOKEN
-  censys_api_id: ""            # optional; only needed for Legacy Search API
-  censys_api_secret: ""        # env CENSYS_API_SECRET/CENSYS_PAT; Platform PAT, or Legacy secret when censys_api_id is set
   securitytrails: ""
   binaryedge: ""
   github: ""
@@ -45,7 +43,11 @@ telegram:
 ai:
   enabled: true
   provider: "ollama"               # ollama | openai | anthropic
-  model: "deepseek-r1:7b"
+  model: "deepseek-r1:7b"          # reasoning models (deepseek-r1, qwq) "think"
+                                   # before answering: slower and they need a
+                                   # bigger max_tokens or they time out before
+                                   # the report. For faster reports use a
+                                   # non-reasoning model, e.g. qwen2.5:7b-instruct.
   ollama_url: "http://localhost:11434"
   openai_api_key: ""
   openai_base_url: "https://api.openai.com/v1"
@@ -60,6 +62,11 @@ ai:
   language: "en"
   realtime_advice: false
   advise_on: [recon, portscan, techstack, fuzzer, vulnscan, cve_check]
+  # Realtime-advice / fp-triage completions (separate from the big report above).
+  # A reasoning model (deepseek-r1) is auto-bumped to >=2048 so its <think> block
+  # doesn't consume the whole budget and leave the advice empty.
+  advisor_max_tokens: 512
+  advisor_timeout: 90
 
 scan:
   threads: 50
@@ -93,7 +100,6 @@ scan:
     max_shodan_hosts: 20
     use_chaos: true                 # ProjectDiscovery Chaos dataset (uses PDCP key, passive)
     gau_timeout: 180                # gau --subs can be slow; cap it (seconds)
-    use_censys: true
     use_github: true
     use_securitytrails: false
     use_binaryedge: false
@@ -169,6 +175,13 @@ scan:
   fuzzing:
     depth: 3
     rate: 100
+    # ffuf: auto-calibrate to filter a host's wildcard/SPA catch-all response
+    # (prevents "every wordlist entry is a hit"), and self-terminate just before
+    # the exec timeout so partial results are still written (ffuf only flushes
+    # its JSON on a clean exit).
+    ffuf_autocalibrate: true
+    ffuf_dir_timeout: 600
+    ffuf_backup_timeout: 300
     graphql_probe: true
     graphql_introspection: true
     robots_sitemap: true

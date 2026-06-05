@@ -73,50 +73,6 @@ def test_shodan_api_extracts_domain_subdomains(tmp_path, monkeypatch):
     assert "mail.example.com" in hosts
 
 
-def test_censys_uses_platform_token_without_api_id(tmp_path, monkeypatch):
-    module = ReconModule(
-        "example.com",
-        str(tmp_path),
-        {"api_keys": {"censys_api_secret": "secret"}},
-    )
-    monkeypatch.setattr(module, "_post_json", lambda *args, **kwargs: {
-        "result": {"hits": [{"web": {"name": "app.example.com"}}]}
-    })
-
-    assert module._api_censys() == ["app.example.com"]
-
-
-def test_censys_uses_legacy_auth_when_api_id_is_present(tmp_path, monkeypatch):
-    module = ReconModule(
-        "example.com",
-        str(tmp_path),
-        {"api_keys": {"censys_api_id": "id", "censys_api_secret": "secret"}},
-    )
-    monkeypatch.setattr(module, "_request_json", lambda *args, **kwargs: {
-        "result": {"hits": [{"name": "legacy.example.com"}]}
-    })
-
-    assert module._api_censys() == ["legacy.example.com"]
-
-
-def test_censys_platform_auth_failure_mentions_token_mode(tmp_path, monkeypatch):
-    module = ReconModule(
-        "example.com",
-        str(tmp_path),
-        {
-            "api_keys": {"censys_api_secret": "secret"},
-            "scan": {"subdomains": {"api_retries": 0}},
-        },
-    )
-    warnings = []
-
-    monkeypatch.setattr(module, "http_post", lambda *args, **kwargs: FakeResponse(403, json_data={}))
-    monkeypatch.setattr(module, "warn", lambda message: warnings.append(message))
-
-    assert module._api_censys() == []
-    assert any("Platform PAT" in message and "CENSYS_API_ID" in message for message in warnings)
-
-
 def test_github_api_extracts_subdomains(tmp_path, monkeypatch):
     module = ReconModule(
         "example.com",
@@ -406,3 +362,86 @@ def test_chaos_source_uses_pdcp_key(tmp_path, monkeypatch):
 def test_chaos_source_skips_without_pdcp_key(tmp_path):
     module = ReconModule("example.com", str(tmp_path), {})
     assert module._api_chaos() == []
+
+
+# ── subdomain tool timeout-salvage (read -o file, not killed stdout) ────────
+
+# All passive-API sources disabled so _enumerate_subdomains only exercises the
+# external CLI tool under test (no network).
+_NO_APIS = {
+    "use_crtsh": False, "use_hackertarget": False, "use_alienvault": False,
+    "use_threatminer": False, "use_rapiddns": False, "use_wayback_cdx": False,
+    "use_shodan": False, "use_chaos": False,
+    "use_github": False, "use_securitytrails": False, "use_binaryedge": False,
+}
+
+
+def _subs_cfg(**overrides):
+    cfg = dict(_NO_APIS)
+    cfg.update({"use_subfinder": False, "use_assetfinder": False,
+                "use_amass": False, "use_active_bruteforce": False,
+                "enable_active_enum": False})
+    cfg.update(overrides)
+    return {"scan": {"subdomains": cfg}}
+
+
+class _EmptyResult:
+    """Mimics exec() after a timeout-kill: stdout is gone."""
+    stdout = ""
+    stderr = ""
+    returncode = 1
+
+
+def test_amass_partial_results_survive_timeout(tmp_path, monkeypatch):
+    module = ReconModule("example.com", str(tmp_path),
+                         _subs_cfg(use_amass=True))
+    monkeypatch.setattr(module, "has_tool", lambda t: t == "amass")
+
+    def fake_exec(cmd, timeout=180, **k):
+        # amass writes to its -o file as it discovers, then gets SIGKILLed;
+        # exec() returns no stdout but the file holds what was flushed.
+        out = cmd[cmd.index("-o") + 1]
+        with open(out, "w") as fh:
+            fh.write("a.example.com\nb.example.com\n")
+        return _EmptyResult()
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    module._enumerate_subdomains()
+
+    assert "a.example.com" in module.subdomains
+    assert "b.example.com" in module.subdomains
+
+
+def test_subfinder_reads_output_file(tmp_path, monkeypatch):
+    module = ReconModule("example.com", str(tmp_path),
+                         _subs_cfg(use_subfinder=True))
+    monkeypatch.setattr(module, "has_tool", lambda t: t == "subfinder")
+
+    def fake_exec(cmd, timeout=300, **k):
+        assert "-o" in cmd
+        out = cmd[cmd.index("-o") + 1]
+        with open(out, "w") as fh:
+            fh.write("api.example.com\n")
+        return _EmptyResult()
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    module._enumerate_subdomains()
+    assert "api.example.com" in module.subdomains
+
+
+def test_assetfinder_streams_to_file_via_shell_redirect(tmp_path, monkeypatch):
+    module = ReconModule("example.com", str(tmp_path),
+                         _subs_cfg(use_assetfinder=True))
+    monkeypatch.setattr(module, "has_tool", lambda t: t == "assetfinder")
+
+    def fake_exec(cmd, timeout=120, shell=False, label=None, **k):
+        # cmd is a shell string "... > '<path>' 2>/dev/null"
+        assert shell is True
+        path = cmd.split("> ", 1)[1].split(" 2>", 1)[0].strip().strip("'")
+        with open(path, "w") as fh:
+            fh.write("cdn.example.com\n")
+        return _EmptyResult()
+
+    monkeypatch.setattr(module, "exec", fake_exec)
+    module._enumerate_subdomains()
+    assert "cdn.example.com" in module.subdomains

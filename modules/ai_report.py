@@ -7,6 +7,7 @@ Fallback:  OpenRouter / OpenAI-compatible API
 import json
 import os
 import re
+import time
 import requests
 from modules.base import BaseModule
 
@@ -432,41 +433,100 @@ End with exactly:
         except Exception:
             return False
 
+    REASONING_HINTS = ("r1", "qwq", "deepseek-r1", "thinking", "reasoner")
+
+    @classmethod
+    def _is_reasoning_model(cls, model: str) -> bool:
+        """Reasoning models (deepseek-r1, qwq, ...) emit a <think> block before
+        the answer, which both burns the token budget and slows generation."""
+        name = (model or "").lower()
+        return any(hint in name for hint in cls.REASONING_HINTS)
+
     def _ollama_generate(self, url: str, model: str, prompt: str, cfg: dict) -> str:
-        """Call Ollama API with streaming disabled for simplicity."""
+        """Stream the Ollama response so a slow generation can be salvaged.
+
+        With stream=False the whole request blocks until the model finishes; if
+        that outlasts ai.timeout the partial report is thrown away (the failure
+        the user hit). Streaming accumulates tokens as they arrive, so on a
+        wall-clock timeout we keep whatever was generated instead of nothing.
+        """
+        timeout_s = int(cfg.get("timeout", 900))
+        # Reasoning models spend their first few thousand tokens "thinking"; give
+        # the report itself room by raising the floor so num_predict isn't fully
+        # consumed before the answer begins.
+        num_predict = int(cfg.get("max_tokens", 4096))
+        if self._is_reasoning_model(model):
+            num_predict = max(num_predict, 8192)
+
+        deadline = time.monotonic() + timeout_s
+        chunks: list[str] = []
+        timed_out = False
+        resp = None
         try:
             resp = requests.post(
                 f"{url}/api/generate",
                 json={
                     "model":  model,
                     "prompt": prompt,
-                    "stream": False,
+                    "stream": True,
                     "options": {
                         "temperature":   cfg.get("temperature", 0.3),
                         # num_ctx must be large enough to hold the (now richer)
                         # prompt — Ollama silently truncates anything beyond it,
                         # which is what made earlier reports thin.
                         "num_ctx":       cfg.get("num_ctx", 8192),
-                        "num_predict":   cfg.get("max_tokens", 4096),
+                        "num_predict":   num_predict,
                         "top_p":         0.9,
                     },
                 },
-                # A detailed report from a local 7B model is slow — give it room.
-                timeout=int(cfg.get("timeout", 900)),
+                stream=True,
+                # (connect, read): the read timeout bounds a single stalled chunk;
+                # the deadline below bounds the whole generation.
+                timeout=(10, timeout_s),
             )
-            if resp.status_code == 200:
-                text = self._clean_model_output(resp.json().get("response", ""))
-                return text
-            else:
+            if resp.status_code != 200:
                 self.error(f"Ollama error {resp.status_code}: {resp.text[:200]}")
                 return ""
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("error"):
+                    self.error(f"Ollama error: {str(obj['error'])[:200]}")
+                    break
+                chunks.append(obj.get("response", ""))
+                if obj.get("done"):
+                    break
+                if time.monotonic() > deadline:
+                    timed_out = True
+                    break
         except requests.exceptions.Timeout:
-            self.error(f"Ollama request timed out ({int(cfg.get('timeout', 900))}s) — "
-                       "lower ai.max_tokens or raise ai.timeout for very large scans")
-            return ""
+            timed_out = True
         except Exception as e:
             self.error(f"Ollama request failed: {e}")
             return ""
+        finally:
+            if resp is not None:
+                resp.close()
+
+        raw = "".join(chunks)
+        if timed_out:
+            self.warn(f"Ollama generation exceeded ai.timeout ({timeout_s}s) — "
+                      "using the partial output produced so far"
+                      + ("" if raw.strip() else
+                         " (none yet; raise ai.timeout or use a smaller/faster model)"))
+
+        text = self._clean_model_output(raw)
+        # Reasoning model that spent its whole budget thinking: raw has content
+        # but nothing survives the <think> strip. Say so specifically — the
+        # generic "empty response" hides the real cause and fix.
+        if raw.strip() and not text:
+            self.warn("Model produced only reasoning, no report — raise ai.max_tokens "
+                      f"or switch ai.model to a non-reasoning model (current: {model})")
+        return text
 
     # ── OpenAI-compatible fallback ────────────────────────────────────────────
 
@@ -505,7 +565,15 @@ End with exactly:
     @staticmethod
     def _clean_model_output(text: str) -> str:
         """Remove reasoning blocks and normalize report output."""
-        text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL | re.IGNORECASE)
+        text = text or ""
+        # Drop complete <think>...</think> reasoning blocks.
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        # An unterminated <think> means generation was cut off mid-reasoning
+        # (timeout / budget exhausted): everything from it on is partial thinking,
+        # not report — drop it rather than leaking raw chain-of-thought.
+        m = re.search(r"<think>", text, flags=re.IGNORECASE)
+        if m:
+            text = text[:m.start()]
         return text.strip()
 
     @staticmethod

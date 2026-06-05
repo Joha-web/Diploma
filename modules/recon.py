@@ -10,7 +10,6 @@ import random
 import json
 import ipaddress
 import requests
-from requests.auth import HTTPBasicAuth
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .base import BaseModule
@@ -394,7 +393,6 @@ class ReconModule(BaseModule):
             ("wayback_cdx",  "use_wayback_cdx",  self._api_wayback),
             ("shodan",       "use_shodan",       self._api_shodan),
             ("chaos",        "use_chaos",        self._api_chaos),
-            ("censys",       "use_censys",       self._api_censys),
             ("github",       "use_github",       self._api_github),
             ("securitytrails", "use_securitytrails", self._api_securitytrails),
             ("binaryedge",   "use_binaryedge",   self._api_binaryedge),
@@ -415,23 +413,35 @@ class ReconModule(BaseModule):
                 except Exception as e:
                     self.warn(f"  {src}: {e}")
 
-        # Active tools
+        # Active tools. Each writes to a file so partial results survive a
+        # timeout-kill — exec() drops stdout when the process is SIGKILLed at the
+        # timeout, which previously meant a slow amass/subfinder lost *every*
+        # subdomain it had found, not just the tail.
         if cfg.get("use_subfinder", True) and self.has_tool("subfinder"):
             self.info("  subfinder")
-            r = self.exec(["subfinder", "-d", self.domain, "-silent", "-all"],
+            out = self.module_dir / "subdomains" / "subfinder.txt"
+            r = self.exec(["subfinder", "-d", self.domain, "-silent", "-all",
+                           "-o", str(out)],
                           timeout=cfg.get("subfinder_timeout", 300))
-            self._merge_subs(r.stdout.splitlines(), "subfinder")
+            self._merge_subs(self.load_lines(out) or r.stdout.splitlines(), "subfinder")
 
         if cfg.get("use_assetfinder", True) and self.has_tool("assetfinder"):
             self.info("  assetfinder")
-            r = self.exec(["assetfinder", "--subs-only", self.domain], timeout=120)
-            self._merge_subs(r.stdout.splitlines(), "assetfinder")
+            # assetfinder has no output-file flag, so stream stdout to a file via
+            # the shell; the file keeps whatever was flushed before a timeout-kill.
+            out = self.module_dir / "subdomains" / "assetfinder.txt"
+            cmd = (f"assetfinder --subs-only {shlex.quote(self.domain)} "
+                   f"> {shlex.quote(str(out))} 2>/dev/null")
+            self.exec(cmd, timeout=120, shell=True, label=f"assetfinder {self.domain}")
+            self._merge_subs(self.load_lines(out), "assetfinder")
 
         if cfg.get("use_amass", True) and self.has_tool("amass"):
             t = cfg.get("amass_timeout", 180)
             self.info(f"  amass (timeout {t}s)")
-            r = self.exec(["amass", "enum", "-passive", "-d", self.domain], timeout=t)
-            self._merge_subs(r.stdout.splitlines(), "amass")
+            out = self.module_dir / "subdomains" / "amass.txt"
+            r = self.exec(["amass", "enum", "-passive", "-d", self.domain,
+                           "-o", str(out)], timeout=t)
+            self._merge_subs(self.load_lines(out) or r.stdout.splitlines(), "amass")
 
         if cfg.get("use_active_bruteforce", False) or cfg.get("enable_active_enum", False):
             added = self._active_dns_bruteforce(cfg)
@@ -894,34 +904,6 @@ class ReconModule(BaseModule):
             self.warn(f"  {source}: non-JSON response")
             return None
 
-    def _post_json(
-        self,
-        source: str,
-        url: str,
-        payload: dict,
-        timeout: int = 20,
-        headers: dict | None = None,
-        params: dict | None = None,
-        auth_note: str = "",
-    ):
-        r = self._api_http_request(
-            "POST",
-            source,
-            url,
-            timeout=timeout,
-            headers=headers,
-            params=params,
-            payload=payload,
-            auth_note=auth_note,
-        )
-        if r is None:
-            return None
-        try:
-            return r.json()
-        except ValueError:
-            self.warn(f"  {source}: non-JSON response")
-            return None
-
     def _api_crtsh(self) -> list:
         data = self._get_json(
             "crt.sh",
@@ -1090,63 +1072,6 @@ class ReconModule(BaseModule):
             self.save_json(hosts, "passive/shodan_hosts.json")
             self.success(f"Shodan: {len(hosts)} host(s), {ports} open port(s), {cves} known CVE(s)")
         return hosts
-
-    def _api_censys(self) -> list:
-        keys = self.config.get("api_keys", {})
-        api_id = keys.get("censys_api_id", "")
-        api_secret = keys.get("censys_api_secret", "")
-        if not api_secret:
-            return []
-        if api_id:
-            auth_note = "using CENSYS_API_ID + CENSYS_API_SECRET legacy credentials"
-            data = self._request_json(
-                "censys",
-                "https://search.censys.io/api/v2/hosts/search",
-                params={
-                    "q": f"dns.names: *.{self.domain}",
-                    "per_page": 100,
-                    "virtual_hosts": "INCLUDE",
-                    "fields": "name,dns.names",
-                },
-                auth=HTTPBasicAuth(api_id, api_secret),
-                timeout=30,
-                auth_note=auth_note,
-            )
-        else:
-            auth_note = (
-                "using CENSYS_API_SECRET as Platform PAT; if this is a legacy secret, "
-                "set CENSYS_API_ID too"
-            )
-            data = self._post_json(
-                "censys",
-                "https://api.platform.censys.io/v3/global/search/query",
-                {
-                    "query": f'"{self.domain}"',
-                    "page_size": 100,
-                },
-                headers={
-                    "Authorization": f"Bearer {api_secret}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "User-Agent": "ReconX/2.0",
-                },
-                timeout=30,
-                auth_note=auth_note,
-            )
-        if not isinstance(data, dict):
-            return []
-        hosts = []
-        for hit in data.get("result", {}).get("hits", []) or []:
-            name = hit.get("name", "")
-            if name:
-                hosts.append(name)
-            web_name = hit.get("web", {}).get("name", "") if isinstance(hit.get("web"), dict) else ""
-            if web_name:
-                hosts.append(web_name)
-            dns_names = hit.get("dns", {}).get("names", []) if isinstance(hit.get("dns"), dict) else []
-            hosts.extend(dns_names)
-        hosts.extend(re.findall(r"[a-zA-Z0-9._-]+\." + re.escape(self.domain), json.dumps(data)))
-        return self.unique(hosts)
 
     def _api_github(self) -> list:
         token = self.config.get("api_keys", {}).get("github", "")

@@ -41,6 +41,22 @@ _API_RESOURCE_TYPES = {"xhr", "fetch", "websocket"}
 # the "JS bundle" discovery downstream.
 _SKIP_RESOURCE_TYPES = {"image", "font", "media", "stylesheet"}
 
+# Injected before navigation: wraps history.pushState/replaceState so every
+# client-side route change is appended to window.__reconx_routes for harvest.
+_HISTORY_HOOK_JS = """
+(() => {
+  window.__reconx_routes = window.__reconx_routes || [];
+  for (const fn of ['pushState', 'replaceState']) {
+    const orig = history[fn];
+    if (typeof orig !== 'function') continue;
+    history[fn] = function (state, title, url) {
+      try { if (url) window.__reconx_routes.push(String(url)); } catch (e) {}
+      return orig.apply(this, arguments);
+    };
+  }
+})();
+"""
+
 
 class SPACrawlerModule(BaseModule):
     name = "spa_crawler"
@@ -135,6 +151,11 @@ class SPACrawlerModule(BaseModule):
         target_host = (urlparse(url).hostname or "").lower()
 
         context = browser.new_context(ignore_https_errors=True)
+        # Hook the History API so client-side route changes (pushState /
+        # replaceState) are recorded even though they fire no network request —
+        # this is what lets us see SPA routes a plain crawler can't. Must be
+        # installed before navigation so it wraps history early.
+        context.add_init_script(_HISTORY_HOOK_JS)
         page = context.new_page()
 
         def on_request(request) -> None:
@@ -145,8 +166,8 @@ class SPACrawlerModule(BaseModule):
             if not req_url.startswith(("http://", "https://")):
                 return
             req_host = (urlparse(req_url).hostname or "").lower()
-            # Only keep same-origin or in-scope requests — third-party CDN noise is filtered out
-            if target_host and req_host and req_host.endswith(target_host.split(":")[0]):
+            # Only keep same-site or in-scope requests — third-party CDN noise is filtered out
+            if self._same_site(req_host, target_host):
                 endpoints.add(req_url)
             elif rtype in _API_RESOURCE_TYPES:
                 # API call to a different host: still worth recording (might be an SDK backend)
@@ -163,27 +184,47 @@ class SPACrawlerModule(BaseModule):
             if wait_extra > 0:
                 page.wait_for_timeout(int(wait_extra * 1000))
 
-            # Harvest anchor hrefs
-            hrefs = page.eval_on_selector_all(
-                "a[href]",
-                "els => els.map(e => e.getAttribute('href'))",
+            # Harvest anchor hrefs and form actions (form actions surface POST
+            # endpoints that never appear as a navigation request).
+            links = page.eval_on_selector_all(
+                "a[href], form[action]",
+                "els => els.map(e => e.getAttribute('href') || e.getAttribute('action'))",
             )
-            for href in hrefs or []:
-                if not href or href.startswith(("javascript:", "mailto:", "tel:", "#")):
+            # SPA routes captured by the History API hook above.
+            try:
+                history_routes = page.evaluate("window.__reconx_routes || []") or []
+            except (PlaywrightError, PlaywrightTimeout):
+                history_routes = []
+
+            for ref in list(links or []) + list(history_routes):
+                if not ref or ref.startswith(("javascript:", "mailto:", "tel:", "#")):
                     continue
                 try:
-                    abs_url = urljoin(url, href)
+                    abs_url = urljoin(url, ref)
                 except ValueError:
                     continue
                 parsed = urlparse(abs_url)
-                if (parsed.hostname or "").lower().endswith(target_host or ""):
+                if self._same_site((parsed.hostname or "").lower(), target_host):
                     endpoints.add(abs_url)
-                if parsed.path:
-                    routes.add(parsed.path)
+                    if parsed.path and parsed.path != "/":
+                        routes.add(parsed.path)
         finally:
             context.close()
 
         return endpoints, routes
+
+    @staticmethod
+    def _same_site(req_host: str, target_host: str) -> bool:
+        """True only for the exact host or a proper subdomain of it.
+
+        A bare endswith() would match notexample.com against example.com, and
+        endswith("") matches everything — both pull third-party hosts in.
+        """
+        if not req_host or not target_host:
+            return False
+        req_host = req_host.lower()
+        target_host = target_host.lower()
+        return req_host == target_host or req_host.endswith("." + target_host)
 
     # ── Input URLs ────────────────────────────────────────────────────────────
 

@@ -4,8 +4,6 @@ from main import apply_config_preset, apply_env_overrides
 def test_apply_env_overrides_fills_empty_secret_config(monkeypatch):
     monkeypatch.setenv("SHODAN_API_KEY", "shodan-token")
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "vt-token")
-    monkeypatch.setenv("CENSYS_API_SECRET", "censys-secret")
-    monkeypatch.setenv("CENSYS_API_ID", "censys-id")
     monkeypatch.setenv("SECURITYTRAILS_API_KEY", "securitytrails-token")
     monkeypatch.setenv("BINARYEDGE_API_KEY", "binaryedge-token")
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
@@ -19,8 +17,6 @@ def test_apply_env_overrides_fills_empty_secret_config(monkeypatch):
 
     assert cfg["api_keys"]["shodan"] == "shodan-token"
     assert cfg["api_keys"]["virustotal"] == "vt-token"
-    assert cfg["api_keys"]["censys_api_id"] == "censys-id"
-    assert cfg["api_keys"]["censys_api_secret"] == "censys-secret"
     assert cfg["api_keys"]["securitytrails"] == "securitytrails-token"
     assert cfg["api_keys"]["binaryedge"] == "binaryedge-token"
     assert cfg["api_keys"]["github"] == "github-token"
@@ -38,14 +34,6 @@ def test_apply_env_overrides_does_not_replace_explicit_config(monkeypatch):
     apply_env_overrides(cfg)
 
     assert cfg["api_keys"]["shodan"] == "yaml-token"
-
-
-def test_apply_env_overrides_accepts_censys_pat_alias(monkeypatch):
-    monkeypatch.setenv("CENSYS_PAT", "pat-token")
-
-    cfg = apply_env_overrides({})
-
-    assert cfg["api_keys"]["censys_api_secret"] == "pat-token"
 
 
 def test_intrusive_preset_retains_raw_secrets_for_live_validation():

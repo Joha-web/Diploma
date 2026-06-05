@@ -1,4 +1,35 @@
+import json
+
+import requests
+
 from modules.ai_report import AIReportModule
+
+
+class _FakeStreamResp:
+    """Minimal stand-in for a streaming requests.Response."""
+
+    def __init__(self, lines, status_code=200, raise_after=None, exc=None):
+        self._lines = lines
+        self.status_code = status_code
+        self.text = ""
+        self._raise_after = raise_after
+        self._exc = exc
+
+    def iter_lines(self, decode_unicode=False):
+        for i, line in enumerate(self._lines):
+            if self._raise_after is not None and i == self._raise_after:
+                raise self._exc
+            yield line
+
+    def close(self):
+        pass
+
+
+def _ollama_lines(*responses, done=True):
+    lines = [json.dumps({"response": r, "done": False}) for r in responses]
+    if done:
+        lines.append(json.dumps({"response": "", "done": True}))
+    return lines
 
 
 def test_ai_prompt_defaults_to_english(tmp_path):
@@ -67,3 +98,60 @@ The overall grade is C because exposed FTP and SMTP services increase operationa
 """
 
     assert AIReportModule._is_acceptable_english_report(good_report)
+
+
+# ── streaming / reasoning-model handling ───────────────────────────────────
+
+def test_is_reasoning_model():
+    assert AIReportModule._is_reasoning_model("deepseek-r1:7b")
+    assert AIReportModule._is_reasoning_model("qwq:32b")
+    assert not AIReportModule._is_reasoning_model("qwen2.5:7b-instruct")
+    assert not AIReportModule._is_reasoning_model("llama3:8b")
+
+
+def test_clean_output_strips_complete_and_unterminated_think():
+    # Complete reasoning block removed, report kept.
+    assert AIReportModule._clean_model_output(
+        "<think>weighing options</think>\n## Report\nbody") == "## Report\nbody"
+    # Unterminated <think> (cut off mid-reasoning) -> nothing leaks through.
+    assert AIReportModule._clean_model_output("## Intro\n<think>still reasoning...") == "## Intro"
+    assert AIReportModule._clean_model_output("<think>only thinking, never finished") == ""
+
+
+def test_ollama_generate_assembles_streamed_chunks(tmp_path, monkeypatch):
+    module = AIReportModule("example.com", str(tmp_path), {}, {})
+    lines = _ollama_lines("<think>plan</think>## Exec\n", "body text")
+    monkeypatch.setattr("modules.ai_report.requests.post",
+                        lambda *a, **k: _FakeStreamResp(lines))
+    out = module._ollama_generate("http://x", "deepseek-r1:7b", "prompt", {})
+    assert out == "## Exec\nbody text"
+
+
+def test_ollama_generate_salvages_partial_output_on_timeout(tmp_path, monkeypatch):
+    """A mid-stream timeout must keep what was already generated, not return ''."""
+    module = AIReportModule("example.com", str(tmp_path), {}, {})
+    # Two good chunks, then the stream raises Timeout (no done=True).
+    lines = [json.dumps({"response": r, "done": False}) for r in ("## Exec\n", "partial body")]
+    resp = _FakeStreamResp(lines, raise_after=2, exc=requests.exceptions.Timeout())
+    monkeypatch.setattr("modules.ai_report.requests.post", lambda *a, **k: resp)
+    out = module._ollama_generate("http://x", "deepseek-r1:7b", "p", {"timeout": 5})
+    assert out == "## Exec\npartial body"  # salvaged despite the timeout
+
+
+def test_ollama_generate_reasoning_only_returns_empty(tmp_path, monkeypatch):
+    """Budget spent entirely on an unterminated <think> -> empty, with a hint."""
+    module = AIReportModule("example.com", str(tmp_path), {}, {})
+    lines = [json.dumps({"response": r, "done": False})
+             for r in ("<think>reasoning ", "and more reasoning")]
+    resp = _FakeStreamResp(lines, raise_after=2, exc=requests.exceptions.Timeout())
+    monkeypatch.setattr("modules.ai_report.requests.post", lambda *a, **k: resp)
+    out = module._ollama_generate("http://x", "deepseek-r1:7b", "p", {"timeout": 5})
+    assert out == ""
+
+
+def test_ollama_generate_surfaces_api_error(tmp_path, monkeypatch):
+    module = AIReportModule("example.com", str(tmp_path), {}, {})
+    resp = _FakeStreamResp([], status_code=500)
+    resp.text = "boom"
+    monkeypatch.setattr("modules.ai_report.requests.post", lambda *a, **k: resp)
+    assert module._ollama_generate("http://x", "m", "p", {}) == ""

@@ -7,8 +7,14 @@ background thread after configured modules complete.
 
 import json
 import os
+import re
 
 import requests
+
+# Models that emit a <think>...</think> reasoning block before the answer. They
+# need a larger token budget (the reasoning eats it first) and their reasoning
+# must be stripped from the returned text.
+_REASONING_HINTS = ("r1", "qwq", "deepseek-r1", "thinking", "reasoner")
 
 
 class AIAdvisor:
@@ -41,8 +47,24 @@ class AIAdvisor:
         if provider in ("anthropic", "claude"):
             return self._anthropic(prompt, system=system, max_tokens=max_tokens)
         if provider == "ollama":
-            return self._ollama(prompt)
-        return self._openai(prompt)
+            return self._ollama(prompt, max_tokens=max_tokens)
+        return self._openai(prompt, max_tokens=max_tokens)
+
+    @staticmethod
+    def _is_reasoning_model(model: str) -> bool:
+        name = (model or "").lower()
+        return any(hint in name for hint in _REASONING_HINTS)
+
+    @staticmethod
+    def _strip_reasoning(text: str) -> str:
+        """Drop <think>...</think> blocks (and an unterminated trailing one) so
+        a reasoning model's chain-of-thought never leaks into the advice."""
+        text = text or ""
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        m = re.search(r"<think>", text, flags=re.IGNORECASE)
+        if m:
+            text = text[:m.start()]
+        return text.strip()
 
     def _prompt(self, module_name: str, result: dict, target: str) -> str:
         compact_result = self._compact_result(module_name, result)
@@ -96,26 +118,34 @@ class AIAdvisor:
             severity.upper(), 5
         )
 
-    def _ollama(self, prompt: str) -> str:
+    def _ollama(self, prompt: str, max_tokens: int | None = None) -> str:
         url = self.ai_cfg.get("ollama_url", "http://localhost:11434")
+        model = self.ai_cfg.get("model", "deepseek-r1:7b")
+        # Honour the caller's budget (fp_triage asks for more than advice does).
+        num_predict = int(max_tokens or self.ai_cfg.get("advisor_max_tokens", 512))
+        # A reasoning model burns its budget on <think> before answering, so 512
+        # tokens yields an empty response. Give it room for reasoning + answer.
+        if self._is_reasoning_model(model):
+            num_predict = max(num_predict, 2048)
+        timeout = int(self.ai_cfg.get("advisor_timeout", 90))
         try:
             resp = requests.post(
                 f"{url}/api/generate",
                 json={
-                    "model": self.ai_cfg.get("model", "deepseek-r1:7b"),
+                    "model": model,
                     "prompt": prompt,
                     "stream": False,
-                    "options": {"temperature": 0.2, "num_predict": 512},
+                    "options": {"temperature": 0.2, "num_predict": num_predict},
                 },
-                timeout=60,
+                timeout=timeout,
             )
             if resp.status_code == 200:
-                return (resp.json().get("response", "") or "").strip()
+                return self._strip_reasoning(resp.json().get("response", "") or "")
         except Exception:
             return ""
         return ""
 
-    def _openai(self, prompt: str) -> str:
+    def _openai(self, prompt: str, max_tokens: int | None = None) -> str:
         key = self.ai_cfg.get("openai_api_key") or os.getenv("OPENAI_API_KEY", "")
         if not key:
             return ""
@@ -128,12 +158,12 @@ class AIAdvisor:
                     "model": self.ai_cfg.get("model", "gpt-4o-mini"),
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.2,
-                    "max_tokens": 512,
+                    "max_tokens": int(max_tokens or self.ai_cfg.get("advisor_max_tokens", 512)),
                 },
-                timeout=60,
+                timeout=int(self.ai_cfg.get("advisor_timeout", 90)),
             )
             if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"].strip()
+                return self._strip_reasoning(resp.json()["choices"][0]["message"]["content"])
         except Exception:
             return ""
         return ""

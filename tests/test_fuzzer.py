@@ -437,3 +437,53 @@ def test_classify_admin_panels_drops_403(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "http_get", lambda url, **k: _StatusResp(403))
     classified = module._classify(["https://example.com/admin"])
     assert classified["admin_panels"] == []
+
+
+# ── ffuf: timeout-safe + auto-calibrated ───────────────────────────────────
+
+def test_read_ffuf_results_parses_and_scopes(tmp_path):
+    import json
+    module = FuzzerModule("example.com", str(tmp_path),
+                          {"scope": {"enforce": True}}, live_hosts=[])
+    out = tmp_path / "dirs.json"
+    out.write_text(json.dumps({"results": [
+        {"url": "https://example.com/admin"},
+        {"url": "https://evil.com/x"},   # out of scope -> dropped
+        {"nope": 1},                      # malformed -> ignored
+    ]}))
+    urls = module._read_ffuf_results(out, "ffuf dirs")
+    assert "https://example.com/admin" in urls
+    assert "https://evil.com/x" not in urls
+
+
+def test_read_ffuf_results_warns_on_missing_file(tmp_path):
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    warnings = []
+    module.warn = lambda msg: warnings.append(msg)
+    assert module._read_ffuf_results(tmp_path / "missing.json", "ffuf dirs") == set()
+    assert any("no output file" in w for w in warnings)
+
+
+def test_ffuf_command_includes_autocalibrate_and_maxtime(tmp_path):
+    import json
+    module = FuzzerModule("example.com", str(tmp_path), {}, live_hosts=[])
+    module.has_tool = lambda t: t == "ffuf"
+    module._wordlist = lambda kind: str(tmp_path / "wl.txt")
+    module._backup_wordlist = lambda: str(tmp_path / "bak.txt")
+    captured = []
+
+    def fake_exec(cmd, timeout=None, label=None, **k):
+        captured.append((cmd, timeout))
+        # ffuf writes its results file on (self-)termination — simulate that.
+        out_idx = cmd.index("-o") + 1
+        with open(cmd[out_idx], "w") as fh:
+            json.dump({"results": []}, fh)
+
+    module.exec = fake_exec
+    module._ffuf(["https://example.com"])
+
+    dir_cmd, dir_timeout = captured[0]
+    assert "-ac" in dir_cmd and "-ic" in dir_cmd
+    # maxtime must be strictly below the exec timeout so ffuf flushes first
+    mt = int(dir_cmd[dir_cmd.index("-maxtime") + 1])
+    assert mt < dir_timeout == 600
